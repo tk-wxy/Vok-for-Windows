@@ -1,58 +1,120 @@
 English · **[简体中文](./README.zh-CN.md)**
 
-# XPC — give your AI durable project memory
+# XPC
 
-**Your AI forgets everything each new chat, re-debugs the same pitfalls, and goes blank when you switch models.**
-XPC fixes that with a handful of Markdown files — nothing to install, nothing to run. It captures your project's
-intent, hard-won pitfalls, and decisions so any agent picks up where the last one left off.
+**A Markdown-based durable project memory framework for AI agents.**
 
-## Use it in one sentence
+XPC is a lightweight framework that enables AI coding agents to retain project context across conversations, sessions, and model switches. It helps agents remember project goals, architectural decisions, recurring pitfalls, and development conventions — without requiring a runtime, daemon, database, or external service.
 
-Clone the framework so its files land **at your project root** (the trailing `.` avoids a wrapper folder):
+## Why XPC?
+
+AI agents are powerful at local reasoning, but they are stateless by default. In real-world development, this often means they:
+
+* Forget project constraints between sessions;
+* Re-discover the same bugs and edge cases repeatedly;
+* Lose context when switching between models or tools;
+* Ask questions that have already been answered.
+
+XPC solves this by turning valuable project knowledge into a structured set of Markdown files stored alongside the codebase, allowing both humans and agents to read, maintain, and reuse the information.
+
+## What does XPC provide?
+
+XPC organizes project knowledge into several clear categories:
+
+* **Project Constitution** — project goals, technology stack, principles, and non-negotiable constraints
+* **Rules** — recurring pitfalls and long-term lessons expressed as "symptom → rule"
+* **Decisions** — why certain choices were made and the reasoning behind them
+* **Memory** — current project state and important information from recent sessions
+* **Workflow** — how agents should understand and interact with the project
+* **History / Garden** — archived or low-priority information that should not interfere with current work
+
+The core idea is simple: keep high-value knowledge close to the code, expressed in Markdown — a format that both humans and AI agents can easily understand and maintain.
+
+## Design Principles
+
+XPC is built around three principles:
+
+### 1. Root-level visibility
+
+Project memory files should live at the repository root so AI agents can discover them automatically.
+
+### 2. Persistent knowledge over temporary conversations
+
+Long-term project knowledge should be stored in Markdown files, not trapped inside temporary chat sessions.
+
+### 3. Different levels of confidence
+
+Not all information has the same reliability. Some notes are stable and authoritative, while others are temporary observations that should be verified before use.
+
+## Quick Start
+
+To initialize XPC in a new project, clone the repository into your project root:
 
 ```bash
-mkdir my-project && cd my-project
-git clone https://github.com/tk-wxy/XPC.md.git .   # note the "." — clone into here, no wrapper
-rm -rf .git && git init                            # make it your own repo
+mkdir my-project
+cd my-project
+git clone https://github.com/tk-wxy/XPC.md.git .
+rm -rf .git
+git init
 ```
 
-> ⚠️ `CLAUDE.md` / `AGENTS.md` / `.xpc/` must sit at your project **root** — the only place an agent auto-reads. If they land in a subfolder, XPC silently does nothing.
+Then ask your AI agent to initialize the project context:
 
-Then tell your agent:
+> My project is ... Please initialize the project context.
 
-> My project is … (describe it). Please initialize.
+XPC is language-agnostic and works with common AI agent instruction files such as `AGENTS.md`, `CLAUDE.md`, and other root-level agent configuration files.
 
-It reads the entry file (`CLAUDE.md` / `AGENTS.md` / …), runs `.xpc/init.md`, asks for anything missing, bakes the
-project constitution, and confirms with you. Every session after that it cold-starts from `.xpc/` — **and works in
-your language**, so `请初始化` gets you a Chinese knowledge base just the same.
+## Repository Structure
 
-## See it filled in
+A typical XPC setup contains:
 
-**→ [`examples/notch/.xpc/rules.md`](./examples/notch/.xpc/rules.md)** — the `symptom → rule` table *is* the point:
-pitfalls a fresh agent would take rounds to rediscover, known from turn one.
+```
+AGENTS.md / CLAUDE.md
+.xpc/
+├── manifest.md
+├── rules.md
+├── decisions.md
+├── memory.md
+├── workflow.md
+├── history.md
+└── garden.md
+```
 
-## The files (`.xpc/`)
+A minimal setup can start with:
 
-| File | Role | Trust |
-|------|------|-------|
-| `manifest.md` | Project constitution — mission, stack, invariants, high-risk zones | **High** |
-| `rules.md` | Pitfalls, dead ends, `symptom → rule` table | **High** — most valuable |
-| `decisions.md` | Why each choice was made, with evidence | **High** |
-| `memory.md` | Current-state snapshot (§0) + recent sessions | **Low** — verify before trusting |
-| `workflow.md` · `history.md` · `garden.md` | Dev protocol · archive · housekeeping | — |
+* `AGENTS.md`
+* `.xpc/manifest.md`
+* `.xpc/rules.md`
 
-**Trust levels are the core idea:** pitfalls are permanent facts (trust them); the state snapshot goes stale (a lead
-only). That one distinction keeps stale notes from misleading the next agent.
+## Use Cases
 
-## Know before you adopt
+XPC is especially useful for:
 
-- ✅ Best for solo / small teams iterating with agents on quirky, knowledge-dense projects.
-- ⚠️ It doesn't self-maintain — a human prunes it now and then (`.xpc/garden.md`). Value grows over time, not on day one.
-- ❌ Not for one-off scripts or work without an AI agent.
+* Long-term projects powered by AI agents;
+* Codebases with many implicit conventions;
+* Projects where repeated mistakes are costly;
+* Individual developers or small teams who want structured project knowledge.
 
-## Notes
+## When XPC may not be necessary
 
-- **Platforms**: entries for AGENTS.md (recommended), Claude, Gemini, Cursor, Copilot, Windsurf, Cline, Roo, Aider, Augment, Amazon Q — keep what you use, delete the rest.
-- **Going minimal?** `AGENTS.md` + `.xpc/manifest.md` + `.xpc/rules.md` alone gets you 80% of the value.
+XPC provides less value for:
+
+* One-off scripts;
+* Short-lived experiments;
+* Projects that rarely use AI agents;
+* Teams that already have mature external knowledge management systems.
+
+## Maintenance
+
+XPC is not self-maintaining. Its value comes from continuously evolving with the project.
+
+Recommended practices:
+
+* Keep rules concise, stable, and actionable;
+* Archive outdated knowledge instead of simply deleting it;
+* Record important decisions when they are made;
+* Regularly remove low-value memory.
+
+## License
 
 MIT
