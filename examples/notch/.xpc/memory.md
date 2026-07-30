@@ -5,7 +5,7 @@
 > verify against source first. On conflict, the code wins — fix this file at wrap-up.
 
 > **Maintenance discipline**:
-> 1. §0 is an **overwrite** short snapshot. 🚨 **Red line: never accumulate a per-session changelog in §0; only the 4 bullets below.**
+> 1. §0 is an **overwrite** short snapshot. Never accumulate a per-session changelog there; keep only four bullets.
 > 2. Keep §0A a rolling window of ≤ 3 sessions; when writing the 4th, migrate the oldest wholesale to `history.md`.
 > 3. Single source of truth: identity → `manifest.md`, pitfalls/iron-rules → `rules.md`, decisions → `decisions.md`. This file only answers "where are we now".
 
@@ -38,6 +38,6 @@
 
 ## Pointers (this file does not duplicate the following)
 - Project identity / stack / structure / commands → `manifest.md` (high trust)
-- Hard rules & dead ends → `rules.md` (high trust, historical fact)
+- Scoped rules & dead ends → `rules.md` (high trust when evidence and scope still match)
 - Decision root causes → `decisions.md` (high trust, with evidence)
 - Archived sessions → `history.md`

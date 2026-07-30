@@ -1,32 +1,27 @@
-# Project Identity (manifest.md)
+# Project Manifest
 
-> **Generated during initialization; rarely changed afterward.**
-> This is the shared anchor for every AI agent — whichever agent, platform, or session, they get the
-> project's immutable intent from here. Editing this file = amending the project constitution; do it with care.
-
----
+> High trust after initialization and user confirmation.
+> `{{...}}` means this consumer template is not initialized.
 
 ## Mission
 
 - **Name**: {{PROJECT_NAME}}
-- **One-line positioning**: {{PROJECT_DESCRIPTION}}
-- **Core goals**: {{CORE_GOALS}}
-- **Non-goals (explicitly out of scope)**: {{NON_GOALS}}
+- **Positioning**: {{PROJECT_DESCRIPTION}}
+- **Goals**: {{CORE_GOALS}}
+- **Non-goals**: {{NON_GOALS}}
 
-## Tech stack (locked)
+## Locked stack
 
 {{TECH_STACK}}
 
 ## Architecture invariants
 
-> These are the project's structural bedrock; no agent may overturn them unilaterally. To change one, first
-> record the root cause as a new § in decisions.md and get user confirmation before editing this file.
+Changing an invariant requires a recorded root cause in
+`decisions.md` and user confirmation.
 
 - {{ARCHITECTURE_INVARIANTS}}
 
 ## High-risk zones
-
-> Changes here easily cascade into bugs; proceed with extra care.
 
 - {{HIGH_RISK_AREAS}}
 
@@ -38,9 +33,7 @@
 
 {{COMMON_COMMANDS}}
 
----
+## Editing
 
-> **Rules for editing this file**:
-> 1. After init, edit only when the architecture changes fundamentally.
-> 2. Record the root cause of any change in decisions.md first.
-> 3. Sync all platform entry files after editing.
+After initialization, change this file only for fundamental project
+changes. Record the decision first. Entry files remain generic routes.

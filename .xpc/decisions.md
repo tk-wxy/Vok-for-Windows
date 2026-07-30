@@ -1,24 +1,20 @@
-# Architecture Decisions & Pitfall Root Causes (decisions.md)
+# Decisions
 
-> **Trust level: High (evidence-backed historical decisions).** Records "why we chose this"; append-only.
-> If a decision is later overturned, don't delete the old §; add a new § and note "supersedes §N".
+> High trust within recorded scope when evidence is traceable.
+> Append adopted or user-confirmed decisions, not brainstorms.
+> Keep superseded decisions and point to their replacement.
 
-## Table of Contents (decision summaries)
-*One line per §; scan the ToC to decide whether to read that section.*
+## Index
 
-- §1 [example title] - [conclusion summary]
--
+- §1 [title] - [conclusion]
 
----
+## Details
 
-## Decision Details
+### §1 [title]
 
-### §1 [fill in title]
-- **Final approach**: [describe the adopted approach]
-- **Root cause & evidence**: [why this approach? attach measured data or logs]
-- **Rejected alternatives & why**: [list the alternatives not taken and the specific reasons]
-
-### §2 [fill in title]
-- **Final approach**:
-- **Root cause & evidence**:
-- **Rejected alternatives & why**:
+- **Final approach**: [adopted approach]
+- **Scope**: [modules/platforms/versions]
+- **Evidence and root cause**: [test/log/source/reference]
+- **Rejected alternatives**: [option and reason]
+- **Decided / last verified**: [YYYY-MM-DD] / [YYYY-MM-DD]
+- **Status**: active

@@ -1,12 +1,7 @@
 ---
-description: XPC task-end protocol reminder
-globs:
+description: XPC task-end protocol
 alwaysApply: true
 ---
-# Task End (highest priority)
 
-**Before outputting any summary to the user, first run `.xpc/workflow.md` §4 (Task-end protocol).**
-
-Trigger: task done, session end, or the user says "wrap up". Prioritize recording this session's pitfalls & decisions (non-rotting high-value knowledge); update the current-state snapshot best-effort.
-
-Task execution flow & special scenarios: see `.xpc/workflow.md` §2 and §3.
+Before the final summary, follow `.xpc/workflow.md` §4. Persist only
+material, verified knowledge or state; no-op is valid.

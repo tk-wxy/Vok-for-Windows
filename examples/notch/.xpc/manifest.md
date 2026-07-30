@@ -71,4 +71,4 @@ npm run build                     # bundle to dist/ via tsup
 > **Rules for editing this file**:
 > 1. After init, edit only when the architecture changes fundamentally.
 > 2. Record the root cause of any change in decisions.md first.
-> 3. Sync all platform entry files after editing.
+> 3. Entry files normally remain unchanged because they contain routing, not project identity.

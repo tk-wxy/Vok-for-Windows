@@ -1,25 +1,39 @@
-# Agent entry
+# Agent Entry
 
-> Project identity, stack & invariants live in `.xpc/manifest.md` — read it first.
+Read `.xpc/manifest.md` first. `.xpc/workflow.md` is the
+development-protocol source of truth.
 
-**This file just routes. The single source of truth for all dev flow, protocol, and conventions is `.xpc/workflow.md` — follow it strictly.**
+## Route
 
-## Initialization Bootstrap (only when not yet initialized)
+Choose one route:
 
-If `.xpc/manifest.md` is still the unfilled template (its fields are still placeholder tokens) and the user asks to initialize (e.g. "please initialize") → run the initialization protocol in `.xpc/init.md`; otherwise ignore this section.
+1. **Initialize a consumer project**
+   - Condition: the manifest contains `{{...}}` and the user requests
+     initialization.
+   - Follow `.xpc/init.md`; it overrides normal startup.
+2. **Maintain XPC itself**
+   - Condition: placeholders and bundled XPC docs/examples remain, and
+     the task explicitly concerns this framework.
+   - Treat `.xpc/` as distributable prompt source.
+   - You may edit boilerplate, but never fill placeholders or record
+     framework state in consumer manifest, memory, rules, or decisions.
+3. **Work in an initialized project**
+   - Follow `.xpc/workflow.md` §0 on first contact, otherwise §1.
+4. **Ambiguous uninitialized project**
+   - For ordinary product work with placeholders still present, stop
+     and ask the user to initialize XPC.
 
-## Startup Protocol
+If a route's required file is unreadable, stop and report its path.
 
-- **First contact (cold start)**: run `.xpc/workflow.md` §0 (Cold-start protocol)
-- **Already know the project**: run `.xpc/workflow.md` §1 (Session-start protocol)
+## Task end
 
-## Task End (highest priority)
+Before the final summary, follow `.xpc/workflow.md` §4. Persist only
+material, verified knowledge or state. A no-op is valid.
 
-**Before outputting any summary to the user, first run `.xpc/workflow.md` §4 (Task-end protocol).**
-Trigger: task done, session end, or the user says "wrap up". Prioritize recording this session's pitfalls & decisions (non-rotting high-value knowledge); update the current-state snapshot best-effort.
+## Core
 
-## Core Principles (full version in workflow.md §5)
-
-- Diagnose before modifying; if unsure, ask, don't assume
-- One variable at a time in high-risk zones; repeated failure at the same spot = dead-end signal, roll back
-- All behavior must align with `.xpc/manifest.md`
+- Diagnose before modifying.
+- Inspect before asking; ask only about material ambiguity.
+- Change one variable at a time in high-risk areas.
+- Repeated failure at one point means stop and reassess.
+- Stay consistent with the manifest.

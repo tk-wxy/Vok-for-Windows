@@ -1,25 +1,12 @@
 # Agent entry
 
-> Project identity, stack & invariants live in `.xpc/manifest.md` — read it first.
+Read `.xpc/manifest.md` first. If it contains placeholders and the user
+requests initialization, follow `.xpc/init.md`. If the task concerns
+XPC itself, edit prompt source without filling consumer placeholders.
+Otherwise follow `.xpc/workflow.md` §0 or §1.
 
-**This file just routes. The single source of truth for all dev flow, protocol, and conventions is `.xpc/workflow.md` — follow it strictly.**
+Before the final summary, follow workflow §4. Persist only material,
+verified knowledge or state; no-op is valid.
 
-## Initialization Bootstrap (only when not yet initialized)
-
-If `.xpc/manifest.md` is still the unfilled template (its fields are still placeholder tokens) and the user asks to initialize (e.g. "please initialize") → run the initialization protocol in `.xpc/init.md`; otherwise ignore this section.
-
-## Startup Protocol
-
-- **First contact (cold start)**: run `.xpc/workflow.md` §0 (Cold-start protocol)
-- **Already know the project**: run `.xpc/workflow.md` §1 (Session-start protocol)
-
-## Task End (highest priority)
-
-**Before outputting any summary to the user, first run `.xpc/workflow.md` §4 (Task-end protocol).**
-Trigger: task done, session end, or the user says "wrap up". Prioritize recording this session's pitfalls & decisions (non-rotting high-value knowledge); update the current-state snapshot best-effort.
-
-## Core Principles (full version in workflow.md §5)
-
-- Diagnose before modifying; if unsure, ask, don't assume
-- One variable at a time in high-risk zones; repeated failure at the same spot = dead-end signal, roll back
-- All behavior must align with `.xpc/manifest.md`
+Diagnose before editing, inspect before asking, and use extra care in
+manifest high-risk zones.

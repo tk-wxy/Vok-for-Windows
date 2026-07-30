@@ -2,8 +2,12 @@
 
 > **This is the XPC knowledge base of a fictional project, to show what XPC looks like "filled in".**
 > `notch` is an imaginary cross-platform CLI quick-note tool (Node.js + TypeScript). There's **no real source
-> code** here — the point is the `.xpc/` knowledge layer: how cross-platform pitfalls, decisions, and iron rules
+> code** here — the point is the `.xpc/` knowledge layer: how cross-platform pitfalls, decisions, and scoped rules
 > get captured so any AI agent, after a cold start, stops re-stepping them.
+>
+> All incidents, dates, test names, and evidence below are **illustrative teaching material**, not measurements
+> from a real product. In a real knowledge base, evidence must point to reproducible tests, logs, source, or an
+> authoritative external constraint.
 
 ## Why look at this
 
@@ -26,7 +30,8 @@ been iterated over several sessions and accumulated real experience.
 
 Every file here carries a **trust level** at the top — XPC's core stance:
 
-- `manifest` / `rules` / `decisions` = **high** (pitfalls are historical fact, barely rot — most valuable)
+- `manifest` = **high** after human confirmation
+- `rules` / `decisions` = **high when their evidence, scope, and environment still match**
 - `memory.md §0` = **low** (current state goes stale; a directional lead only, verify against source before trusting)
 
 > That's XPC: **reference-first, constraint-second.** It helps the AI avoid pitfalls, work more reliably, and save

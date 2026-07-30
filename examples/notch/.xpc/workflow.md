@@ -1,163 +1,94 @@
-# Phase 2 Development Protocol (workflow.md)
+# Development Protocol
 
-> **System directive**: this is the core, full-lifecycle development workflow for this project.
-> This framework is **reference-first, constraint-second** — treat the knowledge here as high-quality
-> *leads* that help you avoid pitfalls and work more reliably, not as ceremony to execute mechanically.
+Use this file as guidance, not ceremony. Real code and verified
+results override stale notes.
 
----
+## Trust
 
-## Trust levels (the stance to take before reading any knowledge file)
+| File | Trust and use |
+|---|---|
+| `manifest.md` | High after user confirmation; project anchor |
+| `rules.md` | High only while evidence, scope, and status match |
+| `decisions.md` | High within the recorded scope |
+| `memory.md §0` | Low; use as a lead and verify |
+| `history.md` | Forensics only |
 
-Files differ in reliability — don't trust them all equally:
+## 0. Cold start
 
-| File | Content | Trust level | How to use |
-|------|---------|-------------|-----------|
-| `manifest.md` | Mission / architecture invariants / high-risk zones | **High** (human-confirmed at init) | Behavioral anchor; align to it |
-| `rules.md` | Pitfalls / dead ends / iron rules | **High** (it happened, so it's true) | Check first before acting, to avoid re-stepping |
-| `decisions.md` | Decision root causes + evidence | **High** | Consult when you need the "why" |
-| `memory.md §0` | Current-state snapshot | **Low (goes stale)** | A directional lead only; **verify against source before trusting** specific code/commands |
-| `history.md` | Archived sessions | — | Forensics only; not read by default |
+On first contact, model/tool switch, or return after a long gap:
 
-> **On conflict, the real code / actual run result wins.** Fix stale current-state records at wrap-up.
+1. Read `manifest.md`.
+2. Read `memory.md`.
+3. Scan the `rules.md` index and dead ends; read high-risk or relevant
+   rules in full.
+4. Scan the `decisions.md` table of contents; open relevant decisions
+   only.
+5. Read this workflow.
 
----
+You should now know the project, hard constraints, current stage, and
+next step.
 
-## 0. Cold-start protocol (run on first contact with this project)
+## 1. Session start
 
-> Applies to: a new agent's first session, first session after switching models, or re-entry after a long gap.
+1. Read `memory.md §0` and verify any detail you will rely on.
+2. Use the rules index for relevant modules.
+3. Open decisions only for needed root causes; search history only for
+   forensics.
 
-**Trigger**: if you have no context/memory of this project, run the cold start:
+## 2. Execute a task
 
-1. **Read identity**: `.xpc/manifest.md` (mission, stack, architecture invariants, high-risk zones)
-   - This is the immutable project constitution; all your actions must align with it.
-2. **Read current state**: `.xpc/memory.md` in full (§0 current state + §0A recent sessions)
-   - Quickly grasp progress, todos, and what happened recently.
-3. **Scan iron-rule index**: the index table at the top of `.xpc/rules.md` + the dead-ends list
-   - Sections flagged high-risk in the index must be read in full; others on demand.
-4. **Scan decisions ToC**: the table of contents at the top of `.xpc/decisions.md`
-   - Only scan the ToC to know which decisions exist; no need to read them all.
-5. **Read the workflow**: this file (workflow.md) in full
-   - Later sessions only re-read the relevant sections on demand.
+1. Derive intent, boundaries, and acceptance criteria from the request
+   and repository. Ask only if material ambiguity remains.
+2. Identify affected modules and manifest high-risk zones.
+3. Check relevant dead ends and decisions before choosing an approach.
+4. Diagnose before editing. In high-risk zones, change one variable at
+   a time. Keep tunable values named.
+5. Verify with tests, build, or execution. Label unavailable paths
+   `unverified`.
+6. If repeated attempts fail at the same point, stop, roll back when
+   appropriate, and reassess.
 
-After cold start you should be able to answer:
-- What is this project? What stage is it at?
-- What hard constraints must not be touched?
-- What should be done next?
+## 3. Task variants
 
----
+- **Feature**: preserve invariants; implement in small verifiable steps.
+- **Bug**: reproduce, locate root cause, apply the smallest fix, verify.
+- **Review**: check relevant rules and high-risk changes; report before
+  mutating unless the user requested fixes.
+- **Refactor**: require adequate tests; separate behavior changes; verify
+  after each step.
 
-## 1. Session-start protocol (progressive reading)
+## 4. Task end
 
-> Applies to: an agent that already knows the project starting a new session or task.
+First classify the result:
 
-1. **Must read**: `§0` in `.xpc/memory.md` (current-state snapshot), to confirm the latest progress.
-2. **Read when relevant**: use the `.xpc/rules.md` index to locate sections tied to the current task's module; read only those.
-3. **When you need root cause**: scan the ToC of `.xpc/decisions.md`, find the relevant `§`, read only that one.
-4. **Forensics**: `.xpc/history.md` is not read by default; grep it only when tracing history.
+- **No reusable knowledge or material state change**: no-op; do not
+  modify `.xpc/`.
+- **Material change**: update only the applicable files below.
 
----
+Updates:
 
-## 2. Task execution flow
+1. `rules.md`: add only reproduced/evidenced pitfalls or dead ends.
+   Include scope, evidence, verification date, status, index, and
+   symptom lookup.
+2. `decisions.md`: add only adopted or user-confirmed decisions.
+   Include scope, evidence, rejected alternatives, date, and status.
+3. `memory.md §0`: overwrite only when current state, next step, or
+   known issues materially changed.
+4. `memory.md §0A`: keep at most three sessions; move the oldest whole
+   entry to `history.md`.
 
-1. **Understand the requirement**
-   - Fully grasp user intent; if unsure, ask — never assume.
-   - Confirm task boundaries and acceptance criteria.
+Each fact has one home: identity in manifest, scoped constraints in
+rules, root causes in decisions, current state in memory, archives in
+history. Use pointers elsewhere. Never invent an entry to satisfy this
+protocol.
 
-2. **Impact analysis**
-   - Which modules are affected by this change?
-   - What are the potential risks?
-   - Does it touch a high-risk zone (see `manifest.md`)? If so, raise your alert level.
+## 5. Working principles
 
-3. **Plan check**
-   - Before acting, consult the dead-ends list in `.xpc/rules.md`.
-   - Avoid technical routes already proven to fail.
-   - Check `.xpc/decisions.md` for relevant past decisions.
-
-4. **Implement**
-   - In a high-risk zone, **change one variable at a time**.
-   - Diagnose before modifying; find the cause before you act.
-   - Extract every tunable parameter into a named constant.
-   - **A verified dumb approach beats an unverified clever one.**
-   - Stay consistent with the stack and architecture invariants locked in `manifest.md`.
-
-5. **Self-verify**
-   - After changes, run verification yourself (test, compile, or execute).
-   - If a path can't be run due to environment limits, honestly label it "unverified".
-
-6. **Dead-end detection**
-   - If repeated edits to the same spot keep failing, that's a **dead-end signal**.
-   - Roll back decisively and re-evaluate; don't grind endlessly.
-
----
-
-## 3. Special scenarios
-
-### 1. New feature
-- Confirm scope and acceptance criteria with the user before starting.
-- Assess impact on existing architecture; confirm it doesn't violate the invariants in `manifest.md`.
-- Iterate in small, individually verifiable steps.
-
-### 2. Bug fix / debug
-- Flow: reproduce → locate root cause → apply minimal fix → verify.
-- Always assume the simplest cause first; rule out the basics.
-- After fixing, consider whether this pit should become a new iron rule / dead end in `rules.md`.
-
-### 3. Code review
-- Check compliance against `rules.md`, item by item.
-- Focus on high-risk-zone changes.
-- Check whether the change introduced undocumented new coupling or constraints.
-
-### 4. Refactor
-- Ensure adequate test coverage before refactoring.
-- **Never mix refactor and behavior change**; commit and verify them separately.
-- After each refactoring step, verify system behavior is unchanged.
-- A refactor must not violate the invariants in `manifest.md`.
-
----
-
-## 4. Task-end protocol (update the knowledge base at wrap-up)
-
-> **Trigger (any one)**: task done, session about to end, or the user says "wrap up".
->
-> Two tiers: **"Must" is non-rotting high-value knowledge — don't skip it; "Best-effort" is volatile state —
-> imperfect is fine**, because the next agent verifies against real code anyway. Spend your effort on "Must" first.
-
-### Must — capture non-rotting, high-value knowledge (where this framework earns its keep)
-
-**1. Record pitfalls & dead ends (if you hit one) → `rules.md`**
-- These are historical facts, forever useful; they stop the next agent (or future you on another model) from re-stepping.
-- Add the new iron rule / dead end / lookup-table entry, and sync the top index.
-- Especially platform/environment-level pitfalls — write them down.
-
-**2. Record major decision root causes (if you made one) → `decisions.md`**
-- "Why this, what was rejected" — add a `§`, add a one-line summary to the ToC.
-
-### Best-effort — update the volatile current-state lead → `memory.md`
-
-**3. Overwrite `§0` snapshot**
-- Reflect the latest state and next step; write signposts, not detail. Incomplete is OK; just don't point the wrong way.
-
-**4. Age-out migration**
-- When `§0A` exceeds 3 sessions, migrate the oldest one wholesale into `history.md`, no copy left behind.
-
-### General constraints
-
-**5. Single source of truth**: each fact lives in exactly one place — identity → `manifest.md`, hard rules → `rules.md`, root cause → `decisions.md`, current state → `memory.md`, history → `history.md`. Elsewhere, put a one-line pointer only.
-
-**6. Short lines, no code dumps**: maintain docs as multi-line short bullets; no multi-thousand-char single lines; never paste large code blocks.
-
-> **The knowledge base will get messy and stale as development proceeds — that's normal.** Don't expect every session
-> to maintain it perfectly; a periodic, user-triggered "gardening" pass handles the cleanup — see `.xpc/garden.md`.
-
----
-
-## 5. Collaboration principles (the core spirit)
-
-- Diagnose before modifying.
-- One variable at a time in high-risk zones.
-- Run your own verification after changes; honestly label paths you couldn't run as "unverified".
-- A verified dumb approach beats an unverified clever one.
-- Repeated edits to the same spot that keep failing = dead-end signal; roll back decisively.
-- Extract tunable parameters into named constants.
-- **If unsure, ask — don't assume.**
-- All behavior must align with the project mission in `manifest.md`.
+- Evidence before authority.
+- Source and verified results beat notes.
+- A verified simple approach beats an unverified clever one.
+- Keep knowledge concise; store conclusions and pointers, not logs or
+  code dumps.
+- Inspect before asking; ask when ambiguity materially changes the
+  result.
+- Stay aligned with the manifest.

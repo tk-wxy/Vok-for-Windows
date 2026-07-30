@@ -1,7 +1,10 @@
-# Architecture Decisions & Pitfall Root Causes (decisions.md)
+# Architecture Decisions & Root Causes (decisions.md)
 
-> **Trust level: High (evidence-backed historical decisions).** Records "why we chose this"; append-only.
-> If a decision is later overturned, don't delete the old §; add a new § and note "supersedes §N".
+> **Trust level: High within the recorded scope when evidence is traceable.** Records "why we chose this";
+> append-only. If a decision is later overturned, keep it with status `superseded` and add a replacement §.
+>
+> **Example notice**: notch is fictional. The evidence below demonstrates the expected record shape and is not
+> a claim that these measurements were performed. Real projects must link to reproducible evidence.
 
 ## Table of Contents (decision summaries)
 *One line per §; scan the ToC to decide whether to read that section.*
@@ -16,30 +19,35 @@
 
 ### §1 File watching: chokidar vs native fs.watch
 - **Final approach**: use `chokidar`, with `usePolling` on network / WSL mounts (R7).
-- **Root cause & evidence**: native `fs.watch` is inconsistent across platforms — macOS `change` events often omit
-  the filename; Windows `recursive:true` sporadically misses deep dirs; Linux doesn't support recursive and needs
-  manual per-dir watches. In `test/watch.spec.ts`, on the same change set fs.watch dropped filenames 3/10 times on
-  macOS, chokidar was 10/10 stable.
+- **Scope**: `src/watch.ts`; Node.js 20; Windows/macOS/Linux, including UNC and WSL-mounted paths.
+- **Illustrative evidence**: a real project would attach `test/watch.spec.ts` results for the supported platform
+  matrix and the relevant issue references. The fictional scenario assumes native `fs.watch` produced incomplete
+  or inconsistent events while chokidar's normalized events and polling fallback passed the same fixture.
 - **Rejected alternatives & why**: ① hand-wrapping `fs.watch` + recursion — puts all cross-platform divergence on
   us, exactly the dead-end recorded; ② `@parcel/watcher` (faster native) — needs a prebuilt binary, adds install
   size and cross-platform build complexity, not worth it for a quick-note tool's scale.
+- **Decided / last verified**: 2026-04-18 / 2026-04-18
+- **Status**: active (illustrative)
 
 ### §2 Note writes: atomic write + Windows rename retry
 - **Final approach**: `writeFile(target.tmp-<rand>)` → `fsync` → `rename(tmp, target)`; on Windows, exponential
   backoff retry (5 tries, 20/40/80…ms) when rename throws `EPERM`/`EBUSY`.
-- **Root cause & evidence**: `writeFile(target)` has a "truncated, not yet fully written" window; `watch` or another
-  `notch` process reads an empty/partial file, and power loss loses the day's notes. After atomic write,
-  `test/store.concurrent.spec.ts` runs 100 concurrent read/writes with zero corruption. The Windows EPERM comes
-  from antivirus/search-indexer briefly holding the target handle — rename itself is correct, it just needs a retry;
-  measured, retry drops the failure rate from ~0.5% to 0.
+- **Scope**: `src/store.ts`; concurrent reads/writes on supported platforms; retry applies to Windows.
+- **Illustrative evidence**: a real project would attach the concurrent store fixture and Windows failure log.
+  The fictional reproduction demonstrates a reader observing a truncated target during in-place writes and
+  transient `EPERM`/`EBUSY` during rename; the atomic-write path with bounded retry passes that fixture.
 - **Rejected alternatives & why**: ① a file lock (`proper-lockfile`) — atomic rename is enough, extra locking is
   over-engineering; ② `unlink` target then rename — creates a larger "target doesn't exist" window, worse.
+- **Decided / last verified**: 2026-04-22 / 2026-04-22
+- **Status**: active (illustrative)
 
 ### §3 Config location: env-paths vs hand-rolled $HOME
 - **Final approach**: `env-paths('notch', { suffix: '' })` decides config and default repo location.
-- **Root cause & evidence**: `os.homedir()` may be empty or point somewhere unexpected on Windows service accounts
-  / CI runners; the macOS convention is `~/Library/Application Support`, not `~/.notch`. env-paths handles all three
-  conventions in one call. On CI (GitHub Actions windows-latest) the hand-rolled `$HOME` version failed wholesale;
-  switching to env-paths turned it green.
+- **Scope**: `src/config.ts`; default config/repository location on supported platforms.
+- **Illustrative evidence**: a real project would attach a platform-path test matrix and CI job links. The
+  fictional scenario assumes a hand-rolled home-directory path diverged from Windows and macOS conventions,
+  while `env-paths` returned the expected location for each fixture.
 - **Rejected alternatives & why**: hand-implementing `XDG_CONFIG_HOME` — only covers the Linux convention, still
   needs Windows/macOS special-casing, i.e. reinventing env-paths.
+- **Decided / last verified**: 2026-04-25 / 2026-04-25
+- **Status**: active (illustrative)

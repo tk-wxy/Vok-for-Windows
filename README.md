@@ -1,54 +1,24 @@
 English · **[简体中文](./README.zh-CN.md)**
 
-# XPC
+# XPC — durable project context for AI agents
 
-**A Markdown-based durable project memory framework for AI agents.**
+**New chat, same project. Different agent, same constraints.**
 
-XPC is a lightweight framework that enables AI coding agents to retain project context across conversations, sessions, and model switches. It helps agents remember project goals, architectural decisions, recurring pitfalls, and development conventions — without requiring a runtime, daemon, database, or external service.
+AI coding agents reason well inside one task, but project knowledge
+often disappears between sessions: architectural constraints get
+forgotten, the same platform bug is diagnosed again, and a model
+switch resets hard-won context.
 
-## Why XPC?
+XPC turns that knowledge into a small, structured set of Markdown
+files stored with the codebase. There is no daemon, database, account,
+or required runtime.
 
-AI agents are powerful at local reasoning, but they are stateless by default. In real-world development, this often means they:
+> XPC does not make a model stateful. It gives stateless agents a
+> durable, reviewable project handoff protocol.
 
-* Forget project constraints between sessions;
-* Re-discover the same bugs and edge cases repeatedly;
-* Lose context when switching between models or tools;
-* Ask questions that have already been answered.
+## Start in 30 seconds
 
-XPC solves this by turning valuable project knowledge into a structured set of Markdown files stored alongside the codebase, allowing both humans and agents to read, maintain, and reuse the information.
-
-## What does XPC provide?
-
-XPC organizes project knowledge into several clear categories:
-
-* **Project Constitution** — project goals, technology stack, principles, and non-negotiable constraints
-* **Rules** — recurring pitfalls and long-term lessons expressed as "symptom → rule"
-* **Decisions** — why certain choices were made and the reasoning behind them
-* **Memory** — current project state and important information from recent sessions
-* **Workflow** — how agents should understand and interact with the project
-* **History / Garden** — archived or low-priority information that should not interfere with current work
-
-The core idea is simple: keep high-value knowledge close to the code, expressed in Markdown — a format that both humans and AI agents can easily understand and maintain.
-
-## Design Principles
-
-XPC is built around three principles:
-
-### 1. Root-level visibility
-
-Project memory files should live at the repository root so AI agents can discover them automatically.
-
-### 2. Persistent knowledge over temporary conversations
-
-Long-term project knowledge should be stored in Markdown files, not trapped inside temporary chat sessions.
-
-### 3. Different levels of confidence
-
-Not all information has the same reliability. Some notes are stable and authoritative, while others are temporary observations that should be verified before use.
-
-## Quick Start
-
-To initialize XPC in a new project, clone the repository into your project root:
+For a new empty project:
 
 ```bash
 mkdir my-project
@@ -58,62 +28,121 @@ rm -rf .git
 git init
 ```
 
-Then ask your AI agent to initialize the project context:
+Then tell your agent:
 
-> My project is ... Please initialize the project context.
+> My project is … Please initialize XPC.
 
-XPC is language-agnostic and works with common AI agent instruction files such as `AGENTS.md`, `CLAUDE.md`, and other root-level agent configuration files.
+For an existing repository, do not overwrite its current agent
+instructions. Follow [the merge-safe installation guide](./docs/INSTALL.md).
 
-## Repository Structure
+## Why it works
 
-A typical XPC setup contains:
+XPC separates knowledge by role and reliability:
 
+| File | Role | Trust stance |
+|---|---|---|
+| `manifest.md` | Mission, stack, invariants, high-risk zones | High after human confirmation |
+| `rules.md` | Scoped pitfalls, dead ends, symptom lookup | High when evidence and scope still match |
+| `decisions.md` | Adopted choices, root causes, rejected alternatives | High within the recorded scope |
+| `memory.md` | Current state and up to three recent sessions | Low; verify against source |
+| `workflow.md` | Startup, execution, and wrap-up protocol | Normative |
+| `history.md` / `garden.md` | Archive and periodic maintenance | Read on demand |
+
+Three ideas do most of the work:
+
+1. **Root-discoverable routing** — the agent's normal root entry file
+   points to the shared `.xpc/` knowledge base.
+2. **Progressive reading** — cold start reads only the high-value
+   index and current signposts; details are loaded when relevant.
+3. **Evidence before authority** — a note is not trustworthy merely
+   because an agent wrote it. Rules and decisions record scope,
+   evidence, verification date, and status.
+
+## The lifecycle
+
+```text
+initialize once
+      ↓
+cold start / session start
+      ↓
+inspect → implement → verify
+      ↓
+persist only material knowledge or state
+      ↓
+periodic gardening
 ```
-AGENTS.md / CLAUDE.md
+
+A read-only task or routine edit may finish with no `.xpc/` change.
+XPC is a memory discipline, not a documentation-churn ritual.
+
+## Repository layout
+
+```text
+AGENTS.md / CLAUDE.md / another supported entry
 .xpc/
+├── init.md
 ├── manifest.md
+├── workflow.md
 ├── rules.md
 ├── decisions.md
 ├── memory.md
-├── workflow.md
 ├── history.md
 └── garden.md
 ```
 
-A minimal setup can start with:
+The smallest complete pre-initialization setup is one supported entry
+file plus `init.md`, `manifest.md`, `workflow.md`, `rules.md`,
+`decisions.md`, and `memory.md`. See
+[installation details](./docs/INSTALL.md#minimal-closed-loop).
 
-* `AGENTS.md`
-* `.xpc/manifest.md`
-* `.xpc/rules.md`
+## See a filled example
 
-## Use Cases
+[`examples/notch/`](./examples/notch/) shows the knowledge layer of a
+fictional cross-platform CLI. It demonstrates structure and writing
+style; its scenarios are illustrative, not empirical product claims.
 
-XPC is especially useful for:
+The most important file is
+[`examples/notch/.xpc/rules.md`](./examples/notch/.xpc/rules.md):
+the symptom-to-rule table shows how a future agent avoids repeating
+an already-understood failure.
 
-* Long-term projects powered by AI agents;
-* Codebases with many implicit conventions;
-* Projects where repeated mistakes are costly;
-* Individual developers or small teams who want structured project knowledge.
+## Supported agent entry points
 
-## When XPC may not be necessary
+The repository includes thin adapters for AGENTS.md-aware tools,
+Claude Code, Gemini CLI, Cursor, GitHub Copilot, Cline, Roo Code,
+Windsurf, Aider, Augment, and Amazon Q. Keep only the adapters the
+project uses; they all route to the same `.xpc/` source of truth.
 
-XPC provides less value for:
+## Where XPC fits
 
-* One-off scripts;
-* Short-lived experiments;
-* Projects that rarely use AI agents;
-* Teams that already have mature external knowledge management systems.
+XPC is most useful for:
 
-## Maintenance
+- long-lived projects developed regularly with agents;
+- codebases with implicit constraints or platform-specific pitfalls;
+- solo developers and small teams switching between models or tools;
+- work where rediscovering a known failure is expensive.
 
-XPC is not self-maintaining. Its value comes from continuously evolving with the project.
+It adds little value to one-off scripts, short experiments, or teams
+that already have a well-maintained equivalent knowledge system.
 
-Recommended practices:
+XPC is intentionally not self-maintaining. Agents update material
+knowledge during work, while humans periodically review the result.
+The gardening prompt makes that maintenance explicit.
 
-* Keep rules concise, stable, and actionable;
-* Archive outdated knowledge instead of simply deleting it;
-* Record important decisions when they are made;
-* Regularly remove low-value memory.
+## Maintainer check
+
+Before release, ask an agent to verify that placeholders remain intact,
+entry files still route to `.xpc/`, indexes match their bodies, recent
+memory has at most three sessions, and prompt text stays concise.
+
+For deterministic structural checks, maintainers may run:
+
+```bash
+python tools/check_xpc.py
+```
+
+It uses only the Python standard library and checks structure, not
+wording or style. It is not part of the consumer runtime.
 
 ## License
 
