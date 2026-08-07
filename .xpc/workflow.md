@@ -51,7 +51,18 @@ next step.
 ## 3. Task variants
 
 - **Feature**: preserve invariants; implement in small verifiable steps.
-- **Bug**: reproduce, locate root cause, apply the smallest fix, verify.
+- Bug: reproduce and trace the causal chain to the actual mechanism
+  (not just the nearest upstream event). Fix the mechanism, not the
+  visible symptom.
+
+  Reject fixes that suppress an effect without addressing its cause —
+  e.g. hardcoding visual properties, swallowing errors, adding delays
+  without understanding the timing issue, or gating around broken logic.
+  If the fix doesn't explain *why* the bug occurred, it's not done.
+
+  Verify: (1) the original mechanism no longer triggers, not just that
+  it's no longer visible, and (2) the change hasn't relocated or
+  disguised the failure elsewhere.
 - **Review**: check relevant rules and high-risk changes; report before
   mutating unless the user requested fixes.
 - **Refactor**: require adequate tests; separate behavior changes; verify
