@@ -1,9 +1,9 @@
 # Cline entry
 
-Read `.xpc/manifest.md` first. If it contains placeholders and the user
-requests initialization, follow `.xpc/init.md`. If the task concerns
-XPC itself, edit prompt source without filling consumer placeholders.
-Otherwise follow `.xpc/workflow.md` §0 or §1.
+Read `.lore/manifest.md` first. If it contains placeholders and the user
+requests initialization, follow `.lore/init.md`. If the task concerns
+Lore itself, edit prompt source without filling consumer placeholders.
+Otherwise follow `.lore/workflow.md` §0 or §1.
 
 Before the final summary, follow workflow §4. Persist only material,
 verified knowledge or state; no-op is valid.

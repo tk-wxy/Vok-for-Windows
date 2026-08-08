@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small, dependency-free structural check for XPC maintainers."""
+"""Small, dependency-free structural check for Lore maintainers."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def read(relative: str) -> str:
 
 
 def check_placeholders() -> None:
-    manifest = read(".xpc/manifest.md")
+    manifest = read(".lore/manifest.md")
     tokens = (
         "{{PROJECT_NAME}}",
         "{{PROJECT_DESCRIPTION}}",
@@ -56,7 +56,7 @@ def check_entries() -> None:
         "Augment": ("augment-guidelines.md",),
         "Amazon Q": (".amazonq/rules/core.md",),
     }
-    routes = (".xpc/manifest.md", ".xpc/init.md", ".xpc/workflow.md")
+    routes = (".lore/manifest.md", ".lore/init.md", ".lore/workflow.md")
     for name, paths in groups.items():
         text = "\n".join(read(path) for path in paths)
         for route in routes:
@@ -85,8 +85,8 @@ def ids(text: str, kind: str) -> tuple[set[str], set[str]]:
 def check_indexes() -> None:
     for prefix in ("", "examples/notch/"):
         for relative, kind in (
-            (".xpc/rules.md", "rules"),
-            (".xpc/decisions.md", "decisions"),
+            (".lore/rules.md", "rules"),
+            (".lore/decisions.md", "decisions"),
         ):
             path = prefix + relative
             index, body = ids(read(path), kind)
@@ -97,12 +97,12 @@ def check_indexes() -> None:
 
 
 def check_memory() -> None:
-    for path in (".xpc/memory.md", "examples/notch/.xpc/memory.md"):
+    for path in (".lore/memory.md", "examples/notch/.lore/memory.md"):
         count = len(re.findall(r"^### Session\b", read(path), re.MULTILINE))
         if count > 3:
             errors.append(f"{path}: {count} recent sessions, maximum is 3")
 
-    template = read(".xpc/memory.md")
+    template = read(".lore/memory.md")
     for field in (
         "**Status**:",
         "**Latest progress**:",
@@ -114,7 +114,7 @@ def check_memory() -> None:
 
 
 def check_workflow_sync() -> None:
-    if read(".xpc/workflow.md") != read("examples/notch/.xpc/workflow.md"):
+    if read(".lore/workflow.md") != read("examples/notch/.lore/workflow.md"):
         errors.append("example workflow differs from canonical workflow")
 
 
@@ -129,7 +129,7 @@ def main() -> int:
         for error in errors:
             print(f"ERROR: {error}")
         return 1
-    print("XPC structure check passed.")
+    print("Lore structure check passed.")
     return 0
 
 

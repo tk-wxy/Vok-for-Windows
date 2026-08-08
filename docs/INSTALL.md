@@ -1,16 +1,16 @@
-# Installing XPC
+# Installing Lore
 
-XPC's core is a set of Markdown files. It has no runtime dependency.
+Lore's core is a set of Markdown files. It has no runtime dependency.
 Choose the path that matches the repository you are working in.
 
 ## New, empty project
 
-Clone XPC directly into the empty project directory:
+Clone Lore directly into the empty project directory:
 
 ```bash
 mkdir my-project
 cd my-project
-git clone https://github.com/tk-wxy/XPC.md.git .
+git clone https://github.com/tk-wxy/lore.git .
 rm -rf .git
 git init
 ```
@@ -23,9 +23,9 @@ Remove-Item -LiteralPath .git -Recurse -Force
 
 Then tell the agent:
 
-> My project is … Please initialize XPC.
+> My project is … Please initialize Lore.
 
-The entry file routes the agent to `.xpc/init.md`. Initialization
+The entry file routes the agent to `.lore/init.md`. Initialization
 fills the project-specific knowledge base and asks for confirmation.
 
 ## Existing repository
@@ -33,26 +33,26 @@ fills the project-specific knowledge base and asks for confirmation.
 Do not clone into a non-empty repository and do not overwrite an
 existing agent entry file.
 
-1. Download or clone XPC into a temporary directory.
-2. Check whether the repository already contains `.xpc/`.
-   - If it does not, copy XPC's `.xpc/` directory into the root.
+1. Download or clone Lore into a temporary directory.
+2. Check whether the repository already contains `.lore/`.
+   - If it does not, copy Lore's `.lore/` directory into the root.
    - If it does, stop and review it manually; never overwrite an
-     existing `.xpc/` knowledge base.
+     existing `.lore/` knowledge base.
 3. Choose the entry file for the agent you use.
-4. If that entry file does not exist, copy XPC's version.
+4. If that entry file does not exist, copy Lore's version.
 5. If it already exists, merge this routing contract into it:
 
 ```text
-Read .xpc/manifest.md first.
+Read .lore/manifest.md first.
 If it still contains placeholders and the user asks to initialize,
-follow .xpc/init.md.
-Otherwise follow .xpc/workflow.md for startup and task-end handling.
+follow .lore/init.md.
+Otherwise follow .lore/workflow.md for startup and task-end handling.
 ```
 
 6. Keep existing project-specific instructions. If they conflict with
-XPC, resolve the conflict explicitly instead of silently replacing
+Lore, resolve the conflict explicitly instead of silently replacing
 one side.
-7. Ask the agent to initialize XPC for the existing repository. It
+7. Ask the agent to initialize Lore for the existing repository. It
 should inspect source, commands, and configuration before filling the
 manifest.
 
@@ -74,7 +74,7 @@ Use only the adapters needed by the project:
 | Augment | `augment-guidelines.md` |
 | Amazon Q | `.amazonq/rules/core.md` |
 
-Deleting unused adapters is safe. The `.xpc/` files are the shared
+Deleting unused adapters is safe. The `.lore/` files are the shared
 source of truth.
 
 ## Minimal closed loop
@@ -82,12 +82,12 @@ source of truth.
 Before initialization, the smallest complete setup is:
 
 - one supported entry file;
-- `.xpc/init.md`;
-- `.xpc/manifest.md`;
-- `.xpc/workflow.md`;
-- `.xpc/rules.md`;
-- `.xpc/decisions.md`;
-- `.xpc/memory.md`.
+- `.lore/init.md`;
+- `.lore/manifest.md`;
+- `.lore/workflow.md`;
+- `.lore/rules.md`;
+- `.lore/decisions.md`;
+- `.lore/memory.md`.
 
 `history.md` and `garden.md` are optional operational aids. After
 initialization, `init.md` may be removed as described by the protocol.

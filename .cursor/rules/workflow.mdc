@@ -1,7 +1,7 @@
 ---
-description: XPC task-end protocol
+description: Lore task-end protocol
 alwaysApply: true
 ---
 
-Before the final summary, follow `.xpc/workflow.md` §4. Persist only
+Before the final summary, follow `.lore/workflow.md` §4. Persist only
 material, verified knowledge or state; no-op is valid.

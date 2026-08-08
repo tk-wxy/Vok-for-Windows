@@ -4,7 +4,7 @@ User-triggered maintenance only. Do not read during normal startup.
 
 ## Prompt
 
-Review `.xpc/` as a librarian. Do not change product code; read it only
+Review `.lore/` as a librarian. Do not change product code; read it only
 to verify documentation.
 
 1. **Current state**
