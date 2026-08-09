@@ -73,7 +73,7 @@ next step.
 First classify the result:
 
 - **No reusable knowledge or material state change**: no-op; do not
-  modify `.lore/`.
+  modify `.apc/`.
 - **Material change**: update only the applicable files below.
 
 Updates:

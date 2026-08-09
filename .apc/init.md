@@ -39,7 +39,7 @@ user confirmation and correct discrepancies before development.
 
 After confirmation, you may remove:
 
-- `.lore/init.md`;
+- `.apc/init.md`;
 - placeholder examples and fill-in hints;
 - bundled framework README files, `examples/`, and `tools/`.
 

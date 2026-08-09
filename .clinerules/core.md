@@ -1,9 +1,9 @@
 # Cline entry
 
-Read `.lore/manifest.md` first. If it contains placeholders and the user
-requests initialization, follow `.lore/init.md`. If the task concerns
-Lore itself, edit prompt source without filling consumer placeholders.
-Otherwise follow `.lore/workflow.md` §0 or §1.
+Read `.apc/manifest.md` first. If it contains placeholders and the user
+requests initialization, follow `.apc/init.md`. If the task concerns
+APC itself, edit prompt source without filling consumer placeholders.
+Otherwise follow `.apc/workflow.md` §0 or §1.
 
 Before the final summary, follow workflow §4. Persist only material,
 verified knowledge or state; no-op is valid.

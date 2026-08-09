@@ -1,8 +1,8 @@
 English · **[简体中文](./README.zh-CN.md)**
 
-# Lore — durable project context for AI agents
+# APC — durable project context for AI agents
 
-> Formerly known as XPC.
+> Formerly known as Lore.
 
 **New chat, same project. Different agent, same constraints.**
 
@@ -11,11 +11,11 @@ often disappears between sessions: architectural constraints get
 forgotten, the same platform bug is diagnosed again, and a model
 switch resets hard-won context.
 
-Lore turns that knowledge into a small, structured set of Markdown
+APC turns that knowledge into a small, structured set of Markdown
 files stored with the codebase. There is no daemon, database, account,
 or required runtime.
 
-> Lore does not make a model stateful. It gives stateless agents a
+> APC does not make a model stateful. It gives stateless agents a
 > durable, reviewable project handoff protocol.
 
 ## Start in 30 seconds
@@ -25,21 +25,21 @@ For a new empty project:
 ```bash
 mkdir my-project
 cd my-project
-git clone https://github.com/tk-wxy/lore.git .
+git clone https://github.com/tk-wxy/apc.git .
 rm -rf .git
 git init
 ```
 
 Then tell your agent:
 
-> My project is … Please initialize Lore.
+> My project is … Please initialize APC.
 
 For an existing repository, do not overwrite its current agent
 instructions. Follow [the merge-safe installation guide](./docs/INSTALL.md).
 
 ## Why it works
 
-Lore separates knowledge by role and reliability:
+APC separates knowledge by role and reliability:
 
 | File | Role | Trust stance |
 |---|---|---|
@@ -53,7 +53,7 @@ Lore separates knowledge by role and reliability:
 Three ideas do most of the work:
 
 1. **Root-discoverable routing** — the agent's normal root entry file
-   points to the shared `.lore/` knowledge base.
+   points to the shared `.apc/` knowledge base.
 2. **Progressive reading** — cold start reads only the high-value
    index and current signposts; details are loaded when relevant.
 3. **Evidence before authority** — a note is not trustworthy merely
@@ -74,14 +74,14 @@ persist only material knowledge or state
 periodic gardening
 ```
 
-A read-only task or routine edit may finish with no `.lore/` change.
-Lore is a memory discipline, not a documentation-churn ritual.
+A read-only task or routine edit may finish with no `.apc/` change.
+APC is a memory discipline, not a documentation-churn ritual.
 
 ## Repository layout
 
 ```text
 AGENTS.md / CLAUDE.md / another supported entry
-.lore/
+.apc/
 ├── init.md
 ├── manifest.md
 ├── workflow.md
@@ -104,7 +104,7 @@ fictional cross-platform CLI. It demonstrates structure and writing
 style; its scenarios are illustrative, not empirical product claims.
 
 The most important file is
-[`examples/notch/.lore/rules.md`](./examples/notch/.lore/rules.md):
+[`examples/notch/.apc/rules.md`](./examples/notch/.apc/rules.md):
 the symptom-to-rule table shows how a future agent avoids repeating
 an already-understood failure.
 
@@ -113,11 +113,11 @@ an already-understood failure.
 The repository includes thin adapters for AGENTS.md-aware tools,
 Claude Code, Gemini CLI, Cursor, GitHub Copilot, Cline, Roo Code,
 Windsurf, Aider, Augment, and Amazon Q. Keep only the adapters the
-project uses; they all route to the same `.lore/` source of truth.
+project uses; they all route to the same `.apc/` source of truth.
 
-## Where Lore fits
+## Where APC fits
 
-Lore is most useful for:
+APC is most useful for:
 
 - long-lived projects developed regularly with agents;
 - codebases with implicit constraints or platform-specific pitfalls;
@@ -127,20 +127,20 @@ Lore is most useful for:
 It adds little value to one-off scripts, short experiments, or teams
 that already have a well-maintained equivalent knowledge system.
 
-Lore is intentionally not self-maintaining. Agents update material
+APC is intentionally not self-maintaining. Agents update material
 knowledge during work, while humans periodically review the result.
 The gardening prompt makes that maintenance explicit.
 
 ## Maintainer check
 
 Before release, ask an agent to verify that placeholders remain intact,
-entry files still route to `.lore/`, indexes match their bodies, recent
+entry files still route to `.apc/`, indexes match their bodies, recent
 memory has at most three sessions, and prompt text stays concise.
 
 For deterministic structural checks, maintainers may run:
 
 ```bash
-python tools/check_lore.py
+python tools/check_apc.py
 ```
 
 It uses only the Python standard library and checks structure, not
