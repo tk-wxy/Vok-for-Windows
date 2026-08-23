@@ -1,41 +1,21 @@
-# Scoped Rules and Dead Ends
+# 范围规则与死路
 
-> High trust only while evidence, scope, environment, and status match.
-> Record reproduced or authoritative constraints, never hunches.
+> 只有证据、范围、环境和状态仍匹配时才具备高可信度。仅记录已复现或有权威依据的约束，不记录猜测。
 
-Keep invalidated entries with strikethrough and the reason/date.
+失效条目保留删除线，并注明原因和日期。
 
-## Index
+## 索引
 
-Scan this table and dead ends at startup. Open full rules only when
-relevant or high-risk.
+暂无已验证规则。
 
-| ID | Summary | Section | High-risk |
-|---|---|---|---|
-| R1 | [one-line summary] | Core | [yes/no] |
+## 规则
 
-## Rules
+暂无。
 
-### Core
+## 死路
 
-- [ ] R1: [directive] - [reason] - see decisions.md §[id]
-  - Scope: [module/platform/version]
-  - Evidence: [test/log/source/reference]
-  - Last verified: [YYYY-MM-DD]
-  - Status: active
+暂无。
 
-### {{HIGH_RISK_AREAS}}
+## 症状索引
 
-- [Add a rule only after evidence exists.]
-
-## Dead Ends
-
-- [failed route] -> [failure reason]
-  - Scope: [module/platform/version]
-  - Evidence: [test/log/source/reference]
-  - Last verified: [YYYY-MM-DD]
-  - Status: active
-
-## Symptom Lookup
-
-- [symptom] -> check R[id]
+暂无。

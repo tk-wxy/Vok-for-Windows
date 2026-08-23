@@ -1,39 +1,86 @@
-# Project Manifest
+# 项目清单
 
-> High trust after initialization and user confirmation.
-> `{{...}}` means this consumer template is not initialized.
+> 已于 2026-08-23 经用户确认，作为高可信项目锚点。
 
-## Mission
+## 使命
 
-- **Name**: {{PROJECT_NAME}}
-- **Positioning**: {{PROJECT_DESCRIPTION}}
-- **Goals**: {{CORE_GOALS}}
-- **Non-goals**: {{NON_GOALS}}
+- **名称**：Vok
+- **定位**：面向 Windows 的全屏桌面工作台，通过全局快捷键快速呼出并在完成操作后隐藏，作为用户当前工作环境之外的“第二桌面”。
+- **目标**：
+  - 首期可靠交付启动台、剪贴板、Vok 呼出/隐藏与焦点恢复流程，以及必要的基础设置和数据保护能力；
+  - 减少用户在开始菜单、资源管理器、剪贴板工具和多个窗口之间反复切换的成本；
+  - 保证长时间后台运行、多次显隐、拖放、多显示器和高 DPI 场景下的正确性与稳定性能；
+  - 为中转站、界面搜索和增强搜索保留清晰边界，作为后续正式功能持续演进。
+- **非目标**：
+  - 首期不正式实现中转站和增强搜索，也不以占位界面、无效开关或虚假能力冒充完成；
+  - 不擅自移动、修改或删除用户原文件，不以删除既定功能解决性能问题；
+  - 未经用户确认，不扩展需求范围或改变已确定的功能范围与界面结构；
+  - 不复用 `D:\dev\workbench-app` 的代码实现；该项目仅作为界面、功能与样式参考和性能反例。
 
-## Locked stack
+## 锁定技术栈
 
-{{TECH_STACK}}
+以下为根据姊妹项目实际配置形成并经用户确认的技术基线：
 
-## Architecture invariants
+- 平台：Windows 桌面应用；
+- 语言与运行时：C#、.NET 8（`net8.0-windows`）；
+- UI：WPF、WPF-UI；
+- 应用架构：MVVM、CommunityToolkit.Mvvm、Microsoft.Extensions.DependencyInjection、Microsoft.Extensions.Hosting；
+- 持久化：Microsoft.Data.Sqlite；
+- 系统集成：按需通过 Win32 / Windows 桌面 API 实现全局快捷键、窗口与焦点、剪贴板、拖放、多显示器和高 DPI 行为；
+- 测试：xUnit、Microsoft.NET.Test.Sdk。
 
-Changing an invariant requires a recorded root cause in
-`decisions.md` and user confirmation.
+## 架构不变量
 
-- {{ARCHITECTURE_INVARIANTS}}
+变更不变量必须先在 `decisions.md` 中记录根因并取得用户确认。
 
-## High-risk zones
+- 使用 Windows 原生 WPF 路线，不采用 WebView2/Tauri 作为 UI 运行时；性能、后台资源占用和原生交互是架构约束，而非后期装饰性优化。
+- 启动台、剪贴板、设置、中转站和搜索保持模块边界；应用壳只协调宿主级窗口生命周期与跨模块契约，不形成承载全部业务的“上帝组件”。
+- 每次呼出都捕获有效的外部目标窗口上下文；隐藏、启动和粘贴流程显式处理焦点交还，并覆盖成功、失败、取消和重复触发。
+- 用户文件只按功能需要被引用或打开；Vok 不得擅自移动、修改或删除原文件。持久化异常必须可降级或恢复，不能阻止应用启动。
+- 启动台内容和顺序、剪贴板规则与历史、设置以及后续中转站引用均须持久化并受到数据保护；剪贴板必须限制重复、容量、保留时间与敏感内容留存。
+- 设置和功能入口只展示真实可用能力；后续功能可以保留领域边界，但不得用占位 UI 冒充完成，也不得从路线中遗忘或删除。
+- 高风险交互优先采用明确的生命周期、状态与事件契约；不得依靠不明原因的固定延时、吞错或视觉遮掩修复焦点、拖放和显隐问题。
 
-- {{HIGH_RISK_AREAS}}
+## 高风险区域
 
-## Project structure
+- 全局快捷键、窗口呼出/隐藏、输入就绪、目标窗口快照与焦点恢复；
+- 剪贴板监听、格式处理、去重、自写回流、容量/时限、敏感数据与向原窗口粘贴；
+- 文件拖入、拖出、排序、取消、多选以及拖放期间的误隐藏和重复操作；
+- 启动项目、Shell/权限边界、目标程序前台激活与失败降级；
+- SQLite 与用户数据持久化、顺序一致性、异常/损坏恢复和升级兼容；
+- 长时间后台运行、反复显隐、图片/大量条目带来的内存、CPU、GPU 和资源泄漏；
+- 多显示器、缩放变化、高 DPI、工作区几何和不同权限级别窗口。
 
-{{PROJECT_STRUCTURE}}
+## 项目结构
 
-## Common commands
+当前为绿地项目，以下结构均为规划状态，尚未创建产品代码：
 
-{{COMMON_COMMANDS}}
+```text
+src/
+├── Vok/                       # WPF 应用与宿主壳
+│   ├── Common/                # 跨模块契约、消息和值对象
+│   ├── Infrastructure/        # Win32、剪贴板、存储等平台实现
+│   └── Modules/
+│       ├── Launcher/          # 首期：启动台
+│       ├── Clipboard/         # 首期：剪贴板
+│       ├── Settings/          # 首期：必要设置与数据保护
+│       ├── Stage/             # 后续：中转站领域边界，不提供占位 UI
+│       └── Search/            # 后续：界面/增强搜索领域边界，不提供占位 UI
+└── Vok.Tests/                 # 单元、契约与生命周期测试
+.apc/                          # 项目知识与开发协议
+```
 
-## Editing
+## 常用命令
 
-After initialization, change this file only for fundamental project
-changes. Record the decision first. Entry files remain generic routes.
+产品工程尚未创建；以下命令为规划命令，创建 `src/Vok.sln` 后生效：
+
+```powershell
+dotnet restore src/Vok.sln
+dotnet build src/Vok.sln
+dotnet test src/Vok.sln
+dotnet run --project src/Vok/Vok.csproj
+```
+
+## 编辑规则
+
+用户确认初始化后，仅在项目发生根本性变化时修改本文件，并先记录相应决策。根目录的 agent 入口文件保持通用路由。

@@ -1,33 +1,31 @@
-# Current State
+# 当前状态
 
-> Low trust: use this as a lead and verify against source or execution.
+> 低可信：将这里作为线索，依赖前须用源码或执行结果核验。
 
-Rules:
+规则：
 
-- `§0` always contains exactly the four bullets below; overwrite it.
-- Never put a session changelog in `§0`.
-- Keep at most three `§0A` sessions; move older entries whole to
-  `history.md`.
-- Identity belongs in `manifest.md`, constraints in `rules.md`, and
-  root causes in `decisions.md`.
+- `§0` 始终且只能包含下面四条；更新时整体覆写。
+- 不要在 `§0` 中记录会话流水。
+- `§0A` 最多保留三次会话；将最旧的完整条目移至 `history.md`。
+- 项目标识归 `manifest.md`，范围约束归 `rules.md`，根因归 `decisions.md`。
 
-## §0 Snapshot
+## §0 快照
 
-- **Status**: [current development stage]
-- **Latest progress**: [most recent material result]
-- **Next step**: [top upcoming task]
-- **Known issues**: [unresolved issues or "none"]
+- **状态**：绿地项目；APC 初始化基线已经用户确认并完成脚手架清理，尚无产品代码。
+- **最近进展**：使命、C#/.NET 8/WPF 技术栈、架构不变量、高风险区域、规划结构和命令已获确认；一次性 APC 脚手架已清理并形成 Vok 的首次项目基线。
+- **下一步**：根据已确认清单设计并创建可构建、可测试的 Vok 产品工程骨架。
+- **已知问题**：暂无已验证的产品缺陷；`src/Vok.sln` 尚未创建，因此清单中的构建和测试命令当前不可执行。
 
-## §0A Recent sessions
+## §0A 最近会话
 
-### Session [YYYY-MM-DD HH:MM] - [topic]
+### 会话 2026-08-23 22:52 - 根据初始需求初始化 APC
 
-- [material step or conclusion]
-- [verification or next-step pointer]
+- 从 `初始需求.md` 提炼产品边界、首期范围、核心体验和数据保护要求，并确认当前仓库尚无产品代码。
+- 只检查参考项目的顶层结构与构建配置：姊妹项目实证为 .NET 8/WPF，母项目实证为 Tauri/React/WebView2；初始化基线已获用户确认，相关一次性脚手架已清理。
 
-## Pointers
+## 指引
 
-- Identity, stack, structure, commands: `manifest.md`
-- Scoped rules and dead ends: `rules.md`
-- Decision root causes: `decisions.md`
-- Older sessions: `history.md`
+- 标识、技术栈、结构和命令：`manifest.md`
+- 范围规则与死路：`rules.md`
+- 决策根因：`decisions.md`
+- 更早会话：`history.md`

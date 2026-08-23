@@ -1,20 +1,11 @@
-# Decisions
+# 决策
 
-> High trust within recorded scope when evidence is traceable.
-> Append adopted or user-confirmed decisions, not brainstorms.
-> Keep superseded decisions and point to their replacement.
+> 证据可追溯时，在记录范围内具备高可信度。只追加已采用或经用户确认且需要独立记录根因的决策，不记录头脑风暴。被取代的决策应保留并指向替代项。
 
-## Index
+## 索引
 
-- §1 [title] - [conclusion]
+暂无独立决策记录。
 
-## Details
+## 详情
 
-### §1 [title]
-
-- **Final approach**: [adopted approach]
-- **Scope**: [modules/platforms/versions]
-- **Evidence and root cause**: [test/log/source/reference]
-- **Rejected alternatives**: [option and reason]
-- **Decided / last verified**: [YYYY-MM-DD] / [YYYY-MM-DD]
-- **Status**: active
+暂无。
