@@ -130,12 +130,12 @@ public static class VokHostInteractionProbe
         return new WindowSnapshot { Handle = window, Visible = IsWindowVisible(window), Rect = rect };
     }
 
-    public static RECT GetMonitorRect(IntPtr window)
+    public static RECT GetMonitorWorkArea(IntPtr window)
     {
         IntPtr monitor = MonitorFromWindow(window, MonitorDefaultToNearest);
         var info = new MONITORINFO { Size = (uint)Marshal.SizeOf<MONITORINFO>() };
         if (monitor == IntPtr.Zero || !GetMonitorInfo(monitor, ref info)) throw new InvalidOperationException("Monitor lookup failed.");
-        return info.Monitor;
+        return info.Work;
     }
 
     public static IntPtr GetKeyboardFocusWindow()
@@ -329,7 +329,7 @@ try {
     $target = [VokHostInteractionProbe]::GetForegroundWindow()
     if ($target -eq [IntPtr]::Zero) { throw 'No external foreground target is available.' }
     $targetFocus = [VokHostInteractionProbe]::GetKeyboardFocusWindow()
-    $monitorRect = [VokHostInteractionProbe]::GetMonitorRect($target)
+    $monitorWorkArea = [VokHostInteractionProbe]::GetMonitorWorkArea($target)
     if ($WarmupMilliseconds -gt 0) { Start-Sleep -Milliseconds $WarmupMilliseconds }
 
     # Freeze the process set once. The hot loop never performs CIM/process-tree discovery.
@@ -344,7 +344,7 @@ try {
         } "$Label did not expose the Vok M0 diagnostic contract."
     }
 
-    $baselinePixels = if ($SampleSparsePixels) { [VokHostInteractionProbe]::SamplePixels([VokHostInteractionProbe]::GetMonitorRect($target)) } else { $null }
+    $baselinePixels = if ($SampleSparsePixels) { [VokHostInteractionProbe]::SamplePixels([VokHostInteractionProbe]::GetMonitorWorkArea($target)) } else { $null }
     $resourceSamples = @()
     $resourceSamples += Get-TreeResourceSnapshot $treeIds 'never-shown-hidden-baseline' 0
     $cyclesResult = @()
@@ -383,8 +383,8 @@ try {
             if ($null -eq $visibleMs) { $failureCounts.Show++; throw "Visible HWND timeout on cycle $cycle." }
             if ($null -eq $fiveGateMs) { $failureCounts.FiveGate++; throw "Five-gate input-ready timeout on cycle $cycle." }
             $shown = [VokHostInteractionProbe]::InspectWindow($windowHandle)
-            $row.FullScreen = $shown.Rect.Left -eq $monitorRect.Left -and $shown.Rect.Top -eq $monitorRect.Top -and $shown.Rect.Right -eq $monitorRect.Right -and $shown.Rect.Bottom -eq $monitorRect.Bottom
-            if (-not $row.FullScreen) { throw "Window did not match the target monitor rectangle on cycle $cycle." }
+            $row.FullScreen = $shown.Rect.Left -eq $monitorWorkArea.Left -and $shown.Rect.Top -eq $monitorWorkArea.Top -and $shown.Rect.Right -eq $monitorWorkArea.Right -and $shown.Rect.Bottom -eq $monitorWorkArea.Bottom
+            if (-not $row.FullScreen) { throw "Window did not match the target monitor work area on cycle $cycle." }
             if ($HostDiagnostics -eq 'required') {
                 $generation = $diagnosticReady.Generation; $lastEndedGeneration = $generation
                 $frameDeadline = [Diagnostics.Stopwatch]::StartNew()

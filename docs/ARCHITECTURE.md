@@ -50,7 +50,7 @@ Vok.Infrastructure.Windows
 
 ## 4. 工作台会话与窗口
 
-主窗口为长期存活、`AllowsTransparency=false` 的无边框不透明普通 HWND。位置由目标窗口所在显示器与产品工作区策略决定；平台层以物理像素处理 Win32 矩形，在单一边界转换为 DIP，并响应 Per-Monitor V2 DPI 变化。
+主窗口为长期存活、`AllowsTransparency=false` 的无边框不透明普通 HWND。呼出时占满目标显示器由系统 `MONITORINFO.rcWork` 提供的工作区，保留任务栏可见且可点击；不得硬编码任务栏高度或方向。目标显示器仍按目标窗口选择，无可恢复目标时使用光标最近显示器。平台层以物理像素处理 Win32 矩形，在单一边界转换为 DIP，并响应 Per-Monitor V2 DPI 变化。
 
 ```text
 Hidden → Revealing → Visible → Consuming / Dragging → Hiding → Hidden

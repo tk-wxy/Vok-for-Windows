@@ -1,12 +1,12 @@
 # M0 生产级宿主内核：参照、契约与验证
 
-> 状态：2026-08-24。M0 核心宿主契约已通过并冻结：真实物理键盘确认呼出、顶层、宿主输入路由、快速触发，以及快捷键与 Esc 隐藏后原文本框焦点返还。项目进入 M1；正式搜索编辑器、完整 IME 语义和正式 Present 证据不属于该结论。
+> 状态：2026-08-24。M0 核心宿主契约已通过并冻结；窗口布局已按用户确认的补充契约改为占满目标显示器系统工作区并保留任务栏，自动门禁与真机验收均通过。正式搜索编辑器、完整 IME 语义和正式 Present 证据不属于该结论。
 
 ## 1. 产品行为参照 / 旧实现机制 / Vok 目标契约
 
 | 能力 | Workbench 产品行为参照 | `vok(old)` 辅助行为与旧机制 | Vok M0 目标契约 |
 |---|---|---|---|
-| 工作台形态 | 顶部搜索入口，Launcher / Stage / Clipboard 等成熟工作区 | 顶部搜索与 1:2:1 工作区已部分实现 | 保留全屏工作台和 1:2:1 宿主结构；M0 不伪装已实现业务模块 |
+| 工作台形态 | 顶部搜索入口，Launcher / Stage / Clipboard 等成熟工作区 | 顶部搜索与 1:2:1 工作区已部分实现 | 占满目标显示器的系统工作区并保留任务栏可见、可点击；保留 1:2:1 宿主结构，M0 不伪装已实现业务模块 |
 | 后台常驻 | 启动隐藏，WebView2/Tauri 多进程 | 启动隐藏，WPF 单进程 | 单进程后台常驻；长期存活的普通不透明 WPF HWND |
 | 快捷键 | `Ctrl+Space`，轮询参与短按/长按语义 | `Ctrl+Space`，低级键盘 Hook 与复杂短/长按状态 | 专用消息线程拥有 `RegisterHotKey`；手势是可替换契约，M0 诊断值为 `Ctrl+Alt+Space` |
 | 显示层级 | 全局置顶样式，透明 WebView surface | 永久 `Topmost`、`AllowsTransparency=True` layered window | 每次会话进入 Topmost，隐藏后退出；Topmost、可见、前台和焦点分别观察 |
@@ -22,7 +22,7 @@
 
 - `GlobalHotkeyService` 在专用 Win32 消息线程接收 `WM_HOTKEY`，先记录时间戳，再在任何 Vok 窗口副作用前捕获外部前台 HWND、进程、线程和子焦点 HWND。
 - `WorkspaceSessionStateMachine` 为每次呼出分配单调 generation；迟到的激活、输入焦点和渲染回调不能完成其他会话。
-- `Win32WindowPlacementService` 把窗口置于目标显示器全屏矩形并仅在会话期进入 Topmost；`Show`、请求前台、WPF 激活与聚焦输入锚点之后再观察结果。
+- `Win32WindowPlacementService` 把窗口置于目标显示器的系统工作区矩形（`MONITORINFO.rcWork`）并仅在会话期进入 Topmost；不假设任务栏高度或位于哪条边。`Show`、请求前台、WPF 激活与聚焦输入锚点之后再观察结果。
 - 只有 visible、Topmost、foreground、Win32 focus HWND 和 WPF input-anchor focus 五个结果同时为真，状态才从 `Revealing` 进入 `Visible`。
 - 当前 HWND 以低频属性发布 seqlock 一致的结构化诊断快照：generation、Core 状态、五项物理结果和内部时间戳。恢复诊断另按 generation 保存捕获顶层/焦点 HWND 身份与关系、Hide/窗口隐藏/Topmost 清理/Restore 顺序、`SetForegroundWindow` 布尔结果以及立即观察到的 foreground/focus。外部探针不解析 UI 文案；旧 generation 不能覆盖新会话。
 - 隐藏先确认 `Window.IsVisible == false`，再退出 Topmost，最后恢复并立即观察目标顶层 HWND 与原子焦点 HWND。若顶层已确认恢复但同代 captured child 未恢复，则在重新核验 HWND、进程、线程和父子关系后执行一次子焦点恢复；跨线程连接只覆盖单次 `SetFocus`，并在 `finally` 中脱离，随后以真实 foreground/focus 复核结果。目标销毁、身份变化、请求拒绝、attach/SetFocus/detach 失败或焦点子窗口改变都有独立结果。
@@ -116,9 +116,11 @@ Vok 已有 990 个稳态热样本和完整长期资源曲线，足以描述自�
 
 ## 6. 已验证、未验证与真机验收
 
-已自动验证：Release 构建零警告/错误；18 项 Core 与 24 项 Windows/WPF 集成测试共 42/42 通过；真实 WPF STA 显示/聚焦/隐藏清除/下一轮重聚焦；控制器副作用顺序、异常清理、重复/迟到/跨代事件和自身目标降级；恢复诊断快照的一致读取；B 类恢复的校验、attach → SetFocus → detach 顺序、异常仍脱离、同线程直达、attach/detach 失败和无重试。历史 1000/1000 轮只作为合成宿主与资源证据，不替代真实文本框焦点返还。
+已自动验证：Release 构建零警告/错误；18 项 Core 与 28 项 Windows/WPF 集成测试共 46/46 通过；新增矩形测试确认完整采用系统 `rcWork`，覆盖任务栏在底部、顶部、左侧和右侧的工作区形态；真实 WPF STA 显示/聚焦/隐藏清除/下一轮重聚焦；控制器副作用顺序、异常清理、重复/迟到/跨代事件和自身目标降级；恢复诊断快照的一致读取；B 类恢复的校验、attach → SetFocus → detach 顺序、异常仍脱离、同线程直达、attach/detach 失败和无重试。本轮未运行 1000 轮可见显隐测试；历史 1000/1000 轮只作为合成宿主与资源证据，不替代真实文本框焦点返还。
 
-用户真机结果：物理 `Ctrl+Alt+Space` 可从普通文本框呼出；立即顶层且无闪烁/黑帧/透底；英文、中文候选与提交、中文/英文退格和快速连续 20 次均正常，主观无卡顿。修复前快捷键与 Esc 隐藏均不能返回原文本框；修复后用户分别确认两种隐藏均能返回并继续输入。由此 M0 的核心显隐、输入就绪和焦点往返契约通过并冻结。
+历史用户真机结果：物理 `Ctrl+Alt+Space` 可从普通文本框呼出；立即顶层且无闪烁/黑帧/透底；英文、中文候选与提交、中文/英文退格和快速连续 20 次均正常，主观无卡顿。修复前快捷键与 Esc 隐藏均不能返回原文本框；修复后用户分别确认两种隐藏均能返回并继续输入。由此 M0 的核心显隐、输入就绪和焦点往返契约通过并冻结。
+
+当前工作区布局改动已由用户真机确认：任务栏保持可见且可以点击；Vok 正确铺满任务栏之外的区域；`Ctrl+Alt+Space` 和 Esc 隐藏后仍返回原文本框；没有闪烁、黑边或异常空隙。
 
 该输入结果只证明 M0 Border 锚点的提交后 `TextInput` 路由，不证明正式搜索编辑器、完整 IME 编辑语义或 TextBox/GDI 根因已解决。浏览器视频、最大化窗口、第二显示器、混合 DPI、参照物可靠 P95 与 ETW/PresentMon 仍未验证；这些作为后续平台/性能回归边界保留，不反向扩大已冻结的 M0 范围。
 

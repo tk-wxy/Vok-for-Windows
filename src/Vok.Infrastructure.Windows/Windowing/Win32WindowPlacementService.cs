@@ -36,7 +36,7 @@ public sealed unsafe class Win32WindowPlacementService : IWindowPlacementService
             throw new InvalidOperationException("Unable to resolve the target monitor bounds.");
         }
 
-        var bounds = monitorInfo.rcMonitor;
+        var bounds = ResolveWorkspaceBounds(monitorInfo);
         if (!PInvoke.SetWindowPos(
                 new HWND((void*)workspaceWindow),
                 TopmostWindow,
@@ -46,9 +46,11 @@ public sealed unsafe class Win32WindowPlacementService : IWindowPlacementService
                 bounds.bottom - bounds.top,
                 SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE))
         {
-            throw new InvalidOperationException("Unable to apply the full-screen monitor bounds.");
+            throw new InvalidOperationException("Unable to apply the target monitor work area.");
         }
     }
+
+    internal static RECT ResolveWorkspaceBounds(MONITORINFO monitorInfo) => monitorInfo.rcWork;
 
     public bool RequestForeground(nint workspaceWindow)
     {
