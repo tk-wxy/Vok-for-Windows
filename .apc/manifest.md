@@ -7,6 +7,7 @@
 - **名称**：Vok
 - **定位**：面向 Windows 的全屏桌面工作台，通过全局快捷键快速呼出并在完成操作后隐藏，作为用户当前工作环境之外的“第二桌面”。
 - **目标**：
+  - 以 `D:\dev\workbench-app` 的成熟功能/交互和 `D:\dev\vok(old)` 的部分 WPF/Win32 成果作为产品形态参照，最终实现两者体现的功能形态、界面结构与核心体验，但不复用其代码实现；
   - 首期可靠交付启动台、剪贴板、Vok 呼出/隐藏与焦点恢复流程，以及必要的基础设置和数据保护能力；
   - 减少用户在开始菜单、资源管理器、剪贴板工具和多个窗口之间反复切换的成本；
   - 保证长时间后台运行、多次显隐、拖放、多显示器和高 DPI 场景下的正确性与稳定性能；
@@ -15,7 +16,7 @@
   - 首期不正式实现中转站和增强搜索，也不以占位界面、无效开关或虚假能力冒充完成；
   - 不擅自移动、修改或删除用户原文件，不以删除既定功能解决性能问题；
   - 未经用户确认，不扩展需求范围或改变已确定的功能范围与界面结构；
-  - 不复用 `D:\dev\workbench-app` 的代码实现；该项目仅作为界面、功能与样式参考和性能反例。
+  - 不复制、迁移或改写 `D:\dev\workbench-app` 与 `D:\dev\vok(old)` 的代码实现；两者只允许作为外部行为、交互流程、视觉结果和同机性能参照，旧项目当前可工作不等于其内部机制符合 Vok 架构标准。
 
 ## 锁定技术栈
 
@@ -38,6 +39,7 @@
 - 单进程内实行明确资源所有权：WPF UI STA、热键消息线程、剪贴板 STA、Shell/COM STA、SQLite 执行器和有界图片 worker 只访问各自资源，通过不可变消息或窄接口交接。
 - `Vok.Core` 不引用 WPF、Win32、COM 或 SQLite；有返回值、取消、失败或资源所有权的交互走显式接口，Messenger 只承载无所有权广播。
 - 每次呼出都建立带代次标识的工作台会话并捕获外部目标窗口上下文；显隐、启动、拖放和粘贴均用可取消、幂等状态机覆盖成功、失败、取消和重复触发，不以固定延时充当同步屏障。
+- M0 是后续产品模块直接依赖的生产级宿主内核，不是一次性诊断页；窗口可见、会话期 Topmost、真实前台和真实键盘焦点是四个独立结果，必须分别观察后才能宣布输入就绪。
 - 焦点恢复必须视为可能失败的外部操作：先隐藏、请求恢复、观察真实前台结果，再注入输入；权限不匹配或恢复失败时明确降级，不静默丢失内容。
 - 用户文件只按功能需要被引用或打开。SQLite 只保存可分页元数据；图片和大对象外置，缓存按字节设限，数据损坏必须可隔离并降级启动。
 - 启动台、剪贴板、设置、中转站和搜索保持模块边界；首期只创建真实实现，不创建后续功能的空页面、空模块或虚假开关。
@@ -56,22 +58,22 @@
 
 ## 项目结构
 
-当前为绿地项目，以下结构均为规划状态，尚未创建产品代码：
+M0 生产宿主内核已通过核心显隐、输入就绪、焦点往返与长期资源曲线验证并冻结；项目现进入 M1 启动台纵向切片。当前实际结构如下：
 
 ```text
 src/
 ├── Vok.sln
-├── Vok.App/                    # WPF 可执行程序、组合根、Views 与模块 ViewModel
-├── Vok.Core/                   # 纯业务、应用用例、契约与可测试状态机
-│   ├── Workspace/
-│   ├── Launcher/
-│   ├── Clipboard/
-│   └── Settings/
-├── Vok.Infrastructure.Windows/ # Win32、COM、SQLite、文件、图片和平台适配器
-├── Vok.Tests/                  # Core 单元、契约和确定性状态机测试
-└── Vok.IntegrationTests/       # 真实 Windows、SQLite 与发布集成测试
+├── Vok.App/                    # WPF 可执行程序、组合根、全屏宿主与 WorkspaceController
+├── Vok.Core/                   # 平台契约、会话状态机与性能快照
+├── Vok.Infrastructure.Windows/ # 热键消息线程、窗口放置、前台恢复与进程采样
+├── Vok.Tests/                  # Core 状态机单元测试
+└── Vok.IntegrationTests/       # Windows API、控制器副作用与真实 WPF STA 测试
 docs/
 └── ARCHITECTURE.md             # 目标架构、数据流、门禁和实施阶段
+tools/
+├── Probe-M0.ps1                # 结构化同代五门禁烟雾探针
+├── Measure-HostInteraction.ps1 # 固定 PID/HWND 时延与长期资源探针
+└── Record-M0FocusRestore.*     # 两次真实隐藏的只读逐代焦点因果记录器
 .apc/                           # 项目知识与开发协议
 ```
 
@@ -79,12 +81,12 @@ docs/
 
 ## 常用命令
 
-产品工程尚未创建；安装 .NET 10 SDK 并创建 `src/Vok.sln` 后生效：
+当前已安装并由 `global.json` 固定 .NET SDK 10.0.400：
 
 ```powershell
 dotnet restore src/Vok.sln
 dotnet build src/Vok.sln -c Release
-dotnet test src/Vok.sln -c Release
+dotnet test src/Vok.sln -c Release --settings Vok.runsettings
 dotnet run --project src/Vok.App/Vok.App.csproj
 dotnet publish src/Vok.App/Vok.App.csproj -c Release -r win-x64 --self-contained true
 ```
