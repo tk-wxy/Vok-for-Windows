@@ -4,6 +4,8 @@ public interface IWorkspaceWindow
 {
     event EventHandler? Activated;
 
+    event EventHandler? ApplicationDeactivated;
+
     event EventHandler<WorkspaceHideRequestedEventArgs>? HideRequested;
 
     event EventHandler? ExitRequested;

@@ -91,6 +91,8 @@ public partial class MainWindowViewModel : ObservableObject
                 "面板已隐藏，原前台与焦点上下文已确认恢复。",
             ForegroundRestoreStatus.ForegroundConfirmedFocusChanged =>
                 "面板已隐藏；原窗口已恢复前台，但焦点子窗口发生变化。",
+            ForegroundRestoreStatus.NotRequested =>
+                "面板已隐藏；保留当前外部前台，未请求恢复旧目标。",
             _ => $"面板已隐藏；焦点恢复降级：{result.Status}。",
         };
         ApplySnapshot(snapshot);

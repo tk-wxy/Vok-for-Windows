@@ -146,8 +146,8 @@ $diagnosticSuffixes = @(
     'RestoreObservedFocusThreadId', 'RestoreObservedFocusRelationship'
 )
 
-$hideReasonNames = @('Hotkey', 'Escape', 'UserAction', 'ApplicationExit', 'ShowFailure')
-$restoreStatusNames = @('Confirmed', 'AlreadyForeground', 'ForegroundConfirmedFocusChanged', 'InvalidTarget', 'RequestDenied', 'DifferentForeground')
+$hideReasonNames = @('Hotkey', 'Escape', 'UserAction', 'ApplicationExit', 'ShowFailure', 'ForegroundLost')
+$restoreStatusNames = @('Confirmed', 'AlreadyForeground', 'ForegroundConfirmedFocusChanged', 'InvalidTarget', 'RequestDenied', 'DifferentForeground', 'FocusRecoveryDetachFailed', 'NotRequested')
 $relationshipNames = @('None', 'SameWindow', 'Descendant', 'Unrelated')
 
 function Get-EncodedDiagnosticValue {

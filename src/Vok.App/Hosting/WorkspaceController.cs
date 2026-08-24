@@ -30,6 +30,7 @@ public sealed class WorkspaceController : IDisposable
     private long _inputReadyTimestamp;
     private long _lastEndedGeneration;
     private long _lastHideRequestedTimestamp;
+    private long _lastHiddenCompletedTimestamp;
     private long _lastRestoreCompletedTimestamp;
     private ForegroundRestoreStatus _lastRestoreStatus = ForegroundRestoreStatus.InvalidTarget;
     private WorkspaceRestoreDiagnosticSnapshot _restoreDiagnostic = WorkspaceRestoreDiagnosticSnapshot.None;
@@ -65,6 +66,7 @@ public sealed class WorkspaceController : IDisposable
         _hotkeyService.Faulted += OnHotkeyFaulted;
         _window.HideRequested += OnHideRequested;
         _window.ExitRequested += OnExitRequested;
+        _window.ApplicationDeactivated += OnApplicationDeactivated;
     }
 
     public async Task StartAsync()
@@ -103,6 +105,7 @@ public sealed class WorkspaceController : IDisposable
         _hotkeyService.Faulted -= OnHotkeyFaulted;
         _window.HideRequested -= OnHideRequested;
         _window.ExitRequested -= OnExitRequested;
+        _window.ApplicationDeactivated -= OnApplicationDeactivated;
         TryClearDiagnostic();
     }
 
@@ -123,23 +126,65 @@ public sealed class WorkspaceController : IDisposable
     }
 
     private void OnHideRequested(object? sender, WorkspaceHideRequestedEventArgs e) =>
-        Hide(e.Reason);
+        Hide(WorkspaceHidePolicy.For(e.Reason));
 
     private void OnExitRequested(object? sender, EventArgs e)
     {
-        Hide(WorkspaceHideReason.ApplicationExit);
+        Hide(WorkspaceHidePolicy.For(WorkspaceHideReason.ApplicationExit));
         Application.Current?.Shutdown();
+    }
+
+    private void OnApplicationDeactivated(object? sender, EventArgs e)
+    {
+        if (_disposed ||
+            _stateMachine.State is not WorkspaceState.Visible ||
+            _stateMachine.Current is not { Generation: var generation })
+        {
+            return;
+        }
+
+        // Future M1 external OLE drag may need a scoped suppression policy here.
+        // Do not suppress ordinary foreground loss or create drag lifecycle state early.
+        _window.PostNormal(() => TryHideAfterApplicationDeactivation(generation));
     }
 
     private void Toggle(HotkeyInvocation invocation)
     {
         if (_stateMachine.State is WorkspaceState.Hidden)
         {
+            if (invocation.NativeTimestamp <= _lastHiddenCompletedTimestamp)
+            {
+                return;
+            }
+
             Show(invocation);
             return;
         }
 
-        Hide(WorkspaceHideReason.Hotkey);
+        Hide(WorkspaceHidePolicy.For(WorkspaceHideReason.Hotkey));
+    }
+
+    private void TryHideAfterApplicationDeactivation(long generation)
+    {
+        if (_disposed || !_stateMachine.IsCurrentVisible(generation))
+        {
+            return;
+        }
+
+        ForegroundTarget foreground;
+        try
+        {
+            foreground = _foregroundWindowService.Capture();
+        }
+        catch (Exception exception)
+        {
+            _viewModel.RecordFault(exception);
+            foreground = ForegroundTarget.None;
+        }
+
+        Hide(
+            WorkspaceHidePolicy.For(WorkspaceHideReason.ForegroundLost),
+            foreground);
     }
 
     private void Show(HotkeyInvocation invocation)
@@ -191,17 +236,23 @@ public sealed class WorkspaceController : IDisposable
         }
     }
 
-    private void Hide(WorkspaceHideReason reason)
+    private void Hide(
+        WorkspaceHidePolicy policy,
+        ForegroundTarget currentForeground = default)
     {
         var session = _stateMachine.Current;
-        var transition = _stateMachine.BeginHide(reason);
+        var transition = _stateMachine.BeginHide(policy.Reason);
         if (!transition.Accepted || session is null)
         {
             return;
         }
 
         _lastHideRequestedTimestamp = Stopwatch.GetTimestamp();
-        BeginRestoreDiagnostic(transition.Generation, reason, session.Target, _lastHideRequestedTimestamp);
+        BeginRestoreDiagnostic(
+            transition.Generation,
+            policy.Reason,
+            session.Target,
+            _lastHideRequestedTimestamp);
         TryPublishDiagnostic();
         DetachPendingFirstFrame();
         DetachPendingActivation();
@@ -239,7 +290,17 @@ public sealed class WorkspaceController : IDisposable
             RecordTopmostExitCompleted(transition.Generation, succeeded: false);
         }
 
-        var restoreResult = RestoreTarget(transition.Generation, session.Target);
+        var restoreResult = policy.TargetRestoreMode switch
+        {
+            WorkspaceTargetRestoreMode.RestoreCapturedTarget =>
+                RestoreTarget(transition.Generation, session.Target),
+            WorkspaceTargetRestoreMode.PreserveCurrentForeground =>
+                RecordRestoreNotRequested(transition.Generation, currentForeground),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(policy),
+                policy.TargetRestoreMode,
+                null),
+        };
         if (!_stateMachine.CompleteHide(transition.Generation))
         {
             _viewModel.RecordFault(new InvalidOperationException(
@@ -248,6 +309,7 @@ public sealed class WorkspaceController : IDisposable
         }
 
         _lastEndedGeneration = transition.Generation;
+        _lastHiddenCompletedTimestamp = Stopwatch.GetTimestamp();
         ClearCurrentSessionDiagnostics();
         RefreshObservation(recordInViewModel: false);
         TryPublishDiagnostic();
@@ -305,6 +367,7 @@ public sealed class WorkspaceController : IDisposable
 
         var restoreResult = RestoreTarget(generation, target, failures);
         _lastEndedGeneration = generation;
+        _lastHiddenCompletedTimestamp = Stopwatch.GetTimestamp();
         ClearCurrentSessionDiagnostics();
         RefreshObservation(recordInViewModel: false, failures);
         TryPublishDiagnostic();
@@ -347,6 +410,27 @@ public sealed class WorkspaceController : IDisposable
             ForegroundRestoreStatus.ForegroundConfirmedFocusChanged
                 ? Stopwatch.GetTimestamp()
                 : 0;
+        return result;
+    }
+
+    private ForegroundRestoreResult RecordRestoreNotRequested(
+        long generation,
+        ForegroundTarget currentForeground)
+    {
+        var result = new ForegroundRestoreResult(
+            ForegroundRestoreStatus.NotRequested,
+            currentForeground.WindowHandle,
+            currentForeground.FocusedWindowHandle,
+            ObservedFocusProcessId: currentForeground.FocusedProcessId,
+            ObservedFocusThreadId: currentForeground.FocusedThreadId,
+            ObservedFocusRelationship: currentForeground.FocusedWindowRelationship);
+        if (_restoreDiagnostic.Generation == generation)
+        {
+            _restoreDiagnostic = _restoreDiagnostic with { Result = result };
+        }
+
+        _lastRestoreStatus = result.Status;
+        _lastRestoreCompletedTimestamp = 0;
         return result;
     }
 

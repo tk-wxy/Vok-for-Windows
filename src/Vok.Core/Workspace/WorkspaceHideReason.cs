@@ -7,4 +7,5 @@ public enum WorkspaceHideReason
     UserAction,
     ApplicationExit,
     ShowFailure,
+    ForegroundLost,
 }

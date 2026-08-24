@@ -11,6 +11,7 @@ namespace Vok;
 public partial class MainWindow : Window, IWorkspaceWindow
 {
     private readonly MainWindowViewModel _viewModel;
+    private Application? _application;
 
     public MainWindow(MainWindowViewModel viewModel)
     {
@@ -22,6 +23,8 @@ public partial class MainWindow : Window, IWorkspaceWindow
     public event EventHandler<WorkspaceHideRequestedEventArgs>? HideRequested;
 
     public event EventHandler? ExitRequested;
+
+    public event EventHandler? ApplicationDeactivated;
 
     public event EventHandler? InputAnchorFocused;
 
@@ -46,7 +49,26 @@ public partial class MainWindow : Window, IWorkspaceWindow
         base.OnInitialized(e);
         KeyboardInputProbe.GotKeyboardFocus += (_, _) =>
             InputAnchorFocused?.Invoke(this, EventArgs.Empty);
+        _application = Application.Current;
+        if (_application is not null)
+        {
+            _application.Deactivated += OnApplicationDeactivated;
+        }
     }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        if (_application is not null)
+        {
+            _application.Deactivated -= OnApplicationDeactivated;
+            _application = null;
+        }
+
+        base.OnClosed(e);
+    }
+
+    private void OnApplicationDeactivated(object? sender, EventArgs e) =>
+        ApplicationDeactivated?.Invoke(this, EventArgs.Empty);
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {

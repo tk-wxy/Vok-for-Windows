@@ -17,6 +17,33 @@ public sealed class WorkspaceSessionStateMachineTests
         Assert.Null(machine.Current);
     }
 
+    [Theory]
+    [InlineData(WorkspaceHideReason.Hotkey)]
+    [InlineData(WorkspaceHideReason.Escape)]
+    [InlineData(WorkspaceHideReason.UserAction)]
+    [InlineData(WorkspaceHideReason.ApplicationExit)]
+    [InlineData(WorkspaceHideReason.ShowFailure)]
+    public void ExplicitHidePoliciesRestoreTheCapturedTarget(WorkspaceHideReason reason)
+    {
+        var policy = WorkspaceHidePolicy.For(reason);
+
+        Assert.Equal(reason, policy.Reason);
+        Assert.Equal(
+            WorkspaceTargetRestoreMode.RestoreCapturedTarget,
+            policy.TargetRestoreMode);
+    }
+
+    [Fact]
+    public void ForegroundLossPolicyPreservesTheCurrentForeground()
+    {
+        var policy = WorkspaceHidePolicy.For(WorkspaceHideReason.ForegroundLost);
+
+        Assert.Equal(WorkspaceHideReason.ForegroundLost, policy.Reason);
+        Assert.Equal(
+            WorkspaceTargetRestoreMode.PreserveCurrentForeground,
+            policy.TargetRestoreMode);
+    }
+
     [Fact]
     public void ShowAndHideCompleteOneOwnedGeneration()
     {

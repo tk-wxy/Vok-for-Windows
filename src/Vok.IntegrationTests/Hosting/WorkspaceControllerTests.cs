@@ -114,6 +114,186 @@ public sealed class WorkspaceControllerTests
     }
 
     [Fact]
+    public async Task ExternalForegroundLossHidesWithoutRestoringCapturedTarget()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        rig.Foreground.CaptureResult = SelectedExternalTarget;
+
+        rig.Window.RaiseApplicationDeactivated();
+
+        var snapshot = rig.Publisher.Last;
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        AssertOrdered(rig.Log, "foreground.capture", "window.hide", "placement.exit");
+        Assert.DoesNotContain("foreground.restore", rig.Log);
+        Assert.Equal(0, rig.Foreground.RestoreCallCount);
+        Assert.Equal(WorkspaceHideReason.ForegroundLost, snapshot.Restore.HideReason);
+        Assert.Equal(ForegroundRestoreStatus.NotRequested, snapshot.Restore.Result.Status);
+        Assert.Equal(SelectedExternalTarget.WindowHandle, snapshot.Restore.Result.ObservedForeground);
+        Assert.Equal(0, snapshot.Restore.RestoreCalledTimestamp);
+        Assert.Equal(0, snapshot.Restore.RestoreReturnedTimestamp);
+        Assert.True(snapshot.Restore.TopmostExitSucceeded);
+        Assert.Equal(WorkspaceDiagnosticFlags.None, snapshot.Flags);
+    }
+
+    [Fact]
+    public async Task ApplicationDeactivationStillHidesWhenForegroundObservationFails()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        rig.Foreground.ThrowOnCapture = true;
+
+        rig.Window.RaiseApplicationDeactivated();
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.Contains("window.hide", rig.Log);
+        Assert.DoesNotContain("foreground.restore", rig.Log);
+        Assert.Equal(ForegroundRestoreStatus.NotRequested, rig.Publisher.Last.Restore.Result.Status);
+    }
+
+    [Fact]
+    public async Task ApplicationDeactivationWithMissingForegroundStillHides()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        rig.Foreground.CaptureResult = ForegroundTarget.None;
+
+        rig.Window.RaiseApplicationDeactivated();
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.Contains("window.hide", rig.Log);
+        Assert.DoesNotContain("foreground.restore", rig.Log);
+        Assert.Equal(ForegroundRestoreStatus.NotRequested, rig.Publisher.Last.Restore.Result.Status);
+        Assert.Equal(0, rig.Publisher.Last.Restore.Result.ObservedForeground);
+        Assert.Equal(1, rig.Foreground.CaptureCallCount);
+    }
+
+    [Fact]
+    public async Task ApplicationDeactivationIsIgnoredOutsideVisibleState()
+    {
+        using var rig = await TestRig.CreateAsync();
+
+        rig.Window.RaiseApplicationDeactivated();
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+
+        rig.Placement.OsGatesReady = false;
+        rig.Hotkey.Raise(ExternalTarget);
+        Assert.Equal(WorkspaceState.Revealing, rig.StateMachine.State);
+        rig.Window.RaiseApplicationDeactivated();
+        Assert.Equal(WorkspaceState.Revealing, rig.StateMachine.State);
+        rig.Hotkey.Raise(ExternalTarget);
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.Equal(0, rig.Foreground.CaptureCallCount);
+        Assert.Equal(1, rig.Log.Count(entry => entry == "window.hide"));
+    }
+
+    [Theory]
+    [InlineData(WorkspaceHideReason.Hotkey)]
+    [InlineData(WorkspaceHideReason.Escape)]
+    public async Task ApplicationDeactivationRaisedByExplicitHideDoesNotStartSecondTransaction(
+        WorkspaceHideReason explicitReason)
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        rig.Window.RaiseApplicationDeactivatedDuringHide = true;
+
+        if (explicitReason is WorkspaceHideReason.Hotkey)
+        {
+            rig.Hotkey.Raise(ExternalTarget);
+        }
+        else
+        {
+            rig.Window.RaiseHideRequested(WorkspaceHideReason.Escape);
+        }
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.Equal(explicitReason, rig.Publisher.Last.Restore.HideReason);
+        Assert.Equal(1, rig.Log.Count(entry => entry == "window.hide"));
+        Assert.Equal(1, rig.Log.Count(entry => entry == "placement.exit"));
+        Assert.Equal(1, rig.Foreground.RestoreCallCount);
+        Assert.Equal(0, rig.Foreground.CaptureCallCount);
+    }
+
+    [Fact]
+    public async Task OldGenerationForegroundLossCannotHideNewSession()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        rig.Foreground.CaptureResult = SelectedExternalTarget;
+        rig.Window.QueueNormalPosts = true;
+        rig.Window.RaiseApplicationDeactivated();
+
+        rig.Hotkey.Raise(ExternalTarget);
+        rig.Window.QueueNormalPosts = false;
+        rig.Hotkey.Raise(NewSessionTarget);
+        var secondGeneration = rig.StateMachine.Current!.Generation;
+
+        rig.Window.DrainNormalPosts();
+
+        Assert.Equal(2, secondGeneration);
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.Equal(NewSessionTarget, rig.Placement.AppliedTarget);
+        Assert.Equal(1, rig.Log.Count(entry => entry == "window.hide"));
+    }
+
+    [Theory]
+    [InlineData(WorkspaceHideReason.Hotkey)]
+    [InlineData(WorkspaceHideReason.Escape)]
+    public async Task ExplicitHideWinsAgainstQueuedForegroundLossWithoutDoubleExecution(
+        WorkspaceHideReason explicitReason)
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        rig.Foreground.CaptureResult = SelectedExternalTarget;
+        rig.Window.QueueNormalPosts = true;
+        rig.Window.RaiseApplicationDeactivated();
+
+        if (explicitReason is WorkspaceHideReason.Hotkey)
+        {
+            rig.Hotkey.Raise(ExternalTarget);
+        }
+        else
+        {
+            rig.Window.RaiseHideRequested(WorkspaceHideReason.Escape);
+        }
+
+        rig.Window.DrainNormalPosts();
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.Equal(explicitReason, rig.Publisher.Last.Restore.HideReason);
+        Assert.Equal(1, rig.Log.Count(entry => entry == "window.hide"));
+        Assert.Equal(1, rig.Log.Count(entry => entry == "placement.exit"));
+        Assert.Equal(1, rig.Foreground.RestoreCallCount);
+    }
+
+    [Fact]
+    public async Task ForegroundLossSuppressesHotkeyAlreadyQueuedForTheEndedSession()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        rig.Foreground.CaptureResult = SelectedExternalTarget;
+        rig.Window.QueueInputPosts = true;
+
+        rig.Hotkey.Raise(NewSessionTarget);
+        rig.Window.RaiseApplicationDeactivated();
+        rig.Window.DrainInputPosts();
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.Equal(1, rig.Log.Count(entry => entry == "window.hide"));
+        Assert.Equal(0, rig.Foreground.RestoreCallCount);
+        Assert.Equal(WorkspaceHideReason.ForegroundLost, rig.Publisher.Last.Restore.HideReason);
+    }
+
+    [Fact]
+    public async Task ShowAfterForegroundLossUsesTheNewlySelectedForegroundTarget()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        rig.Foreground.CaptureResult = SelectedExternalTarget;
+        rig.Window.RaiseApplicationDeactivated();
+
+        rig.Hotkey.Raise(NewSessionTarget);
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.Equal(2, rig.StateMachine.Current?.Generation);
+        Assert.Equal(NewSessionTarget, rig.StateMachine.Current?.Target);
+        Assert.Equal(NewSessionTarget, rig.Placement.AppliedTarget);
+    }
+
+    [Fact]
     public async Task ShowFailureRunsHideTopmostExitAndRestoreInOrder()
     {
         using var rig = await TestRig.CreateAsync();
@@ -233,6 +413,24 @@ public sealed class WorkspaceControllerTests
         789,
         ForegroundWindowRelationship.Descendant);
 
+    private static readonly ForegroundTarget SelectedExternalTarget = new(
+        0x223,
+        556,
+        889,
+        0x224,
+        556,
+        889,
+        ForegroundWindowRelationship.Descendant);
+
+    private static readonly ForegroundTarget NewSessionTarget = new(
+        0x323,
+        656,
+        989,
+        0x324,
+        656,
+        989,
+        ForegroundWindowRelationship.Descendant);
+
     private static void AssertOrdered(IReadOnlyList<string> log, params string[] entries)
     {
         var previous = -1;
@@ -309,6 +507,8 @@ public sealed class WorkspaceControllerTests
         private EventHandler? _inputFocused;
         private readonly List<EventHandler> _removedActivated = [];
         private readonly List<EventHandler> _removedInputFocused = [];
+        private readonly Queue<Action> _inputPosts = [];
+        private readonly Queue<Action> _normalPosts = [];
 
         public event EventHandler? Activated
         {
@@ -324,11 +524,15 @@ public sealed class WorkspaceControllerTests
 
         public event EventHandler<WorkspaceHideRequestedEventArgs>? HideRequested;
         public event EventHandler? ExitRequested;
+        public event EventHandler? ApplicationDeactivated;
         public bool IsVisible { get; private set; }
         public bool HasInputAnchorFocus => InputFocus;
         public bool InputFocus { get; set; }
         public bool FocusSucceeds { get; set; }
         public bool ThrowAfterShow { get; set; }
+        public bool QueueInputPosts { get; set; }
+        public bool QueueNormalPosts { get; set; }
+        public bool RaiseApplicationDeactivatedDuringHide { get; set; }
         public bool TopmostWasAppliedWhenShown { get; private set; }
         public Func<bool>? IsTopmost { get; set; }
 
@@ -341,7 +545,16 @@ public sealed class WorkspaceControllerTests
             if (ThrowAfterShow) throw new InvalidOperationException("show failure");
         }
 
-        public void Hide() { log.Add("window.hide"); IsVisible = false; InputFocus = false; }
+        public void Hide()
+        {
+            log.Add("window.hide");
+            IsVisible = false;
+            InputFocus = false;
+            if (RaiseApplicationDeactivatedDuringHide)
+            {
+                ApplicationDeactivated?.Invoke(this, EventArgs.Empty);
+            }
+        }
         public bool Activate() { log.Add("window.activate"); return true; }
         public bool FocusInputAnchor()
         {
@@ -350,9 +563,31 @@ public sealed class WorkspaceControllerTests
             return InputFocus;
         }
 
-        public void PostInput(Action action) { log.Add("window.post-input"); action(); }
-        public void PostNormal(Action action) { log.Add("window.post-normal"); action(); }
+        public void PostInput(Action action)
+        {
+            log.Add("window.post-input");
+            if (QueueInputPosts) _inputPosts.Enqueue(action); else action();
+        }
+
+        public void PostNormal(Action action)
+        {
+            log.Add("window.post-normal");
+            if (QueueNormalPosts) _normalPosts.Enqueue(action); else action();
+        }
+
+        public void DrainInputPosts()
+        {
+            while (_inputPosts.TryDequeue(out var action)) action();
+        }
+
+        public void DrainNormalPosts()
+        {
+            while (_normalPosts.TryDequeue(out var action)) action();
+        }
+
         public void RaiseActivated() => _activated?.Invoke(this, EventArgs.Empty);
+        public void RaiseApplicationDeactivated() =>
+            ApplicationDeactivated?.Invoke(this, EventArgs.Empty);
         public void RaiseInputAnchorFocused() => _inputFocused?.Invoke(this, EventArgs.Empty);
         public void RaiseFirstRemovedActivation() => _removedActivated[0](this, EventArgs.Empty);
         public void RaiseLastRemovedActivation() => _removedActivated[^1](this, EventArgs.Empty);
@@ -433,11 +668,21 @@ public sealed class WorkspaceControllerTests
     {
         public ForegroundTarget CaptureResult { get; set; } = ExternalTarget;
         public ForegroundTarget RestoredTarget { get; private set; }
+        public bool ThrowOnCapture { get; set; }
         public bool ThrowOnRestore { get; set; }
-        public ForegroundTarget Capture() { log.Add("foreground.capture"); return CaptureResult; }
+        public int CaptureCallCount { get; private set; }
+        public int RestoreCallCount { get; private set; }
+        public ForegroundTarget Capture()
+        {
+            log.Add("foreground.capture");
+            CaptureCallCount++;
+            if (ThrowOnCapture) throw new InvalidOperationException("capture failure");
+            return CaptureResult;
+        }
         public ForegroundRestoreResult Restore(ForegroundTarget target)
         {
             log.Add("foreground.restore");
+            RestoreCallCount++;
             RestoredTarget = target;
             if (ThrowOnRestore) throw new InvalidOperationException("restore failure");
             return target.CanRestore

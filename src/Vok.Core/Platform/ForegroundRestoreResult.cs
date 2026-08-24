@@ -11,6 +11,7 @@ public enum ForegroundRestoreStatus
     RequestDenied,
     DifferentForeground,
     FocusRecoveryDetachFailed,
+    NotRequested,
 }
 
 public readonly record struct ForegroundRestoreResult(

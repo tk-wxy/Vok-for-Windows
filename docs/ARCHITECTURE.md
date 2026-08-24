@@ -58,6 +58,8 @@ Hidden → Revealing → Visible → Consuming / Dragging → Hiding → Hidden
 
 每次呼出创建唯一 `GenerationId` 和 `TargetForegroundContext`。状态转换先声明所有权，再产生副作用；取消、重复输入和迟到结果必须幂等，旧代不得结束新代。
 
+进入 `Visible` 后，`Application.Deactivated` 是整个 Vok 已失去前台的唯一权威因果信号；宿主不订阅或转发单个 `Window.Deactivated`，因而主窗口切到同应用弹窗/所属窗口不会误关。应用级失活只负责按当前 generation 排队，下一 Dispatcher 轮次再次确认会话仍为 `Visible` 后，以 `ForegroundLost` 被动隐藏。此时读取真实前台 HWND 只用于诊断；即使读到 0、目标尚未稳定或捕获失败也必须隐藏。该策略完成窗口隐藏、Topmost 清理、状态机收尾和诊断发布，但保留用户刚选择的外部前台并将恢复结果记为 `NotRequested`，不得恢复呼出前旧目标。快捷键、Esc、按钮和退出仍使用恢复捕获目标的策略；它们引发的迟到应用失活由状态/generation 门禁拒绝。未来 M1 外部 OLE 拖放可在真实生命周期内增加窄范围抑制，但不得提前创建空拖放状态。
+
 粘贴或启动的前台交接：
 
 1. 捕获并验证目标 HWND/进程/线程；
