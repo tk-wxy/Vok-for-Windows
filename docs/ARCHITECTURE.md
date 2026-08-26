@@ -39,7 +39,7 @@ Vok.Infrastructure.Windows
 
 | 所有者 | 资源 | 交接方式 |
 |---|---|---|
-| WPF UI STA | Window、Visual、ViewModel、交互式 OLE 拖放 | Dispatcher 异步接收不可变结果 |
+| WPF UI STA | Window、Visual、ViewModel、托盘图标/菜单、交互式 OLE 拖放 | Dispatcher 异步接收不可变结果 |
 | 热键消息线程 | 消息循环、`RegisterHotKey`、热键代次 | 发布 `HotkeyInvocation` |
 | Clipboard STA | listener HWND、OpenClipboard、读写和自写水位 | 发布已复制/规范化的捕获结果 |
 | Shell/COM STA | `.lnk`、Shell 元数据、图标与非交互 COM | 窄接口请求/结果 |
@@ -100,6 +100,9 @@ WM_CLIPBOARDUPDATE
 
 首期只创建 Workspace、Launcher、Clipboard、Settings。Stage 和 Search 在产品里程碑批准前不创建空代码或 UI。
 
+- 应用壳层只有一个 WPF 顶层主 HWND；Settings 是主窗内部视图，托盘只发布应用命令，不拥有或旁路 Workspace 显隐事务；
+- 托盘左键/菜单显示与设置请求复用代次化宿主；退出先完成宿主隐藏和 Topmost 清理，再由显式应用生命周期关闭；
+- WPF 壳层使用 .NET 10 Fluent 语义资源；主题为跟随系统/浅色/深色三态，在主窗创建前加载并由专属 SQLite 执行器持久化；通知区域菜单使用 Windows 原生 `HMENU` 标准格式，不由 WPF/WinForms 自绘；
 - 模块拥有自己的 ViewModel、用例和生命周期取消源；
 - 命令、查询、失败、取消和资源所有权走 Core 中的窄接口；
 - Messenger 仅用于无需确认的广播，例如主题或数据已变化通知；
@@ -145,6 +148,8 @@ M0 至各模块都记录：
 完成单条端到端闭环：拖入 → 规范化 → 持久化 → 展示/排序 → 启动 → 成败与取消。随后扩展批量、筛选和图标缓存。
 
 状态：当前里程碑；尚未展开业务实现。
+
+2026-08-27 已完成跨里程碑产品壳层增量：右上设置入口、只展示真实能力的内部设置视图、三态 Fluent 主题、Windows 原生托盘菜单和统一应用退出协调。该增量不代表 M1 启动台业务或 M3 其他可配置设置已经完成。
 
 ### M2：剪贴板纵向切片
 

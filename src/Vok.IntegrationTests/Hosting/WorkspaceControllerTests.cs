@@ -4,6 +4,9 @@ using Vok.Core.Platform;
 using Vok.Core.Workspace;
 using Vok.Hosting;
 using Vok.Presentation;
+using Vok.Appearance;
+using Vok.Core.Appearance;
+using Vok.Features.Settings;
 using Xunit;
 
 namespace Vok.IntegrationTests.Hosting;
@@ -75,6 +78,98 @@ public sealed class WorkspaceControllerTests
         Assert.Contains("window.hide", rig.Log);
         Assert.Equal(generation, rig.Publisher.Last.LastEndedGeneration);
         Assert.Equal(0, rig.Publisher.Last.Generation);
+    }
+
+    [Fact]
+    public async Task TrayShowWhileHiddenUsesTheNormalPresentationTransaction()
+    {
+        using var rig = await TestRig.CreateAsync();
+        rig.Placement.OsGatesReady = true;
+        rig.Window.FocusSucceeds = true;
+
+        rig.Controller.EnsureVisible(
+            ExternalTarget,
+            Stopwatch.GetTimestamp());
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.Equal(ExternalTarget, rig.Placement.AppliedTarget);
+        Assert.True(rig.Window.TopmostWasAppliedWhenShown);
+        Assert.True(rig.Log.IndexOf("placement.apply") < rig.Log.IndexOf("window.show"));
+    }
+
+    [Fact]
+    public async Task TrayShowWhileAlreadyForegroundIsIdempotent()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        var generation = rig.StateMachine.Current!.Generation;
+
+        rig.Controller.EnsureVisible(
+            SelectedExternalTarget,
+            Stopwatch.GetTimestamp());
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.Equal(generation, rig.StateMachine.Current!.Generation);
+        Assert.DoesNotContain("window.hide", rig.Log);
+        Assert.DoesNotContain("window.show", rig.Log);
+    }
+
+    [Fact]
+    public async Task QueuedForegroundLossCompletesBeforeTraySettingsStartsANewGeneration()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        rig.Window.QueueNormalPosts = true;
+        rig.Foreground.CaptureResult = SelectedExternalTarget;
+
+        rig.Window.RaiseApplicationDeactivated();
+        rig.Controller.EnsureVisible(
+            SelectedExternalTarget,
+            Stopwatch.GetTimestamp(),
+            WorkspaceDestination.Settings);
+        rig.Window.DrainNormalPosts();
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.Equal(2, rig.StateMachine.Current!.Generation);
+        Assert.Equal(WorkspaceSection.Settings, rig.ViewModel.CurrentSection);
+        Assert.Equal(SelectedExternalTarget, rig.Placement.AppliedTarget);
+        Assert.Equal(0, rig.Foreground.RestoreCallCount);
+    }
+
+    [Fact]
+    public async Task ExitRequestClaimsOnceAndBlocksLaterShowRequests()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        var shutdownCount = 0;
+        rig.Controller.ShutdownRequested += (_, _) => shutdownCount++;
+
+        rig.Controller.RequestExit();
+        rig.Controller.RequestExit();
+        rig.Hotkey.Raise(SelectedExternalTarget);
+        rig.Controller.EnsureVisible(
+            SelectedExternalTarget,
+            Stopwatch.GetTimestamp());
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.Equal(1, shutdownCount);
+        Assert.Equal(1, rig.Foreground.RestoreCallCount);
+        Assert.Equal(WorkspaceHideReason.ApplicationExit, rig.Publisher.Last.Restore.HideReason);
+    }
+
+    [Fact]
+    public async Task ExitClaimWinsAgainstQueuedForegroundLoss()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        rig.Window.QueueNormalPosts = true;
+        var shutdownCount = 0;
+        rig.Controller.ShutdownRequested += (_, _) => shutdownCount++;
+
+        rig.Window.RaiseApplicationDeactivated();
+        rig.Controller.RequestExit();
+        rig.Window.DrainNormalPosts();
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.Equal(1, shutdownCount);
+        Assert.Equal(1, rig.Foreground.RestoreCallCount);
+        Assert.Equal(WorkspaceHideReason.ApplicationExit, rig.Publisher.Last.Restore.HideReason);
     }
 
     [Fact]
@@ -454,7 +549,7 @@ public sealed class WorkspaceControllerTests
             Hotkey = new FakeHotkey();
             Publisher = new FakePublisher();
             StateMachine = new WorkspaceSessionStateMachine();
-            ViewModel = new MainWindowViewModel();
+            ViewModel = CreateViewModel();
             Controller = new WorkspaceController(
                 Window,
                 Frames,
@@ -499,6 +594,15 @@ public sealed class WorkspaceControllerTests
         }
 
         public void Dispose() => Controller.Dispose();
+
+        private static MainWindowViewModel CreateViewModel()
+        {
+            var appearance = new AppearanceController(
+                new InMemorySettingsStore(),
+                new NoOpThemeApplier());
+            appearance.InitializeAsync().GetAwaiter().GetResult();
+            return new MainWindowViewModel(new SettingsViewModel(appearance));
+        }
     }
 
     private sealed class FakeWindow(List<string> log) : IWorkspaceWindow
@@ -523,7 +627,6 @@ public sealed class WorkspaceControllerTests
         }
 
         public event EventHandler<WorkspaceHideRequestedEventArgs>? HideRequested;
-        public event EventHandler? ExitRequested;
         public event EventHandler? ApplicationDeactivated;
         public bool IsVisible { get; private set; }
         public bool HasInputAnchorFocus => InputFocus;
@@ -596,7 +699,6 @@ public sealed class WorkspaceControllerTests
 
         public void RaiseHideRequested(WorkspaceHideReason reason = WorkspaceHideReason.UserAction) =>
             HideRequested?.Invoke(this, new WorkspaceHideRequestedEventArgs(reason));
-        public void RaiseExitRequested() => ExitRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private sealed class FakeFrameSource : IWorkspaceFrameSource
@@ -612,6 +714,23 @@ public sealed class WorkspaceControllerTests
         public void RaiseRendering() => _rendering?.Invoke(this, EventArgs.Empty);
         public void RaiseFirstRemovedRendering() => _removed[0](this, EventArgs.Empty);
         public void RaiseLastRemovedRendering() => _removed[^1](this, EventArgs.Empty);
+    }
+
+    private sealed class InMemorySettingsStore : IAppSettingsStore
+    {
+        public Task<AppSettings> LoadAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(AppSettings.Default);
+
+        public Task SaveThemeModeAsync(
+            AppThemeMode themeMode,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class NoOpThemeApplier : IAppThemeApplier
+    {
+        public void Apply(AppThemeMode themeMode)
+        {
+        }
     }
 
     private sealed class FakePlacement : IWindowPlacementService

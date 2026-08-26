@@ -1,6 +1,8 @@
 <Window x:Class="Vok.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:automation="clr-namespace:System.Windows.Automation;assembly=PresentationCore"
+        xmlns:settings="clr-namespace:Vok.Features.Settings"
         Title="Vok"
         WindowStyle="None"
         ResizeMode="NoResize"
@@ -8,142 +10,145 @@
         AllowsTransparency="False"
         ShowInTaskbar="False"
         Topmost="False"
-        Background="#FF0B0D12"
+        Background="{DynamicResource ApplicationBackgroundBrush}"
+        Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+        Closing="OnClosing"
         PreviewKeyDown="OnPreviewKeyDown">
-  <Grid Background="#FF0B0D12">
+  <Grid x:Name="WorkspaceInputAnchor"
+        Focusable="True"
+        Background="{DynamicResource ApplicationBackgroundBrush}"
+        automation:AutomationProperties.Name="Vok 工作台">
     <Grid.RowDefinitions>
-      <RowDefinition Height="72" />
+      <RowDefinition Height="64" />
       <RowDefinition Height="*" />
-      <RowDefinition Height="38" />
     </Grid.RowDefinitions>
 
-    <Border BorderBrush="#FF242936" BorderThickness="0,0,0,1" Padding="28,0">
+    <Border BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+            BorderThickness="0,0,0,1"
+            Padding="28,0">
       <Grid>
-        <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="280" />
-          <ColumnDefinition Width="*" />
-          <ColumnDefinition Width="280" />
-        </Grid.ColumnDefinitions>
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-          <Border Width="34" Height="34" CornerRadius="9" Background="{StaticResource AccentBrush}">
-            <TextBlock Text="V" FontSize="17" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
-          </Border>
-          <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
-            <TextBlock Text="Vok" FontSize="17" FontWeight="SemiBold" />
-            <TextBlock Text="M0 生产级宿主内核" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
-          </StackPanel>
-        </StackPanel>
-
-        <StackPanel Grid.Column="1" Width="560" HorizontalAlignment="Center" VerticalAlignment="Center">
-          <Border x:Name="KeyboardInputProbe"
-                  Height="36"
-                  Padding="12,7"
-                  CornerRadius="3"
-                  Background="#FFF7F8FA"
-                  BorderBrush="#FF505867"
-                  BorderThickness="1"
-                  Focusable="True"
-                  InputMethod.IsInputMethodEnabled="True"
-                  PreviewTextInput="OnInputProbeTextInput"
-                  PreviewKeyDown="OnInputProbeKeyDown"
-                  ToolTip="M0 键盘输入测试框（非搜索功能）">
-            <TextBlock Text="{Binding InputProbeDisplayText}"
-                       Foreground="#FF151821"
-                       FontSize="14"
+          <StackPanel.Style>
+            <Style TargetType="StackPanel">
+              <Setter Property="Visibility" Value="Visible" />
+              <Style.Triggers>
+                <DataTrigger Binding="{Binding IsSettingsVisible}" Value="True">
+                  <Setter Property="Visibility" Value="Collapsed" />
+                </DataTrigger>
+              </Style.Triggers>
+            </Style>
+          </StackPanel.Style>
+          <Border Width="34"
+                  Height="34"
+                  CornerRadius="9"
+                  Background="{DynamicResource AccentFillColorDefaultBrush}">
+            <TextBlock Text="V"
+                       Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}"
+                       FontSize="17"
+                       FontWeight="Bold"
+                       HorizontalAlignment="Center"
                        VerticalAlignment="Center" />
           </Border>
-          <TextBlock Margin="2,4,0,0"
-                     Foreground="{StaticResource MutedTextBrush}"
-                     FontSize="10.5"
-                     Text="键盘输入测试框（非搜索功能）· 呼出后应可立即输入中文或英文" />
+          <TextBlock Margin="12,0,0,0"
+                     Text="Vok"
+                     FontSize="17"
+                     FontWeight="SemiBold"
+                     VerticalAlignment="Center" />
         </StackPanel>
 
-        <Border Grid.Column="2" Padding="14,8" CornerRadius="9" Background="{StaticResource PanelBrush}"
-                HorizontalAlignment="Right" VerticalAlignment="Center">
-          <TextBlock Text="{Binding HotkeyLabel}" FontSize="13" />
-        </Border>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <StackPanel.Style>
+            <Style TargetType="StackPanel">
+              <Setter Property="Visibility" Value="Collapsed" />
+              <Style.Triggers>
+                <DataTrigger Binding="{Binding IsSettingsVisible}" Value="True">
+                  <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+              </Style.Triggers>
+            </Style>
+          </StackPanel.Style>
+          <Button Width="38"
+                  Height="38"
+                  Command="{Binding CloseSettingsCommand}"
+                  ToolTip="返回工作台"
+                  automation:AutomationProperties.Name="返回工作台">
+            <TextBlock Text="&#xE72B;"
+                       FontFamily="Segoe Fluent Icons"
+                       FontSize="15" />
+          </Button>
+          <TextBlock Margin="12,0,0,0"
+                     Text="设置"
+                     FontSize="17"
+                     FontWeight="SemiBold"
+                     VerticalAlignment="Center" />
+        </StackPanel>
+
+        <Button Width="38"
+                Height="38"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Center"
+                Command="{Binding OpenSettingsCommand}"
+                ToolTip="设置"
+                automation:AutomationProperties.Name="设置">
+          <Button.Style>
+            <Style TargetType="Button">
+              <Setter Property="Visibility" Value="Visible" />
+              <Style.Triggers>
+                <DataTrigger Binding="{Binding IsSettingsVisible}" Value="True">
+                  <Setter Property="Visibility" Value="Collapsed" />
+                </DataTrigger>
+              </Style.Triggers>
+            </Style>
+          </Button.Style>
+          <TextBlock Text="&#xE713;"
+                     FontFamily="Segoe Fluent Icons"
+                     FontSize="16" />
+        </Button>
       </Grid>
     </Border>
 
     <Grid Grid.Row="1">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="1*" />
-        <ColumnDefinition Width="2*" />
-        <ColumnDefinition Width="1*" />
-      </Grid.ColumnDefinitions>
-
-      <Border Padding="28" BorderBrush="#FF242936" BorderThickness="0,0,1,0">
-        <StackPanel>
-          <TextBlock Text="宿主边界" FontSize="16" FontWeight="SemiBold" />
-          <TextBlock Margin="0,14,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"
-                     Text="本轮只验证全屏显隐、焦点往返和性能。这里不伪装成启动台、剪贴板或搜索模块。" />
-          <TextBlock Margin="0,24,0,0" Text="窗口可见" Foreground="{StaticResource MutedTextBrush}" />
-          <TextBlock Margin="0,5,0,0" Text="{Binding VisibilityStateText}" FontSize="18" />
-          <TextBlock Margin="0,20,0,0" Text="会话期 Topmost" Foreground="{StaticResource MutedTextBrush}" />
-          <TextBlock Margin="0,5,0,0" Text="{Binding TopmostStateText}" FontSize="18" />
-        </StackPanel>
-      </Border>
-
-      <Border Grid.Column="1" Padding="42">
-        <StackPanel VerticalAlignment="Center">
-          <TextBlock Text="工作台宿主状态" FontSize="26" FontWeight="SemiBold" HorizontalAlignment="Center" />
-          <TextBlock Margin="0,12,0,0" Text="{Binding StatusText}" TextWrapping="Wrap"
-                     Foreground="{StaticResource MutedTextBrush}" FontSize="14" HorizontalAlignment="Center" />
-          <Grid Margin="0,34,0,0">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*" />
-              <ColumnDefinition Width="*" />
-              <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-            <StackPanel>
-              <TextBlock Text="输入就绪" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Center" />
-              <TextBlock Margin="0,7,0,0" Text="{Binding InputReadyText}" FontSize="22" HorizontalAlignment="Center" />
-            </StackPanel>
-            <StackPanel Grid.Column="1">
-              <TextBlock Text="首帧信号" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Center" />
-              <TextBlock Margin="0,7,0,0" Text="{Binding FirstFrameText}" FontSize="22" HorizontalAlignment="Center" />
-            </StackPanel>
-            <StackPanel Grid.Column="2">
-              <TextBlock Text="呼出次数" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Center" />
-              <TextBlock Margin="0,7,0,0" Text="{Binding ShowCount}" FontSize="22" HorizontalAlignment="Center" />
-            </StackPanel>
-          </Grid>
-          <Grid Margin="0,32,0,0">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*" />
-              <ColumnDefinition Width="*" />
-              <ColumnDefinition Width="*" />
-              <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-            <TextBlock Text="{Binding WorkingSetText}" HorizontalAlignment="Center" />
-            <TextBlock Grid.Column="1" Text="{Binding PrivateMemoryText}" HorizontalAlignment="Center" />
-            <TextBlock Grid.Column="2" Text="{Binding HandleText}" HorizontalAlignment="Center" />
-            <TextBlock Grid.Column="3" Text="{Binding ThreadText}" HorizontalAlignment="Center" />
-          </Grid>
-        </StackPanel>
-      </Border>
-
-      <Border Grid.Column="2" Padding="28" BorderBrush="#FF242936" BorderThickness="1,0,0,0">
-        <StackPanel>
-          <TextBlock Text="焦点事务" FontSize="16" FontWeight="SemiBold" />
-          <TextBlock Margin="0,24,0,0" Text="真实前台" Foreground="{StaticResource MutedTextBrush}" />
-          <TextBlock Margin="0,5,0,0" Text="{Binding ForegroundStateText}" FontSize="18" />
-          <TextBlock Margin="0,20,0,0" Text="Win32 + WPF 键盘焦点" Foreground="{StaticResource MutedTextBrush}" />
-          <TextBlock Margin="0,5,0,0" Text="{Binding KeyboardFocusStateText}" FontSize="18" />
-          <TextBlock Margin="0,28,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"
-                     Text="再次按快捷键或 Esc：先隐藏 Vok，再观察呼出前窗口是否恢复为真实前台。" />
-        </StackPanel>
-      </Border>
+      <Grid.Style>
+        <Style TargetType="Grid">
+          <Setter Property="Visibility" Value="Visible" />
+          <Style.Triggers>
+            <DataTrigger Binding="{Binding IsWorkspaceVisible}" Value="False">
+              <Setter Property="Visibility" Value="Collapsed" />
+            </DataTrigger>
+          </Style.Triggers>
+        </Style>
+      </Grid.Style>
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+        <Border Width="64"
+                Height="64"
+                CornerRadius="18"
+                Background="{DynamicResource AccentFillColorDefaultBrush}">
+          <TextBlock Text="V"
+                     Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}"
+                     FontSize="30"
+                     FontWeight="Bold"
+                     HorizontalAlignment="Center"
+                     VerticalAlignment="Center" />
+        </Border>
+        <TextBlock Margin="0,18,0,0"
+                   Text="Vok"
+                   FontSize="28"
+                   FontWeight="SemiBold"
+                   HorizontalAlignment="Center" />
+      </StackPanel>
     </Grid>
 
-    <Border Grid.Row="2" BorderBrush="#FF242936" BorderThickness="0,1,0,0" Padding="28,0">
-      <Grid>
-        <TextBlock Text="{Binding HotkeyHintText}" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-          <Button Padding="14,4" Margin="0,0,8,0" Click="OnHideClick">隐藏</Button>
-          <Button Padding="14,4" Click="OnExitClick">退出 Vok</Button>
-        </StackPanel>
-      </Grid>
-    </Border>
+    <settings:SettingsView Grid.Row="1">
+      <settings:SettingsView.Style>
+        <Style TargetType="settings:SettingsView">
+          <Setter Property="Visibility" Value="Collapsed" />
+          <Style.Triggers>
+            <DataTrigger Binding="{Binding IsSettingsVisible}" Value="True">
+              <Setter Property="Visibility" Value="Visible" />
+            </DataTrigger>
+          </Style.Triggers>
+        </Style>
+      </settings:SettingsView.Style>
+    </settings:SettingsView>
   </Grid>
 </Window>

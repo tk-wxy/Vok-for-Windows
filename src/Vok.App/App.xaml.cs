@@ -1,13 +1,20 @@
+using System.IO;
 using System.Windows;
 using Microsoft.Extensions.DependencyInjection;
+using Vok.Appearance;
+using Vok.Core.Appearance;
 using Vok.Core.Diagnostics;
 using Vok.Core.Platform;
 using Vok.Core.Workspace;
 using Vok.Hosting;
 using Vok.Infrastructure.Windows.Diagnostics;
 using Vok.Infrastructure.Windows.Input;
+using Vok.Infrastructure.Windows.Persistence;
+using Vok.Infrastructure.Windows.Shell;
 using Vok.Infrastructure.Windows.Windowing;
+using Vok.Features.Tray;
 using Vok.Presentation;
+using Vok.Features.Settings;
 
 namespace Vok;
 
@@ -33,13 +40,16 @@ public partial class App : Application
         }
 
         _services = BuildServices();
+        var appearance = _services.GetRequiredService<AppearanceController>();
+        await appearance.InitializeAsync();
         var window = _services.GetRequiredService<MainWindow>();
+        var applicationController = _services.GetRequiredService<ApplicationController>();
         var controller = _services.GetRequiredService<WorkspaceController>();
         MainWindow = window;
 
         try
         {
-            await controller.StartAsync();
+            await applicationController.StartAsync();
         }
         catch (Exception exception)
         {
@@ -49,7 +59,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        _services?.GetService<WorkspaceController>()?.Dispose();
+        _services?.GetService<ApplicationController>()?.Dispose();
         _services?.Dispose();
         _singleInstance?.Dispose();
         base.OnExit(e);
@@ -65,18 +75,41 @@ public partial class App : Application
         services.AddSingleton<IForegroundWindowService, Win32ForegroundWindowService>();
         services.AddSingleton<IWindowPlacementService, Win32WindowPlacementService>();
         services.AddSingleton<IGlobalHotkeyService, GlobalHotkeyService>();
+        services.AddSingleton<ITrayMenuService, WindowsTrayMenuService>();
+        services.AddSingleton<ITrayIconService, WpfTrayIconService>();
         services.AddSingleton<IPerformanceSampler, ProcessPerformanceSampler>();
         services.AddSingleton<IWorkspaceDiagnosticPublisher, Win32WorkspaceDiagnosticPublisher>();
+        services.AddSingleton<IAppSettingsStore>(_ => CreateSettingsStore());
+        services.AddSingleton<IAppThemeApplier>(_ => new WpfAppThemeApplier(Current));
+        services.AddSingleton<AppearanceController>();
+        services.AddSingleton<SettingsViewModel>();
         services.AddSingleton<MainWindowViewModel>();
         services.AddSingleton<MainWindow>();
         services.AddSingleton<IWorkspaceWindow>(provider => provider.GetRequiredService<MainWindow>());
         services.AddSingleton<IWorkspaceFrameSource, WpfWorkspaceFrameSource>();
         services.AddSingleton<WorkspaceController>();
+        services.AddSingleton<IWorkspaceCommands>(provider =>
+            provider.GetRequiredService<WorkspaceController>());
+        services.AddSingleton<IApplicationLifetime, WpfApplicationLifetime>();
+        services.AddSingleton<ApplicationController>();
 
         return services.BuildServiceProvider(new ServiceProviderOptions
         {
             ValidateOnBuild = true,
             ValidateScopes = true,
         });
+    }
+
+    private static IAppSettingsStore CreateSettingsStore()
+    {
+        try
+        {
+            return SqliteAppSettingsStore.CreateDefault();
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            return new UnavailableAppSettingsStore(exception);
+        }
     }
 }

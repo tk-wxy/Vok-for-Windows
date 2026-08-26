@@ -8,8 +8,6 @@ public interface IWorkspaceWindow
 
     event EventHandler<WorkspaceHideRequestedEventArgs>? HideRequested;
 
-    event EventHandler? ExitRequested;
-
     event EventHandler? InputAnchorFocused;
 
     bool IsVisible { get; }

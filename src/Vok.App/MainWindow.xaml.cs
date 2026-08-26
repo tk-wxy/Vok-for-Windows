@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -10,19 +11,15 @@ namespace Vok;
 
 public partial class MainWindow : Window, IWorkspaceWindow
 {
-    private readonly MainWindowViewModel _viewModel;
     private Application? _application;
 
     public MainWindow(MainWindowViewModel viewModel)
     {
         InitializeComponent();
-        _viewModel = viewModel;
         DataContext = viewModel;
     }
 
     public event EventHandler<WorkspaceHideRequestedEventArgs>? HideRequested;
-
-    public event EventHandler? ExitRequested;
 
     public event EventHandler? ApplicationDeactivated;
 
@@ -30,11 +27,11 @@ public partial class MainWindow : Window, IWorkspaceWindow
 
     public bool FocusInputAnchor()
     {
-        return Keyboard.Focus(KeyboardInputProbe) == KeyboardInputProbe;
+        return Keyboard.Focus(WorkspaceInputAnchor) == WorkspaceInputAnchor;
     }
 
     public bool HasInputAnchorFocus =>
-        Keyboard.FocusedElement == KeyboardInputProbe && KeyboardInputProbe.IsKeyboardFocused;
+        Keyboard.FocusedElement == WorkspaceInputAnchor && WorkspaceInputAnchor.IsKeyboardFocused;
 
     public nint EnsureHandle() => new WindowInteropHelper(this).EnsureHandle();
 
@@ -47,8 +44,7 @@ public partial class MainWindow : Window, IWorkspaceWindow
     protected override void OnInitialized(EventArgs e)
     {
         base.OnInitialized(e);
-        KeyboardInputProbe.GotKeyboardFocus += (_, _) =>
-            InputAnchorFocused?.Invoke(this, EventArgs.Empty);
+        WorkspaceInputAnchor.GotKeyboardFocus += OnWorkspaceInputAnchorGotKeyboardFocus;
         _application = Application.Current;
         if (_application is not null)
         {
@@ -67,8 +63,31 @@ public partial class MainWindow : Window, IWorkspaceWindow
         base.OnClosed(e);
     }
 
+    private void OnWorkspaceInputAnchorGotKeyboardFocus(
+        object sender,
+        KeyboardFocusChangedEventArgs e)
+    {
+        if (ReferenceEquals(e.NewFocus, WorkspaceInputAnchor))
+        {
+            InputAnchorFocused?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
     private void OnApplicationDeactivated(object? sender, EventArgs e) =>
         ApplicationDeactivated?.Invoke(this, EventArgs.Empty);
+
+    private void OnClosing(object? sender, CancelEventArgs e)
+    {
+        if (Application.Current?.Dispatcher.HasShutdownStarted == true)
+        {
+            return;
+        }
+
+        e.Cancel = true;
+        HideRequested?.Invoke(
+            this,
+            new WorkspaceHideRequestedEventArgs(WorkspaceHideReason.UserAction));
+    }
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
@@ -83,33 +102,4 @@ public partial class MainWindow : Window, IWorkspaceWindow
             new WorkspaceHideRequestedEventArgs(WorkspaceHideReason.Escape));
     }
 
-    private void OnInputProbeTextInput(object sender, TextCompositionEventArgs e)
-    {
-        if (string.IsNullOrEmpty(e.Text))
-        {
-            return;
-        }
-
-        _viewModel.AppendInputProbeText(e.Text);
-        e.Handled = true;
-    }
-
-    private void OnInputProbeKeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key != Key.Back)
-        {
-            return;
-        }
-
-        _viewModel.RemoveLastInputProbeTextElement();
-        e.Handled = true;
-    }
-
-    private void OnHideClick(object sender, RoutedEventArgs e) =>
-        HideRequested?.Invoke(
-            this,
-            new WorkspaceHideRequestedEventArgs(WorkspaceHideReason.UserAction));
-
-    private void OnExitClick(object sender, RoutedEventArgs e) =>
-        ExitRequested?.Invoke(this, EventArgs.Empty);
 }

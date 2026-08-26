@@ -1,14 +1,15 @@
 using CommunityToolkit.Mvvm.ComponentModel;
-using System.Globalization;
+using CommunityToolkit.Mvvm.Input;
+using System.Reflection;
 using Vok.Core.Diagnostics;
 using Vok.Core.Platform;
+using Vok.Features.Settings;
 
 namespace Vok.Presentation;
 
 public partial class MainWindowViewModel : ObservableObject
 {
     [ObservableProperty] private string _hotkeyLabel = "等待热键注册";
-    [ObservableProperty] private string _hotkeyHintText = "Esc 隐藏 · 当前键位仅为可替换的 M0 诊断配置";
     [ObservableProperty] private string _statusText = "后台初始化中。";
     [ObservableProperty] private string _inputReadyText = "—";
     [ObservableProperty] private string _firstFrameText = "—";
@@ -21,33 +22,32 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private string _topmostStateText = "未观察";
     [ObservableProperty] private string _foregroundStateText = "未观察";
     [ObservableProperty] private string _keyboardFocusStateText = "未观察";
-    [ObservableProperty] private string _inputProbeDisplayText = "在此输入以验证键盘焦点（非搜索功能）";
-    private string _inputProbeValue = string.Empty;
+    [ObservableProperty] private WorkspaceSection _currentSection = WorkspaceSection.Workspace;
 
-    public void AppendInputProbeText(string text)
+    public MainWindowViewModel(SettingsViewModel settings)
     {
-        _inputProbeValue += text;
-        InputProbeDisplayText = _inputProbeValue;
+        Settings = settings;
     }
 
-    public void RemoveLastInputProbeTextElement()
-    {
-        if (_inputProbeValue.Length == 0)
-        {
-            return;
-        }
+    public SettingsViewModel Settings { get; }
 
-        var elementStarts = StringInfo.ParseCombiningCharacters(_inputProbeValue);
-        _inputProbeValue = _inputProbeValue[..elementStarts[^1]];
-        InputProbeDisplayText = _inputProbeValue.Length == 0
-            ? "在此输入以验证键盘焦点（非搜索功能）"
-            : _inputProbeValue;
-    }
+    public bool IsSettingsVisible => CurrentSection is WorkspaceSection.Settings;
+
+    public bool IsWorkspaceVisible => CurrentSection is WorkspaceSection.Workspace;
+
+    public string ApplicationVersionText { get; } = CreateApplicationVersionText();
+
+    public void NavigateTo(WorkspaceSection section) => CurrentSection = section;
+
+    [RelayCommand]
+    private void OpenSettings() => NavigateTo(WorkspaceSection.Settings);
+
+    [RelayCommand]
+    private void CloseSettings() => NavigateTo(WorkspaceSection.Workspace);
 
     public void MarkReady(string gesture)
     {
         HotkeyLabel = gesture;
-        HotkeyHintText = $"{gesture} 切换显隐 · Esc 隐藏 · 当前键位是可替换的 M0 配置";
         StatusText = "热键已注册；生产宿主在后台保持隐藏。";
     }
 
@@ -101,6 +101,12 @@ public partial class MainWindowViewModel : ObservableObject
     public void RecordFault(Exception exception) =>
         StatusText = $"宿主错误：{exception.Message}";
 
+    partial void OnCurrentSectionChanged(WorkspaceSection value)
+    {
+        OnPropertyChanged(nameof(IsSettingsVisible));
+        OnPropertyChanged(nameof(IsWorkspaceVisible));
+    }
+
     private void ApplySnapshot(PerformanceSnapshot snapshot)
     {
         WorkingSetText = $"WS {FormatBytes(snapshot.WorkingSetBytes)}";
@@ -110,4 +116,16 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     private static string FormatBytes(long bytes) => $"{bytes / 1024d / 1024d:F1} MB";
+
+    private static string CreateApplicationVersionText()
+    {
+        var assembly = typeof(MainWindowViewModel).Assembly;
+        var informationalVersion = assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion;
+        var version = informationalVersion?.Split('+', 2)[0]
+            ?? assembly.GetName().Version?.ToString(3)
+            ?? "未知版本";
+        return $"Vok {version}";
+    }
 }

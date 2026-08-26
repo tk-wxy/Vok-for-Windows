@@ -59,7 +59,7 @@ try {
     Write-Host 'Building Vok (Release)...'
     Push-Location $repositoryRoot
     try {
-        & dotnet build $solutionPath -c Release --no-restore
+        & dotnet build $solutionPath -c Release
         if ($LASTEXITCODE -ne 0) {
             throw "dotnet build failed with exit code $LASTEXITCODE."
         }
@@ -72,14 +72,14 @@ try {
         throw "Build succeeded but Vok.exe was not found: $appPath"
     }
 
-    $startedProcess = Start-Process -FilePath $appPath -WorkingDirectory $appDirectory -PassThru
+    $startedProcess = Start-Process -FilePath $appPath -WorkingDirectory $appDirectory -WindowStyle Hidden -PassThru
     $startedProcess.Refresh()
     if ($startedProcess.HasExited) {
         throw "Vok exited immediately with code $($startedProcess.ExitCode)."
     }
 
     Write-Host "Vok is running. PID: $($startedProcess.Id)"
-    Write-Host 'Press Ctrl + Alt + Space to show or hide the M0 workspace.'
+    Write-Host 'Press Ctrl + Alt + Space or left-click the tray icon to show Vok.'
 }
 catch {
     Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red

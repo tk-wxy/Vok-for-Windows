@@ -1,4 +1,7 @@
 AttachThreadInput
+AppendMenu
+CreatePopupMenu
+DestroyMenu
 GetCurrentThreadId
 GetCursorPos
 GetForegroundWindow
@@ -14,12 +17,17 @@ IsWindowVisible
 MonitorFromPoint
 MonitorFromWindow
 PeekMessage
+PostMessage
 PostThreadMessage
 RegisterHotKey
 SetForegroundWindow
 SetFocus
+SetMenuDefaultItem
 SetWindowPos
 ShowWindow
+TrackPopupMenuEx
+TRACK_POPUP_MENU_FLAGS
 UnregisterHotKey
 WM_HOTKEY
+WM_NULL
 WM_QUIT

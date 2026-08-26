@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Windows;
 using Vok.Core.Diagnostics;
 using Vok.Core.Platform;
 using Vok.Core.Workspace;
@@ -7,7 +6,7 @@ using Vok.Presentation;
 
 namespace Vok.Hosting;
 
-public sealed class WorkspaceController : IDisposable
+public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
 {
     private readonly IWorkspaceWindow _window;
     private readonly IWorkspaceFrameSource _frameSource;
@@ -37,6 +36,7 @@ public sealed class WorkspaceController : IDisposable
     private WorkspacePresentationObservation _lastObservation;
     private bool _lastWpfInputFocus;
     private nint _windowHandle;
+    private int _exitRequested;
     private bool _disposed;
 
     public WorkspaceController(
@@ -65,9 +65,10 @@ public sealed class WorkspaceController : IDisposable
         _hotkeyService.Pressed += OnHotkeyPressed;
         _hotkeyService.Faulted += OnHotkeyFaulted;
         _window.HideRequested += OnHideRequested;
-        _window.ExitRequested += OnExitRequested;
         _window.ApplicationDeactivated += OnApplicationDeactivated;
     }
+
+    public event EventHandler? ShutdownRequested;
 
     public async Task StartAsync()
     {
@@ -81,6 +82,42 @@ public sealed class WorkspaceController : IDisposable
 
         await _hotkeyService.StartAsync();
         _viewModel.MarkReady(_hotkeyService.DisplayGesture);
+    }
+
+    public void EnsureVisible(
+        ForegroundTarget foregroundTarget,
+        long requestedTimestamp,
+        WorkspaceDestination destination = WorkspaceDestination.PreserveCurrent)
+    {
+        ThrowIfDisposed();
+        _window.PostNormal(() =>
+            EnsureVisibleCore(foregroundTarget, requestedTimestamp, destination));
+    }
+
+    public void RequestExit()
+    {
+        ThrowIfDisposed();
+        if (Interlocked.Exchange(ref _exitRequested, 1) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            _window.PostNormal(CompleteExitRequest);
+        }
+        catch
+        {
+            Interlocked.Exchange(ref _exitRequested, 0);
+            throw;
+        }
+    }
+
+    public void ReportFault(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        ThrowIfDisposed();
+        _window.PostNormal(() => _viewModel.RecordFault(exception));
     }
 
     public void ShowDiagnostic(Exception exception)
@@ -104,14 +141,13 @@ public sealed class WorkspaceController : IDisposable
         _hotkeyService.Pressed -= OnHotkeyPressed;
         _hotkeyService.Faulted -= OnHotkeyFaulted;
         _window.HideRequested -= OnHideRequested;
-        _window.ExitRequested -= OnExitRequested;
         _window.ApplicationDeactivated -= OnApplicationDeactivated;
         TryClearDiagnostic();
     }
 
     private void OnHotkeyPressed(object? sender, HotkeyInvocation invocation)
     {
-        if (!_disposed)
+        if (!_disposed && Volatile.Read(ref _exitRequested) == 0)
         {
             _window.PostInput(() => Toggle(invocation));
         }
@@ -125,18 +161,18 @@ public sealed class WorkspaceController : IDisposable
         }
     }
 
-    private void OnHideRequested(object? sender, WorkspaceHideRequestedEventArgs e) =>
-        Hide(WorkspaceHidePolicy.For(e.Reason));
-
-    private void OnExitRequested(object? sender, EventArgs e)
+    private void OnHideRequested(object? sender, WorkspaceHideRequestedEventArgs e)
     {
-        Hide(WorkspaceHidePolicy.For(WorkspaceHideReason.ApplicationExit));
-        Application.Current?.Shutdown();
+        if (Volatile.Read(ref _exitRequested) == 0)
+        {
+            Hide(WorkspaceHidePolicy.For(e.Reason));
+        }
     }
 
     private void OnApplicationDeactivated(object? sender, EventArgs e)
     {
         if (_disposed ||
+            Volatile.Read(ref _exitRequested) != 0 ||
             _stateMachine.State is not WorkspaceState.Visible ||
             _stateMachine.Current is not { Generation: var generation })
         {
@@ -150,6 +186,11 @@ public sealed class WorkspaceController : IDisposable
 
     private void Toggle(HotkeyInvocation invocation)
     {
+        if (Volatile.Read(ref _exitRequested) != 0)
+        {
+            return;
+        }
+
         if (_stateMachine.State is WorkspaceState.Hidden)
         {
             if (invocation.NativeTimestamp <= _lastHiddenCompletedTimestamp)
@@ -164,9 +205,109 @@ public sealed class WorkspaceController : IDisposable
         Hide(WorkspaceHidePolicy.For(WorkspaceHideReason.Hotkey));
     }
 
+    private void EnsureVisibleCore(
+        ForegroundTarget foregroundTarget,
+        long requestedTimestamp,
+        WorkspaceDestination destination)
+    {
+        if (_disposed || Volatile.Read(ref _exitRequested) != 0)
+        {
+            return;
+        }
+
+        if (destination is WorkspaceDestination.Settings)
+        {
+            _viewModel.NavigateTo(WorkspaceSection.Settings);
+        }
+
+        var invocation = new HotkeyInvocation(foregroundTarget, requestedTimestamp);
+        if (_stateMachine.State is WorkspaceState.Hidden)
+        {
+            Show(invocation);
+            return;
+        }
+
+        if (_stateMachine.State is not WorkspaceState.Visible)
+        {
+            return;
+        }
+
+        var remainsForeground = false;
+        try
+        {
+            RefreshObservation(recordInViewModel: false);
+            remainsForeground = _lastObservation.IsForeground;
+        }
+        catch (Exception exception)
+        {
+            _viewModel.RecordFault(exception);
+        }
+
+        if (remainsForeground)
+        {
+            return;
+        }
+
+        Hide(
+            WorkspaceHidePolicy.For(WorkspaceHideReason.ForegroundLost),
+            foregroundTarget);
+        if (_stateMachine.State is WorkspaceState.Hidden)
+        {
+            Show(invocation);
+        }
+    }
+
+    private void CompleteExitRequest()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (_stateMachine.State is not WorkspaceState.Hidden)
+        {
+            Hide(WorkspaceHidePolicy.For(WorkspaceHideReason.ApplicationExit));
+        }
+
+        PublishShutdownRequested();
+    }
+
+    private void PublishShutdownRequested()
+    {
+        var handlers = ShutdownRequested?.GetInvocationList();
+        if (handlers is null)
+        {
+            _viewModel.RecordFault(new InvalidOperationException(
+                "The workspace exit transaction completed without an application lifetime owner."));
+            Interlocked.Exchange(ref _exitRequested, 0);
+            return;
+        }
+
+        var delivered = false;
+        foreach (var handler in handlers.Cast<EventHandler>())
+        {
+            try
+            {
+                handler(this, EventArgs.Empty);
+                delivered = true;
+            }
+            catch (Exception exception)
+            {
+                _viewModel.RecordFault(exception);
+            }
+        }
+
+        if (!delivered)
+        {
+            Interlocked.Exchange(ref _exitRequested, 0);
+        }
+    }
+
     private void TryHideAfterApplicationDeactivation(long generation)
     {
-        if (_disposed || !_stateMachine.IsCurrentVisible(generation))
+        if (_disposed ||
+            Volatile.Read(ref _exitRequested) != 0 ||
+            !_stateMachine.IsCurrentVisible(generation))
         {
             return;
         }
