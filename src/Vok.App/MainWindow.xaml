@@ -84,15 +84,10 @@
                      VerticalAlignment="Center" />
         </StackPanel>
 
-        <Button Width="38"
-                Height="38"
-                HorizontalAlignment="Right"
-                VerticalAlignment="Center"
-                Command="{Binding OpenSettingsCommand}"
-                ToolTip="设置"
-                automation:AutomationProperties.Name="设置">
-          <Button.Style>
-            <Style TargetType="Button">
+        <Grid HorizontalAlignment="Right"
+              VerticalAlignment="Center">
+          <Grid.Style>
+            <Style TargetType="Grid">
               <Setter Property="Visibility" Value="Visible" />
               <Style.Triggers>
                 <DataTrigger Binding="{Binding IsSettingsVisible}" Value="True">
@@ -100,11 +95,26 @@
                 </DataTrigger>
               </Style.Triggers>
             </Style>
-          </Button.Style>
-          <TextBlock Text="&#xE713;"
-                     FontFamily="Segoe Fluent Icons"
-                     FontSize="16" />
-        </Button>
+          </Grid.Style>
+          <Button x:Name="OpenSettingsButton"
+                  Height="38"
+                  MinWidth="88"
+                  Padding="13,0"
+                  Command="{Binding OpenSettingsCommand}"
+                  ToolTip="打开设置"
+                  automation:AutomationProperties.Name="打开设置">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE713;"
+                         FontFamily="Segoe Fluent Icons"
+                         FontSize="15"
+                         VerticalAlignment="Center" />
+              <TextBlock Margin="8,0,0,0"
+                         Text="设置"
+                         FontSize="13"
+                         VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
+        </Grid>
       </Grid>
     </Border>
 

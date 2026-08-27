@@ -1,7 +1,9 @@
 <UserControl x:Class="Vok.Features.Settings.SettingsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:appearance="clr-namespace:Vok.Core.Appearance;assembly=Vok.Core">
+             xmlns:appearance="clr-namespace:Vok.Core.Appearance;assembly=Vok.Core"
+             xmlns:automation="clr-namespace:System.Windows.Automation;assembly=PresentationCore"
+             IsVisibleChanged="OnIsVisibleChanged">
   <ScrollViewer VerticalScrollBarVisibility="Auto"
                 HorizontalScrollBarVisibility="Disabled">
     <Grid Margin="42,30,42,42"
@@ -87,15 +89,43 @@
             <TextBlock Margin="0,7,0,0"
                        Text="用于显示或隐藏工作台"
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+            <TextBlock Margin="0,5,0,0"
+                       Text="点击右侧后录制新的组合键；Esc 取消"
+                       FontSize="12"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+            <TextBlock Margin="0,8,0,0"
+                       Text="{Binding Settings.HotkeyErrorMessage}"
+                       Foreground="{DynamicResource SystemFillColorCriticalBrush}"
+                       TextWrapping="Wrap">
+              <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                  <Setter Property="Visibility" Value="Visible" />
+                  <Style.Triggers>
+                    <Trigger Property="Text" Value="">
+                      <Setter Property="Visibility" Value="Collapsed" />
+                    </Trigger>
+                    <Trigger Property="Text" Value="{x:Null}">
+                      <Setter Property="Visibility" Value="Collapsed" />
+                    </Trigger>
+                  </Style.Triggers>
+                </Style>
+              </TextBlock.Style>
+            </TextBlock>
           </StackPanel>
-          <Border Grid.Column="1"
+          <Button x:Name="HotkeyRecorderButton"
+                  Grid.Column="1"
                   Margin="24,0,0,0"
+                  MinWidth="190"
                   Padding="14,8"
-                  CornerRadius="8"
-                  Background="{DynamicResource ControlFillColorDefaultBrush}"
-                  VerticalAlignment="Center">
-            <TextBlock Text="{Binding HotkeyLabel}" FontSize="13" />
-          </Border>
+                  HorizontalContentAlignment="Center"
+                  VerticalAlignment="Center"
+                  Click="OnHotkeyRecorderClick"
+                  PreviewKeyDown="OnHotkeyRecorderPreviewKeyDown"
+                  LostKeyboardFocus="OnHotkeyRecorderLostKeyboardFocus"
+                  automation:AutomationProperties.Name="录制呼出快捷键">
+            <TextBlock Text="{Binding Settings.HotkeyDisplayText}"
+                       FontSize="13" />
+          </Button>
         </Grid>
       </Border>
 

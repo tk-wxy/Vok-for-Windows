@@ -93,7 +93,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         }
 
         await _hotkeyService.StartAsync();
-        _viewModel.MarkReady(_hotkeyService.DisplayGesture);
+        _viewModel.MarkReady();
     }
 
     public void EnsureVisible(

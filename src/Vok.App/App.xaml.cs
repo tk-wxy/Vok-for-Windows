@@ -15,6 +15,7 @@ using Vok.Infrastructure.Windows.Windowing;
 using Vok.Features.Tray;
 using Vok.Presentation;
 using Vok.Features.Settings;
+using Vok.Hotkeys;
 
 namespace Vok;
 
@@ -42,6 +43,8 @@ public partial class App : Application
         _services = BuildServices();
         var appearance = _services.GetRequiredService<AppearanceController>();
         await appearance.InitializeAsync();
+        var hotkeys = _services.GetRequiredService<HotkeyController>();
+        await hotkeys.InitializeAsync();
         var window = _services.GetRequiredService<MainWindow>();
         var applicationController = _services.GetRequiredService<ApplicationController>();
         var controller = _services.GetRequiredService<WorkspaceController>();
@@ -69,12 +72,16 @@ public partial class App : Application
     {
         var services = new ServiceCollection();
 
-        services.AddSingleton(GlobalHotkeyGesture.M0DiagnosticDefault);
+        services.AddSingleton(GlobalHotkeyGesture.Default);
         services.AddSingleton(WorkspaceHostOptions.FromEnvironment());
         services.AddSingleton<WorkspaceSessionStateMachine>();
         services.AddSingleton<IForegroundWindowService, Win32ForegroundWindowService>();
         services.AddSingleton<IWindowPlacementService, Win32WindowPlacementService>();
-        services.AddSingleton<IGlobalHotkeyService, GlobalHotkeyService>();
+        services.AddSingleton<GlobalHotkeyService>();
+        services.AddSingleton<IGlobalHotkeyService>(provider =>
+            provider.GetRequiredService<GlobalHotkeyService>());
+        services.AddSingleton<IConfigurableGlobalHotkeyService>(provider =>
+            provider.GetRequiredService<GlobalHotkeyService>());
         services.AddSingleton<ITrayMenuService, WindowsTrayMenuService>();
         services.AddSingleton<ITrayIconService, WpfTrayIconService>();
         services.AddSingleton<IPerformanceSampler, ProcessPerformanceSampler>();
@@ -83,6 +90,7 @@ public partial class App : Application
         services.AddSingleton<IAppSettingsStore>(_ => CreateSettingsStore());
         services.AddSingleton<IAppThemeApplier>(_ => new WpfAppThemeApplier(Current));
         services.AddSingleton<AppearanceController>();
+        services.AddSingleton<HotkeyController>();
         services.AddSingleton<SettingsViewModel>();
         services.AddSingleton<MainWindowViewModel>();
         services.AddSingleton<MainWindow>();

@@ -7,6 +7,7 @@ using Vok.Presentation;
 using Vok.Appearance;
 using Vok.Core.Appearance;
 using Vok.Features.Settings;
+using Vok.Hotkeys;
 using Xunit;
 
 namespace Vok.IntegrationTests.Hosting;
@@ -784,7 +785,7 @@ public sealed class WorkspaceControllerTests
             Presentation = new FakePresentationService(Log);
             Sampler = new FakePerformanceSampler();
             StateMachine = new WorkspaceSessionStateMachine();
-            ViewModel = CreateViewModel();
+            ViewModel = CreateViewModel(Hotkey);
             Controller = new WorkspaceController(
                 Window,
                 Frames,
@@ -837,13 +838,17 @@ public sealed class WorkspaceControllerTests
             Presentation.Dispose();
         }
 
-        private static MainWindowViewModel CreateViewModel()
+        private static MainWindowViewModel CreateViewModel(FakeHotkey hotkey)
         {
+            var store = new InMemorySettingsStore();
             var appearance = new AppearanceController(
-                new InMemorySettingsStore(),
+                store,
                 new NoOpThemeApplier());
             appearance.InitializeAsync().GetAwaiter().GetResult();
-            return new MainWindowViewModel(new SettingsViewModel(appearance));
+            var hotkeyController = new HotkeyController(store, hotkey);
+            hotkeyController.InitializeAsync().GetAwaiter().GetResult();
+            return new MainWindowViewModel(
+                new SettingsViewModel(appearance, hotkeyController));
         }
     }
 
@@ -1016,6 +1021,10 @@ public sealed class WorkspaceControllerTests
         public Task SaveThemeModeAsync(
             AppThemeMode themeMode,
             CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task SaveHotkeyGestureAsync(
+            GlobalHotkeyGesture gesture,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private sealed class NoOpThemeApplier : IAppThemeApplier
@@ -1119,12 +1128,25 @@ public sealed class WorkspaceControllerTests
         }
     }
 
-    private sealed class FakeHotkey : IGlobalHotkeyService
+    private sealed class FakeHotkey : IConfigurableGlobalHotkeyService
     {
         public event EventHandler<HotkeyInvocation>? Pressed;
         public event EventHandler<Exception>? Faulted;
-        public string DisplayGesture => "test";
+        public GlobalHotkeyGesture CurrentGesture { get; private set; } =
+            GlobalHotkeyGesture.Default;
+        public string DisplayGesture => CurrentGesture.DisplayName;
         public Task StartAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task SuspendAsync(CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+        public Task ResumeAsync(CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+        public Task ChangeGestureAsync(
+            GlobalHotkeyGesture gesture,
+            CancellationToken cancellationToken = default)
+        {
+            CurrentGesture = gesture;
+            return Task.CompletedTask;
+        }
         public void Raise(ForegroundTarget target) =>
             Pressed?.Invoke(this, new HotkeyInvocation(target, Stopwatch.GetTimestamp()));
         public void Dispose() { }

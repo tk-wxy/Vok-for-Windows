@@ -9,7 +9,6 @@ namespace Vok.Presentation;
 
 public partial class MainWindowViewModel : ObservableObject
 {
-    [ObservableProperty] private string _hotkeyLabel = "等待热键注册";
     [ObservableProperty] private string _statusText = "后台初始化中。";
     [ObservableProperty] private string _inputReadyText = "—";
     [ObservableProperty] private string _firstFrameText = "—";
@@ -45,9 +44,8 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void CloseSettings() => NavigateTo(WorkspaceSection.Workspace);
 
-    public void MarkReady(string gesture)
+    public void MarkReady()
     {
-        HotkeyLabel = gesture;
         StatusText = "热键已注册；生产宿主在后台保持隐藏。";
     }
 

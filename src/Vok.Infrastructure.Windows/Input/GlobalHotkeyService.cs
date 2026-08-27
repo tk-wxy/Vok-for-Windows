@@ -1,32 +1,46 @@
-using System.ComponentModel;
+using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 using Vok.Core.Platform;
-using Windows.Win32;
-using Windows.Win32.Foundation;
-using Windows.Win32.UI.Input.KeyboardAndMouse;
-using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Vok.Infrastructure.Windows.Input;
 
-public sealed class GlobalHotkeyService : IGlobalHotkeyService
+public sealed class GlobalHotkeyService : IConfigurableGlobalHotkeyService
 {
+    internal const uint CommandMessage = 0x8000 + 0x56;
     private const int HotkeyId = 0x564F;
     private static readonly TimeSpan ShutdownWatchdog = TimeSpan.FromSeconds(5);
 
     private readonly IForegroundWindowService _foregroundWindowService;
-    private readonly GlobalHotkeyGesture _gesture;
-    private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly IGlobalHotkeyNativeMethods _nativeMethods;
+    private readonly TaskCompletionSource _loopReady =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _started =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly ConcurrentDictionary<nuint, HotkeyCommand> _commands = [];
     private readonly Thread _messageThread;
+    private readonly object _lifecycleGate = new();
+    private GlobalHotkeyGesture _gesture;
+    private long _nextCommandId;
     private int _lifecycle;
     private uint _messageThreadId;
+    private bool _registrationDesired = true;
+    private bool _registered;
 
     public GlobalHotkeyService(
         IForegroundWindowService foregroundWindowService,
         GlobalHotkeyGesture gesture)
+        : this(foregroundWindowService, gesture, new Win32GlobalHotkeyNativeMethods())
+    {
+    }
+
+    internal GlobalHotkeyService(
+        IForegroundWindowService foregroundWindowService,
+        GlobalHotkeyGesture gesture,
+        IGlobalHotkeyNativeMethods nativeMethods)
     {
         _foregroundWindowService = foregroundWindowService;
         _gesture = gesture;
+        _nativeMethods = nativeMethods;
         _messageThread = new Thread(RunMessageLoop)
         {
             IsBackground = true,
@@ -38,43 +52,63 @@ public sealed class GlobalHotkeyService : IGlobalHotkeyService
 
     public event EventHandler<Exception>? Faulted;
 
-    public string DisplayGesture => _gesture.DisplayName;
+    public GlobalHotkeyGesture CurrentGesture => Volatile.Read(ref _gesture);
+
+    public string DisplayGesture => CurrentGesture.DisplayName;
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
-        var previous = Interlocked.CompareExchange(ref _lifecycle, 1, 0);
-        if (previous == 2)
+        lock (_lifecycleGate)
         {
-            throw new ObjectDisposedException(nameof(GlobalHotkeyService));
+            if (_lifecycle == 2)
+            {
+                throw new ObjectDisposedException(nameof(GlobalHotkeyService));
+            }
+
+            if (_lifecycle == 0)
+            {
+                _lifecycle = 1;
+                _messageThread.Start();
+            }
         }
 
-        if (previous == 0)
-        {
-            _messageThread.Start();
-        }
+        await _started.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
 
-        try
-        {
-            await _started.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            Dispose();
-            throw;
-        }
+    public Task SuspendAsync(CancellationToken cancellationToken = default) =>
+        ExecuteCommandAsync(HotkeyCommandKind.Suspend, null, cancellationToken);
+
+    public Task ResumeAsync(CancellationToken cancellationToken = default) =>
+        ExecuteCommandAsync(HotkeyCommandKind.Resume, null, cancellationToken);
+
+    public Task ChangeGestureAsync(
+        GlobalHotkeyGesture gesture,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(gesture);
+        return ExecuteCommandAsync(
+            HotkeyCommandKind.ChangeGesture,
+            gesture,
+            cancellationToken);
     }
 
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _lifecycle, 2) == 2)
+        uint threadId;
+        lock (_lifecycleGate)
         {
-            return;
+            if (_lifecycle == 2)
+            {
+                return;
+            }
+
+            _lifecycle = 2;
+            threadId = _messageThreadId;
         }
 
-        var threadId = Volatile.Read(ref _messageThreadId);
         if (threadId != 0)
         {
-            _ = PInvoke.PostThreadMessage(threadId, PInvoke.WM_QUIT, default, default);
+            _ = _nativeMethods.PostQuit(threadId);
         }
 
         if (_messageThread.IsAlive && !_messageThread.Join(ShutdownWatchdog))
@@ -84,65 +118,262 @@ public sealed class GlobalHotkeyService : IGlobalHotkeyService
         }
     }
 
-    private void RunMessageLoop()
+    private Task ExecuteCommandAsync(
+        HotkeyCommandKind kind,
+        GlobalHotkeyGesture? gesture,
+        CancellationToken cancellationToken)
     {
-        var registered = false;
-        try
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_lifecycleGate)
         {
-            Volatile.Write(ref _messageThreadId, PInvoke.GetCurrentThreadId());
-            _ = PInvoke.PeekMessage(out _, HWND.Null, 0, 0, PEEK_MESSAGE_REMOVE_TYPE.PM_NOREMOVE);
-
-            registered = PInvoke.RegisterHotKey(
-                HWND.Null,
-                HotkeyId,
-                ToNativeModifiers(_gesture.Modifiers) | HOT_KEY_MODIFIERS.MOD_NOREPEAT,
-                _gesture.VirtualKey);
-
-            if (!registered)
+            if (_lifecycle == 2)
             {
-                throw new Win32Exception(
-                    Marshal.GetLastWin32Error(),
-                    $"Unable to register {DisplayGesture}. The gesture may already be in use.");
+                throw new ObjectDisposedException(nameof(GlobalHotkeyService));
             }
 
-            _started.TrySetResult();
+            if (_lifecycle == 0)
+            {
+                switch (kind)
+                {
+                    case HotkeyCommandKind.Suspend:
+                        _registrationDesired = false;
+                        break;
+                    case HotkeyCommandKind.Resume:
+                        _registrationDesired = true;
+                        break;
+                    case HotkeyCommandKind.ChangeGesture:
+                        Volatile.Write(ref _gesture, gesture!);
+                        break;
+                    default:
+                        throw new ArgumentOutOfRangeException(nameof(kind), kind, null);
+                }
+
+                return Task.CompletedTask;
+            }
+        }
+
+        return PostCommandAsync(kind, gesture, cancellationToken);
+    }
+
+    private async Task PostCommandAsync(
+        HotkeyCommandKind kind,
+        GlobalHotkeyGesture? gesture,
+        CancellationToken cancellationToken)
+    {
+        await _loopReady.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var commandId = checked((nuint)Interlocked.Increment(ref _nextCommandId));
+        var command = new HotkeyCommand(kind, gesture);
+        if (!_commands.TryAdd(commandId, command))
+        {
+            throw new InvalidOperationException("Unable to queue the global hotkey command.");
+        }
+
+        var threadId = Volatile.Read(ref _messageThreadId);
+        if (threadId == 0 || !_nativeMethods.PostCommand(threadId, CommandMessage, commandId))
+        {
+            _commands.TryRemove(commandId, out _);
+            throw new InvalidOperationException("The global hotkey thread is unavailable.");
+        }
+
+        // Once posted, cancellation cannot hide a registration side effect.
+        await command.Task.ConfigureAwait(false);
+    }
+
+    private void RunMessageLoop()
+    {
+        try
+        {
+            var threadId = _nativeMethods.GetCurrentThreadId();
+            _nativeMethods.EnsureMessageQueue();
+            lock (_lifecycleGate)
+            {
+                _messageThreadId = threadId;
+            }
+            _loopReady.TrySetResult();
+
+            if (_registrationDesired)
+            {
+                try
+                {
+                    Register(CurrentGesture);
+                    _started.TrySetResult();
+                }
+                catch (Exception exception)
+                {
+                    _started.TrySetException(exception);
+                    PublishFault(exception);
+                }
+            }
+            else
+            {
+                _started.TrySetResult();
+            }
 
             while (true)
             {
-                var result = PInvoke.GetMessage(out var message, HWND.Null, 0, 0);
-                if (result.Value == -1)
+                var message = _nativeMethods.GetMessage();
+                if (message.Result == -1)
                 {
-                    throw new Win32Exception(Marshal.GetLastWin32Error(), "GetMessage failed.");
+                    throw new InvalidOperationException("GetMessage failed.");
                 }
 
-                if (result.Value == 0)
+                if (message.Result == 0)
                 {
                     break;
                 }
 
-                if (message.message == PInvoke.WM_HOTKEY && message.wParam.Value == HotkeyId)
+                if (message.Message == CommandMessage)
                 {
-                    var receivedTimestamp = Stopwatch.GetTimestamp();
+                    ProcessCommand(message.WParam);
+                }
+                else if (message.Message == _nativeMethods.HotkeyMessage &&
+                         message.WParam == HotkeyId &&
+                         _registered)
+                {
                     PublishPressed(new HotkeyInvocation(
                         _foregroundWindowService.Capture(),
-                        receivedTimestamp));
+                        Stopwatch.GetTimestamp()));
                 }
             }
         }
         catch (Exception exception)
         {
+            _loopReady.TrySetException(exception);
             _started.TrySetException(exception);
             PublishFault(exception);
         }
         finally
         {
-            if (registered)
+            if (_registered)
             {
-                _ = PInvoke.UnregisterHotKey(HWND.Null, HotkeyId);
+                try
+                {
+                    Unregister();
+                }
+                catch (Exception exception)
+                {
+                    PublishFault(exception);
+                }
             }
 
             Volatile.Write(ref _messageThreadId, 0);
+            var failure = new InvalidOperationException("The global hotkey thread has stopped.");
+            foreach (var entry in _commands)
+            {
+                if (_commands.TryRemove(entry.Key, out var command))
+                {
+                    command.Fail(failure);
+                }
+            }
         }
+    }
+
+    private void ProcessCommand(nuint commandId)
+    {
+        if (!_commands.TryRemove(commandId, out var command))
+        {
+            return;
+        }
+
+        try
+        {
+            switch (command.Kind)
+            {
+                case HotkeyCommandKind.Suspend:
+                    _registrationDesired = false;
+                    if (_registered)
+                    {
+                        Unregister();
+                    }
+                    break;
+                case HotkeyCommandKind.Resume:
+                    _registrationDesired = true;
+                    if (!_registered)
+                    {
+                        Register(CurrentGesture);
+                    }
+                    break;
+                case HotkeyCommandKind.ChangeGesture:
+                    ChangeGesture(command.Gesture!);
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+
+            command.Complete();
+        }
+        catch (Exception exception)
+        {
+            command.Fail(exception);
+        }
+    }
+
+    private void ChangeGesture(GlobalHotkeyGesture candidate)
+    {
+        var previous = CurrentGesture;
+        _registrationDesired = true;
+        if (candidate == previous)
+        {
+            if (!_registered)
+            {
+                Register(previous);
+            }
+
+            return;
+        }
+
+        if (_registered)
+        {
+            Unregister();
+        }
+
+        try
+        {
+            Register(candidate);
+            Volatile.Write(ref _gesture, candidate);
+        }
+        catch (Exception registrationFailure)
+        {
+            try
+            {
+                Register(previous);
+            }
+            catch (Exception restoreFailure)
+            {
+                throw new AggregateException(
+                    "The new global hotkey failed and the previous registration could not be restored.",
+                    registrationFailure,
+                    restoreFailure);
+            }
+
+            throw;
+        }
+    }
+
+    private void Register(GlobalHotkeyGesture gesture)
+    {
+        if (!_nativeMethods.RegisterHotkey(HotkeyId, gesture))
+        {
+            throw new GlobalHotkeyRegistrationException(
+                gesture,
+                _nativeMethods.GetLastError());
+        }
+
+        _registered = true;
+    }
+
+    private void Unregister()
+    {
+        if (!_nativeMethods.UnregisterHotkey(HotkeyId))
+        {
+            throw new InvalidOperationException(
+                $"Unable to unregister {CurrentGesture.DisplayName} (Win32 error {_nativeMethods.GetLastError()}).");
+        }
+
+        _registered = false;
     }
 
     private void PublishPressed(HotkeyInvocation invocation)
@@ -166,29 +397,6 @@ public sealed class GlobalHotkeyService : IGlobalHotkeyService
         }
     }
 
-    private static HOT_KEY_MODIFIERS ToNativeModifiers(GlobalHotkeyModifiers modifiers)
-    {
-        var result = (HOT_KEY_MODIFIERS)0;
-        if ((modifiers & GlobalHotkeyModifiers.Alt) != 0)
-        {
-            result |= HOT_KEY_MODIFIERS.MOD_ALT;
-        }
-        if ((modifiers & GlobalHotkeyModifiers.Control) != 0)
-        {
-            result |= HOT_KEY_MODIFIERS.MOD_CONTROL;
-        }
-        if ((modifiers & GlobalHotkeyModifiers.Shift) != 0)
-        {
-            result |= HOT_KEY_MODIFIERS.MOD_SHIFT;
-        }
-        if ((modifiers & GlobalHotkeyModifiers.Windows) != 0)
-        {
-            result |= HOT_KEY_MODIFIERS.MOD_WIN;
-        }
-
-        return result;
-    }
-
     private void PublishFault(Exception exception)
     {
         Trace.TraceError(exception.ToString());
@@ -209,5 +417,30 @@ public sealed class GlobalHotkeyService : IGlobalHotkeyService
                 Trace.TraceError(subscriberException.ToString());
             }
         }
+    }
+
+    private enum HotkeyCommandKind
+    {
+        Suspend,
+        Resume,
+        ChangeGesture,
+    }
+
+    private sealed class HotkeyCommand(
+        HotkeyCommandKind kind,
+        GlobalHotkeyGesture? gesture)
+    {
+        private readonly TaskCompletionSource _completion =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public HotkeyCommandKind Kind { get; } = kind;
+
+        public GlobalHotkeyGesture? Gesture { get; } = gesture;
+
+        public Task Task => _completion.Task;
+
+        public void Complete() => _completion.TrySetResult();
+
+        public void Fail(Exception exception) => _completion.TrySetException(exception);
     }
 }

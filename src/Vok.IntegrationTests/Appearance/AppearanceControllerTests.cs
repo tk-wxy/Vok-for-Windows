@@ -1,5 +1,6 @@
 using Vok.Appearance;
 using Vok.Core.Appearance;
+using Vok.Core.Platform;
 using Xunit;
 
 namespace Vok.IntegrationTests.Appearance;
@@ -96,6 +97,10 @@ public sealed class AppearanceControllerTests
                 ? Task.CompletedTask
                 : Task.FromException(SaveFailure);
         }
+
+        public Task SaveHotkeyGestureAsync(
+            GlobalHotkeyGesture gesture,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private sealed class RecordingThemeApplier : IAppThemeApplier

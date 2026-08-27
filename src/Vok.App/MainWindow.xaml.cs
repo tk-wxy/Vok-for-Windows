@@ -114,6 +114,14 @@ public partial class MainWindow : Window, IWorkspaceWindow
             return;
         }
 
+        if (DataContext is MainWindowViewModel
+            {
+                Settings.IsHotkeyRecording: true,
+            })
+        {
+            return;
+        }
+
         e.Handled = true;
         HideRequested?.Invoke(
             this,
