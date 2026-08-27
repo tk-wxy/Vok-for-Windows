@@ -17,13 +17,18 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
     private readonly IWindowPlacementService _windowPlacementService;
     private readonly IPerformanceSampler _performanceSampler;
     private readonly IWorkspaceDiagnosticPublisher _diagnosticPublisher;
+    private readonly IWorkspacePresentationService _presentationService;
     private readonly WorkspaceHostOptions _options;
     private EventHandler? _pendingRenderingHandler;
     private EventHandler? _pendingActivationHandler;
     private EventHandler? _pendingInputFocusHandler;
+    private IDisposable? _revealWatchdog;
     private long _pendingFrameGeneration;
     private long _pendingActivationGeneration;
     private long _pendingInputFocusGeneration;
+    private long _pendingFenceGeneration;
+    private long _presentedGeneration;
+    private long _revealWatchdogGeneration;
     private long _hotkeyReceivedTimestamp;
     private long _firstFrameTimestamp;
     private long _inputReadyTimestamp;
@@ -49,6 +54,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         IWindowPlacementService windowPlacementService,
         IPerformanceSampler performanceSampler,
         IWorkspaceDiagnosticPublisher diagnosticPublisher,
+        IWorkspacePresentationService presentationService,
         WorkspaceHostOptions options)
     {
         _window = window;
@@ -60,12 +66,18 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         _windowPlacementService = windowPlacementService;
         _performanceSampler = performanceSampler;
         _diagnosticPublisher = diagnosticPublisher;
+        _presentationService = presentationService;
         _options = options;
+
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(
+            _options.RevealWatchdogTimeout,
+            TimeSpan.Zero);
 
         _hotkeyService.Pressed += OnHotkeyPressed;
         _hotkeyService.Faulted += OnHotkeyFaulted;
         _window.HideRequested += OnHideRequested;
         _window.ApplicationDeactivated += OnApplicationDeactivated;
+        _presentationService.FenceCompleted += OnPresentationFenceCompleted;
     }
 
     public event EventHandler? ShutdownRequested;
@@ -135,13 +147,16 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         }
 
         _disposed = true;
+        CancelRevealWatchdog();
         DetachPendingFirstFrame();
         DetachPendingActivation();
         DetachPendingInputFocus();
+        _pendingFenceGeneration = 0;
         _hotkeyService.Pressed -= OnHotkeyPressed;
         _hotkeyService.Faulted -= OnHotkeyFaulted;
         _window.HideRequested -= OnHideRequested;
         _window.ApplicationDeactivated -= OnApplicationDeactivated;
+        _presentationService.FenceCompleted -= OnPresentationFenceCompleted;
         TryClearDiagnostic();
     }
 
@@ -259,7 +274,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
 
     private void CompleteExitRequest()
     {
-        if (_disposed)
+        if (Volatile.Read(ref _disposed))
         {
             return;
         }
@@ -349,27 +364,31 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         _inputReadyTimestamp = 0;
         _lastObservation = default;
         _lastWpfInputFocus = false;
-
-        AttachFirstFrame(transition.Generation, invocation.NativeTimestamp);
-        AttachActivation(transition.Generation);
-        AttachInputFocus(transition.Generation, invocation.NativeTimestamp);
+        _pendingFenceGeneration = 0;
+        _presentedGeneration = 0;
 
         try
         {
+            AttachFirstFrame(transition.Generation);
+            AttachActivation(transition.Generation);
+            AttachInputFocus(transition.Generation, invocation.NativeTimestamp);
+            StartRevealWatchdog(transition.Generation, foregroundTarget);
+
             if (_windowHandle == 0)
             {
                 _windowHandle = _window.EnsureHandle();
             }
 
+            _presentationService.SetCloaked(_windowHandle, cloaked: true);
+            if (!_presentationService.IsCloaked(_windowHandle))
+            {
+                throw new InvalidOperationException(
+                    "DWM did not cloak the workspace before its reveal transaction.");
+            }
+
             TryPublishDiagnostic();
             _windowPlacementService.ApplyFullScreen(_windowHandle, foregroundTarget);
             _window.Show();
-            _ = _windowPlacementService.RequestForeground(_windowHandle);
-            _ = _window.Activate();
-            _ = _window.FocusInputAnchor();
-            TryCompletePresentation(transition.Generation, invocation.NativeTimestamp);
-            _window.PostInput(() =>
-                TryCompletePresentation(transition.Generation, invocation.NativeTimestamp));
         }
         catch (Exception exception)
         {
@@ -395,30 +414,52 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
             session.Target,
             _lastHideRequestedTimestamp);
         TryPublishDiagnostic();
+        CancelRevealWatchdog();
         DetachPendingFirstFrame();
         DetachPendingActivation();
         DetachPendingInputFocus();
+        _pendingFenceGeneration = 0;
 
+        var cleanupFailures = new List<Exception>();
+
+        Exception? hideFailure = null;
         try
         {
             _window.Hide();
-            if (_window.IsVisible)
-            {
-                throw new InvalidOperationException("The workspace window remained visible after Hide().");
-            }
-
-            RecordWindowHidden(transition.Generation);
         }
         catch (Exception exception)
         {
-            _ = _stateMachine.RollBackHide(transition.Generation);
+            hideFailure = exception;
+        }
+
+        if (_window.IsVisible)
+        {
+            hideFailure ??= new InvalidOperationException(
+                "The workspace window remained visible after Hide().");
+            if (!_stateMachine.RollBackHide(transition.Generation))
+            {
+                _viewModel.RecordFault(new AggregateException(
+                    hideFailure,
+                    new InvalidOperationException(
+                        "The failed hide could not roll back its owned generation.")));
+                return;
+            }
+
+            ResumeRevealAfterFailedHide(session);
             RefreshObservation(recordInViewModel: false);
             TryPublishDiagnostic();
-            _viewModel.RecordFault(exception);
+            _viewModel.RecordFault(hideFailure);
             return;
         }
 
-        Exception? topmostCleanupException = null;
+        if (hideFailure is not null)
+        {
+            cleanupFailures.Add(hideFailure);
+        }
+
+        RecordWindowHidden(transition.Generation);
+        TryClearCloakWhenHidden(cleanupFailures);
+
         RecordTopmostExitAttempted(transition.Generation);
         try
         {
@@ -427,7 +468,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         }
         catch (Exception exception)
         {
-            topmostCleanupException = exception;
+            cleanupFailures.Add(exception);
             RecordTopmostExitCompleted(transition.Generation, succeeded: false);
         }
 
@@ -455,18 +496,30 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         RefreshObservation(recordInViewModel: false);
         TryPublishDiagnostic();
         TryRecordHidden(restoreResult);
-        if (topmostCleanupException is not null)
+        if (cleanupFailures.Count != 0)
         {
-            _viewModel.RecordFault(topmostCleanupException);
+            _viewModel.RecordFault(cleanupFailures.Count == 1
+                ? cleanupFailures[0]
+                : new AggregateException(cleanupFailures));
         }
     }
 
     private void CleanUpFailedShow(long generation, ForegroundTarget target, Exception showException)
     {
+        if (!_stateMachine.FailShow(generation))
+        {
+            return;
+        }
+
+        CancelRevealWatchdog();
         DetachPendingFirstFrame();
         DetachPendingActivation();
         DetachPendingInputFocus();
-        _ = _stateMachine.FailShow(generation);
+        if (_pendingFenceGeneration == generation)
+        {
+            _pendingFenceGeneration = 0;
+        }
+
         var cleanupStartedTimestamp = Stopwatch.GetTimestamp();
         _lastHideRequestedTimestamp = cleanupStartedTimestamp;
         BeginRestoreDiagnostic(
@@ -479,19 +532,21 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         try
         {
             _window.Hide();
-            if (_window.IsVisible)
-            {
-                failures.Add(new InvalidOperationException(
-                    "The workspace window remained visible during failed-show cleanup."));
-            }
-            else
-            {
-                RecordWindowHidden(generation);
-            }
         }
         catch (Exception exception)
         {
             failures.Add(exception);
+        }
+
+        if (_window.IsVisible)
+        {
+            failures.Add(new InvalidOperationException(
+                "The workspace window remained visible during failed-show cleanup."));
+        }
+        else
+        {
+            RecordWindowHidden(generation);
+            TryClearCloakWhenHidden(failures);
         }
 
         RecordTopmostExitAttempted(generation);
@@ -575,7 +630,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         return result;
     }
 
-    private void AttachFirstFrame(long generation, long requestedTimestamp)
+    private void AttachFirstFrame(long generation)
     {
         DetachPendingFirstFrame();
         _pendingFrameGeneration = generation;
@@ -586,24 +641,27 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
                 return;
             }
 
-            DetachPendingFirstFrame();
             if (!_stateMachine.IsCurrentSession(generation) ||
-                _stateMachine.State is WorkspaceState.Hidden or WorkspaceState.Hiding)
+                _stateMachine.State is not WorkspaceState.Revealing ||
+                !_window.IsVisible)
             {
                 return;
             }
 
-            _firstFrameTimestamp = Stopwatch.GetTimestamp();
-            TryPublishDiagnostic();
+            DetachPendingFirstFrame();
+
+            // CompositionTarget.Rendering runs before MediaContext renders the frame.
+            // Background priority resumes only after that dispatcher render operation returns.
             try
             {
-                _viewModel.RecordFirstFrame(
-                    Stopwatch.GetElapsedTime(requestedTimestamp, _firstFrameTimestamp),
-                    _performanceSampler.Capture());
+                _window.PostBackground(() => RequestPresentationFence(generation));
             }
             catch (Exception exception)
             {
-                _viewModel.RecordFault(exception);
+                CleanUpFailedShow(
+                    generation,
+                    _stateMachine.Current?.Target ?? ForegroundTarget.None,
+                    exception);
             }
         };
         _frameSource.Rendering += _pendingRenderingHandler;
@@ -620,13 +678,14 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
                 return;
             }
 
-            DetachPendingActivation();
             if (!_stateMachine.IsCurrentSession(generation) ||
-                _stateMachine.State is WorkspaceState.Hidden or WorkspaceState.Hiding)
+                _stateMachine.State is not WorkspaceState.Revealing ||
+                _presentedGeneration != generation)
             {
                 return;
             }
 
+            DetachPendingActivation();
             _ = _window.FocusInputAnchor();
             TryCompletePresentation(generation, _stateMachine.Current?.RequestedTimestamp ?? 0);
         };
@@ -644,13 +703,14 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
                 return;
             }
 
-            DetachPendingInputFocus();
             if (!_stateMachine.IsCurrentSession(generation) ||
-                _stateMachine.State is WorkspaceState.Hidden or WorkspaceState.Hiding)
+                _stateMachine.State is not WorkspaceState.Revealing ||
+                _presentedGeneration != generation)
             {
                 return;
             }
 
+            DetachPendingInputFocus();
             TryCompletePresentation(generation, requestedTimestamp);
         };
         _window.InputAnchorFocused += _pendingInputFocusHandler;
@@ -689,6 +749,208 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         }
     }
 
+    private void OnPresentationFenceCompleted(
+        object? sender,
+        WorkspacePresentationFenceCompletedEventArgs e)
+    {
+        if (Volatile.Read(ref _disposed))
+        {
+            return;
+        }
+
+        try
+        {
+            _window.PostNormal(() => CompletePresentationFence(e));
+        }
+        catch (Exception exception)
+        {
+            Trace.TraceError(exception.ToString());
+        }
+    }
+
+    private void RequestPresentationFence(long generation)
+    {
+        if (_disposed ||
+            _pendingFenceGeneration != 0 ||
+            !_stateMachine.IsCurrentSession(generation) ||
+            _stateMachine.State is not WorkspaceState.Revealing ||
+            !_window.IsVisible)
+        {
+            return;
+        }
+
+        // Claim before enqueueing: a test double or future implementation may complete inline.
+        _pendingFenceGeneration = generation;
+        try
+        {
+            if (!_presentationService.TryRequestFence(generation))
+            {
+                throw new InvalidOperationException(
+                    "The DWM presentation fence queue is full.");
+            }
+        }
+        catch (Exception exception)
+        {
+            if (_pendingFenceGeneration == generation)
+            {
+                _pendingFenceGeneration = 0;
+            }
+
+            CleanUpFailedShow(
+                generation,
+                _stateMachine.Current?.Target ?? ForegroundTarget.None,
+                exception);
+        }
+    }
+
+    private void CompletePresentationFence(
+        WorkspacePresentationFenceCompletedEventArgs completion)
+    {
+        var generation = completion.Generation;
+        if (_pendingFenceGeneration != generation)
+        {
+            return;
+        }
+
+        // Claim before changing cloak/focus so duplicate or reentrant completion is harmless.
+        _pendingFenceGeneration = 0;
+        if (!_stateMachine.IsCurrentSession(generation) ||
+            _stateMachine.State is not WorkspaceState.Revealing)
+        {
+            return;
+        }
+
+        var session = _stateMachine.Current!;
+        if (completion.Exception is not null)
+        {
+            CleanUpFailedShow(generation, session.Target, completion.Exception);
+            return;
+        }
+
+        try
+        {
+            _presentationService.SetCloaked(_windowHandle, cloaked: false);
+            if (_presentationService.IsCloaked(_windowHandle))
+            {
+                throw new InvalidOperationException(
+                    "DWM kept the workspace cloaked after its content-presented fence completed.");
+            }
+
+            _presentedGeneration = generation;
+            _firstFrameTimestamp = Stopwatch.GetTimestamp();
+
+            _ = _windowPlacementService.RequestForeground(_windowHandle);
+            _ = _window.Activate();
+            _ = _window.FocusInputAnchor();
+            TryCompletePresentation(generation, session.RequestedTimestamp);
+            _window.PostInput(() =>
+                TryCompletePresentation(generation, session.RequestedTimestamp));
+        }
+        catch (Exception exception)
+        {
+            CleanUpFailedShow(generation, session.Target, exception);
+        }
+    }
+
+    private void StartRevealWatchdog(long generation, ForegroundTarget target)
+    {
+        CancelRevealWatchdog();
+        _revealWatchdogGeneration = generation;
+        var registration = _window.ScheduleNormal(
+            _options.RevealWatchdogTimeout,
+            () => OnRevealWatchdogElapsed(generation, target));
+        if (_revealWatchdogGeneration == generation &&
+            _stateMachine.IsCurrentSession(generation) &&
+            _stateMachine.State is WorkspaceState.Revealing)
+        {
+            _revealWatchdog = registration;
+        }
+        else
+        {
+            registration.Dispose();
+        }
+    }
+
+    private void OnRevealWatchdogElapsed(long generation, ForegroundTarget target)
+    {
+        if (_revealWatchdogGeneration != generation ||
+            !_stateMachine.IsCurrentSession(generation) ||
+            _stateMachine.State is not WorkspaceState.Revealing)
+        {
+            return;
+        }
+
+        // Claim before cleanup so a same-generation fence completion cannot also finish the show.
+        _revealWatchdogGeneration = 0;
+        var registration = _revealWatchdog;
+        _revealWatchdog = null;
+        registration?.Dispose();
+        CleanUpFailedShow(
+            generation,
+            target,
+            new TimeoutException(
+                $"The workspace reveal did not complete within the " +
+                $"{_options.RevealWatchdogTimeout.TotalSeconds:0.###}-second failure watchdog."));
+    }
+
+    private void CancelRevealWatchdog()
+    {
+        _revealWatchdogGeneration = 0;
+        var registration = _revealWatchdog;
+        _revealWatchdog = null;
+        registration?.Dispose();
+    }
+
+    private void TryClearCloakWhenHidden(List<Exception> failures)
+    {
+        if (_windowHandle == 0 || _window.IsVisible)
+        {
+            return;
+        }
+
+        try
+        {
+            _presentationService.SetCloaked(_windowHandle, cloaked: false);
+            if (_presentationService.IsCloaked(_windowHandle))
+            {
+                failures.Add(new InvalidOperationException(
+                    "The hidden workspace HWND remained DWM-cloaked after cleanup."));
+            }
+        }
+        catch (Exception exception)
+        {
+            failures.Add(exception);
+        }
+    }
+
+    private void ResumeRevealAfterFailedHide(WorkspaceSession session)
+    {
+        if (!_stateMachine.IsCurrentSession(session.Generation) ||
+            _stateMachine.State is not WorkspaceState.Revealing)
+        {
+            return;
+        }
+
+        try
+        {
+            _presentationService.SetCloaked(_windowHandle, cloaked: true);
+            if (!_presentationService.IsCloaked(_windowHandle))
+            {
+                throw new InvalidOperationException(
+                    "The workspace could not restore its reveal cloak after Hide() failed.");
+            }
+
+            AttachFirstFrame(session.Generation);
+            AttachActivation(session.Generation);
+            AttachInputFocus(session.Generation, session.RequestedTimestamp);
+            StartRevealWatchdog(session.Generation, session.Target);
+        }
+        catch (Exception exception)
+        {
+            CleanUpFailedShow(session.Generation, session.Target, exception);
+        }
+    }
+
     private void TryCompletePresentation(long generation, long requestedTimestamp)
     {
         if (requestedTimestamp == 0 ||
@@ -700,7 +962,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
 
         try
         {
-            RefreshObservation(recordInViewModel: true);
+            RefreshObservation(recordInViewModel: false);
         }
         catch (Exception exception)
         {
@@ -708,13 +970,13 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
             return;
         }
 
-        TryPublishDiagnostic();
         var presentation = new WorkspacePresentationStatus(
             _lastObservation.IsVisible,
             _lastObservation.IsTopmost,
             _lastObservation.IsForeground,
             _lastObservation.HasWin32KeyboardFocus,
-            _lastWpfInputFocus);
+            _lastWpfInputFocus,
+            _presentedGeneration == generation);
         if (!_stateMachine.CompleteShow(generation, presentation))
         {
             return;
@@ -722,13 +984,34 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
 
         DetachPendingActivation();
         DetachPendingInputFocus();
+        CancelRevealWatchdog();
         _inputReadyTimestamp = Stopwatch.GetTimestamp();
+        try
+        {
+            _window.PostBackground(() => RecordCompletedPresentation(generation));
+        }
+        catch (Exception exception)
+        {
+            _viewModel.RecordFault(exception);
+        }
+    }
+
+    private void RecordCompletedPresentation(long generation)
+    {
+        if (!_stateMachine.IsCurrentVisible(generation))
+        {
+            return;
+        }
+
         TryPublishDiagnostic();
         try
         {
+            var requestedTimestamp = _stateMachine.Current!.RequestedTimestamp;
+            _viewModel.RecordFirstFrame(
+                Stopwatch.GetElapsedTime(requestedTimestamp, _firstFrameTimestamp));
             _viewModel.RecordInputReady(
-                Stopwatch.GetElapsedTime(requestedTimestamp, _inputReadyTimestamp),
-                _performanceSampler.Capture());
+                Stopwatch.GetElapsedTime(requestedTimestamp, _inputReadyTimestamp));
+            _viewModel.RecordPerformanceSnapshot(_performanceSampler.Capture());
         }
         catch (Exception exception)
         {
@@ -765,6 +1048,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         _hotkeyReceivedTimestamp = 0;
         _firstFrameTimestamp = 0;
         _inputReadyTimestamp = 0;
+        _presentedGeneration = 0;
     }
 
     private void TryPublishDiagnostic()
@@ -792,6 +1076,11 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         if (_lastObservation.IsForeground) flags |= WorkspaceDiagnosticFlags.Foreground;
         if (_lastObservation.HasWin32KeyboardFocus) flags |= WorkspaceDiagnosticFlags.Win32KeyboardFocus;
         if (_lastWpfInputFocus) flags |= WorkspaceDiagnosticFlags.WpfInputAnchorFocus;
+        if (_stateMachine.Current is { Generation: var generation } &&
+            _presentedGeneration == generation)
+        {
+            flags |= WorkspaceDiagnosticFlags.Presented;
+        }
 
         return new WorkspaceDiagnosticSnapshot(
             _stateMachine.Current?.Generation ?? 0,

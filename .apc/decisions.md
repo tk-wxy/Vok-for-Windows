@@ -13,6 +13,7 @@
 - §7 单主窗设置视图与托盘应用生命周期 — 设置保留在唯一主 HWND 内，内置 NotifyIcon 只发布命令，显隐与退出仍由宿主和应用协调器统一拥有。
 - §8 Fluent 壳层、三态主题与 WPF 标准托盘菜单 — 诊断内容退出产品界面，主题以语义资源和 SQLite 串行持久化，托盘菜单进入同一 WPF Fluent 视觉体系。
 - §9 Windows 原生托盘菜单 — 真机否决 WPF Popup 作为标准托盘菜单，保留通知图标适配器并改由系统 `HMENU` 绘制右键菜单。
+- §10 generation 级内容呈现与 DWM 揭示栅栏 — 呼出期间临时 cloak 普通 HWND，以渲染返回后的专属 `DwmFlush` 证明内容可揭示，再解除 cloak、请求焦点并完成 Visible。
 
 ## 详情
 
@@ -101,3 +102,13 @@
 - **新增失败模式**：owner HWND 无效；菜单构建中途失败；鼠标与键盘锚点不同；`TrackPopupMenuEx` 取消或返回未知命令；操作失败与 `WM_NULL`/`DestroyMenu` 清理同时失败；菜单事件重入；上一轮前台快照污染下一轮。实现以非零 owner 校验、逐步构建和 `finally` 等价聚合清理、图标矩形到光标的明确降级、命令白名单、菜单打开先占有、每轮同步复位及既有订阅者异常隔离覆盖。
 - **决定 / 最后验证**：2026-08-27 / 2026-08-27。
 - **状态**：active；真实 Win32 ABI 已验证可创建、追加、设默认项并销毁菜单；Core 24/24、Windows/WPF 69/69，共 93/93 自动测试通过，Release 构建 0 警告/错误且 win-x64 自包含发布通过。2026-08-27 用户真机确认原生菜单视觉效果符合预期，且其余壳层/托盘测试均通过。
+
+### §10 generation 级内容呈现与 DWM 揭示栅栏
+
+- **最终方案**：主窗口继续是 `AllowsTransparency=false` 的普通不透明 HWND，只在每代 `Revealing` 内以 `DWMWA_CLOAK` 暂时阻止用户看到尚未提交的 surface，并设置 `ShowActivated=false`。该代 `CompositionTarget.Rendering` 只负责在渲染操作返回后的 Dispatcher Background 阶段请求栅栏；单一后台 worker 串行执行 `DwmFlush`。只有同代栅栏成功，UI 线程才解除 cloak，设置独立 `Presented` 门禁，然后请求 foreground/Activate/WPF 输入锚点；六项结果全部成立后才进入 `Visible`。进程采样、批量 HWND 诊断发布和旧诊断 ViewModel 更新移到完成后的 Background 阶段。2 秒具名 watchdog 只把缺失渲染/栅栏判为失败并执行 Hide、清 cloak、退出 Topmost 和目标恢复，绝不按时间强制揭示。
+- **范围**：长期隐藏主 HWND 的重复呼出、内容呈现、焦点开始时点、结构化诊断、显隐失败清理和测量工具；不改变普通不透明窗口架构、工作区矩形、Topmost/前台观察、隐藏策略或后续业务 UI。
+- **证据与根因**：修复前同代外部采样复现 native visible 约 23.4 ms、内部输入就绪约 31.1 ms、渲染回调约 41.1 ms，但约 71.5 ms 仍只有背景，约 95.9 ms 才出现整棵静态视觉树。WPF 的 `CompositionTarget.Rendering` 在实际 `MediaContext.Render` 前触发，`Show` 又先令 HWND native visible；旧实现还在该回调同步发布约 50 个 HWND 属性、采样进程并更新无 UI 消费者的诊断属性，因此它既不是 Present 证明，还延后了实际帧。修复后真实 Release 快速探针 20/20 轮及最终代码 5/5 轮均完成呼出、六门禁、隐藏和恢复且零失败；每轮首次解除 cloak 的三点屏幕像素样本都等于后续稳定样本，未再出现纯背景先暴露。真实 WPF HWND 的 cloak 往返及后台 `DwmFlush` completion 也通过集成测试。
+- **否决方案**：调整字体、透明度或动画掩盖；固定延时后显示/聚焦；把 `IsWindowVisible`、五项输入结果、`UpdateLayout`、`ContentRendered` 或渲染前回调冒充每代 Present；UI 线程同步等待 DWM；散落 `Task.Run`；永久 layered window、永久 cloak；栅栏失败仍解除 cloak或继续夺焦。
+- **新增失败模式**：Rendering 永不触发；DWM worker 队列拒绝、`DwmFlush` 或解除 cloak 失败；显示中隐藏；watchdog 与正常完成同代竞争；旧代 fence/watchdog 在新代迟到；隐藏失败需要返回原 `Revealing` 而不能冒充 `Visible`；诊断 Background 回调在隐藏后迟到。实现以先占有 pending generation、完成前清 continuation、状态机 generation 双检、隐藏后才清 cloak、失败闭环、原状态回滚并重建 reveal 监听、取消 watchdog 和完成遥测的 current-visible 检查覆盖。自动测试逐项覆盖上述路径。
+- **决定 / 最后验证**：2026-08-27 / 2026-08-27。
+- **状态**：active；Release 构建 0 警告/错误，Core 26/26 与 Windows/WPF 81/81 共 107/107 测试、win-x64 自包含发布和 25 轮真实像素/焦点往返均通过；2026-08-27 用户真机确认呼出观感测试通过。ETW/PresentMon 仅保留为额外性能分析边界，不影响已证明的“首个用户可见稀疏样本即稳定内容”结果。

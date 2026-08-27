@@ -58,6 +58,8 @@ Hidden → Revealing → Visible → Consuming / Dragging → Hiding → Hidden
 
 每次呼出创建唯一 `GenerationId` 和 `TargetForegroundContext`。状态转换先声明所有权，再产生副作用；取消、重复输入和迟到结果必须幂等，旧代不得结束新代。
 
+`Revealing` 期间主 HWND 仍保持普通不透明窗口，只临时使用 DWM cloak 防止未完成 surface 暴露。该 generation 的 WPF 渲染操作返回后，由单一后台 worker 执行 `DwmFlush`；同代成功才解除 cloak、请求前台/焦点，并把 content-presented 与 visible、Topmost、foreground、Win32 focus、WPF focus 一起作为进入 `Visible` 的六项门禁。watchdog 只回收永不返回的失败事务，不以超时值驱动正常显示。
+
 进入 `Visible` 后，`Application.Deactivated` 是整个 Vok 已失去前台的唯一权威因果信号；宿主不订阅或转发单个 `Window.Deactivated`，因而主窗口切到同应用弹窗/所属窗口不会误关。应用级失活只负责按当前 generation 排队，下一 Dispatcher 轮次再次确认会话仍为 `Visible` 后，以 `ForegroundLost` 被动隐藏。此时读取真实前台 HWND 只用于诊断；即使读到 0、目标尚未稳定或捕获失败也必须隐藏。该策略完成窗口隐藏、Topmost 清理、状态机收尾和诊断发布，但保留用户刚选择的外部前台并将恢复结果记为 `NotRequested`，不得恢复呼出前旧目标。快捷键、Esc、按钮和退出仍使用恢复捕获目标的策略；它们引发的迟到应用失活由状态/generation 门禁拒绝。未来 M1 外部 OLE 拖放可在真实生命周期内增加窄范围抑制，但不得提前创建空拖放状态。
 
 粘贴或启动的前台交接：
@@ -141,7 +143,7 @@ M0 至各模块都记录：
 
 只创建解决方案骨架、普通不透明 WPF 主窗、DI 组合根、可替换热键、会话状态机、焦点捕获/恢复、Per-Monitor V2 和资源遥测。它不是一次性诊断窗口；后续模块必须直接建立在其显隐、焦点和性能契约上。不得提前实现产品模块。当前实现与验收状态见 `M0_HOST_KERNEL.md`。
 
-状态：已于 2026-08-24 通过核心显隐、输入就绪、焦点往返和长期资源曲线验收并冻结。
+状态：已于 2026-08-24 通过核心显隐、输入就绪、焦点往返和长期资源曲线验收；2026-08-27 追加 generation 级内容呈现门禁并通过真实像素回归。
 
 ### M1：启动台纵向切片
 

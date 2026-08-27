@@ -1,6 +1,6 @@
 # M0 生产级宿主内核：参照、契约与验证
 
-> 状态：2026-08-24。M0 核心宿主契约、系统工作区布局及 `Visible` 后丢失整个 Vok 应用前台的被动关闭均已完成自动门禁和真机验收。正式搜索编辑器、完整 IME 语义和正式 Present 证据不属于该结论。
+> 状态：2026-08-27。M0 核心宿主、系统工作区、被动关闭和 generation 级内容呈现门禁已完成自动及真实像素验证。正式搜索编辑器、完整 IME 语义和 ETW/PresentMon 级测量不属于该结论。
 
 ## 1. 产品行为参照 / 旧实现机制 / Vok 目标契约
 
@@ -14,18 +14,18 @@
 | 输入锚点 | 真正产品搜索框 | 真正/部分搜索 UI | 可聚焦且接收 `TextInput` 的键盘测试锚点，明确标注“非搜索功能” |
 | 隐藏与返还 | 隐藏后恢复外部交互，隐藏 HWND 仍保留 Topmost 样式 | 隐藏/斗篷与焦点恢复机制复杂，隐藏 HWND 仍保留 Topmost 样式 | 快捷键/Esc 先隐藏、退出 Topmost，再请求并观察原 HWND/子焦点恢复；外部界面取得前台时被动隐藏并保留新前台，恢复状态为 `NotRequested` |
 | 重复触发 | 已有成熟体验，但实现含轮询和跨层状态 | generation、watchdog 与 hook 状态交织 | 单一 session generation 约束显示、隐藏、回调和清理；捕获到自身 HWND 时在下一次显示副作用前重取外部目标 |
-| 渲染 | 透明 WebView surface；历史记录显示 native visible 与 surface 就绪分离 | 全屏 layered WPF，含 DWM cloak/首帧 watchdog | 普通不透明 HWND；首帧信号与外部稀疏像素稳定样本分别测量 |
+| 渲染 | 透明 WebView surface；历史记录显示 native visible 与 surface 就绪分离 | 全屏 layered WPF，含 DWM cloak/首帧 watchdog | 普通不透明 HWND；每代呼出只在 `Revealing` 临时 cloak，渲染返回后的 `DwmFlush` 成功才解除 cloak |
 
 必须保留的是外部形态、交互流程和体验结果。明确不继承：Tauri/WebView2、多进程 surface、全屏透明 layered window、永久 Topmost、低级键盘 Hook、按键轮询、固定焦点延时、无限重试、默认或常驻 `AttachThreadInput` 和旧项目代码。M0 只为实证 B 类失败保留一次性、严格校验并必定尝试脱离的窄回退，见 `decisions.md §4`。
 
 ## 2. 当前宿主机制
 
 - `GlobalHotkeyService` 在专用 Win32 消息线程接收 `WM_HOTKEY`，先记录时间戳，再在任何 Vok 窗口副作用前捕获外部前台 HWND、进程、线程和子焦点 HWND。
-- `WorkspaceSessionStateMachine` 为每次呼出分配单调 generation；迟到的激活、输入焦点和渲染回调不能完成其他会话。
-- `Win32WindowPlacementService` 把窗口置于目标显示器的系统工作区矩形（`MONITORINFO.rcWork`）并仅在会话期进入 Topmost；不假设任务栏高度或位于哪条边。`Show`、请求前台、WPF 激活与聚焦输入锚点之后再观察结果。
-- 只有 visible、Topmost、foreground、Win32 focus HWND 和 WPF input-anchor focus 五个结果同时为真，状态才从 `Revealing` 进入 `Visible`。
+- `WorkspaceSessionStateMachine` 为每次呼出分配单调 generation；迟到的激活、输入焦点、渲染、DWM fence 和 watchdog 回调不能完成其他会话。
+- `Win32WindowPlacementService` 把窗口置于目标显示器的系统工作区矩形（`MONITORINFO.rcWork`）并仅在会话期进入 Topmost；不假设任务栏高度或位于哪条边。普通 HWND 先以 `ShowActivated=false` 在 DWM cloak 内 Show；WPF 渲染操作返回后由单一 worker 执行 `DwmFlush`，同代成功才解除 cloak、请求前台、激活并聚焦输入锚点。
+- 只有 content presented、visible、Topmost、foreground、Win32 focus HWND 和 WPF input-anchor focus 六个结果同时为真，状态才从 `Revealing` 进入 `Visible`。2 秒 watchdog 只是缺失事件/栅栏的失败回收上限，不参与正常揭示时序。
 - `Application.Deactivated` 是整个 Vok 已失去前台的唯一权威因果信号；宿主不订阅或转发单个主窗口 `Window.Deactivated`，所以应用内自有弹窗/所属窗口切换不会误关。应用级失活在下一 Dispatcher 轮次按 generation 复核状态；只要当前会话仍为 `Visible` 就以 `ForegroundLost` 隐藏，真实前台捕获只用于诊断，即使 HWND 为 0 或捕获失败也不阻断。非 Visible、旧代和重复竞态均忽略。该路径不调用 Restore，明确发布 `NotRequested`，下一次呼出由全局热键重新捕获用户当前选择的新窗口。
-- 当前 HWND 以低频属性发布 seqlock 一致的结构化诊断快照：generation、Core 状态、五项物理结果和内部时间戳。恢复诊断另按 generation 保存捕获顶层/焦点 HWND 身份与关系、Hide/窗口隐藏/Topmost 清理/Restore 顺序、`SetForegroundWindow` 布尔结果以及立即观察到的 foreground/focus。外部探针不解析 UI 文案；旧 generation 不能覆盖新会话。
+- 当前 HWND 以低频属性发布 seqlock 一致的结构化诊断快照：generation、Core 状态、六项呈现/输入结果和内部时间戳。恢复诊断另按 generation 保存捕获顶层/焦点 HWND 身份与关系、Hide/窗口隐藏/Topmost 清理/Restore 顺序、`SetForegroundWindow` 布尔结果以及立即观察到的 foreground/focus。外部探针不解析 UI 文案；旧 generation 不能覆盖新会话。
 - 隐藏先确认 `Window.IsVisible == false`，再退出 Topmost，最后恢复并立即观察目标顶层 HWND 与原子焦点 HWND。若顶层已确认恢复但同代 captured child 未恢复，则在重新核验 HWND、进程、线程和父子关系后执行一次子焦点恢复；跨线程连接只覆盖单次 `SetFocus`，并在 `finally` 中脱离，随后以真实 foreground/focus 复核结果。目标销毁、身份变化、请求拒绝、attach/SetFocus/detach 失败或焦点子窗口改变都有独立结果。
 - 启动时预创建隐藏 HWND 默认开启，但热键注册仍由专用消息线程独立拥有；可用 `VOK_M0_PRECREATE_HWND=0` 做 A/B。
 
@@ -35,6 +35,7 @@
 |---|---|---|---|
 | `SWP_NOZORDER` 明确禁止改变 Z 序，随后只调用受系统限制的 `Activate()` | 全屏窗口已可见但位于外部窗口之后 | 显示事务显式进入 Topmost；前台和焦点仍独立请求、独立观察 | 最终自动探针 1000/1000 轮会话期 Topmost 为真，隐藏后全部清除 |
 | 状态机把 API 调用当成结果；焦点目标不是可靠输入控件 | UI 可声称 visible/input-ready，但键盘仍可能在外部 | 五项观察门禁；`Activated` 与真实 `GotKeyboardFocus` 事件按 generation 触发复核；结构化 HWND 属性直接向外发布 Core 状态与 WPF anchor 结果 | 进程内 WPF STA 与外部 1000/1000 轮直接门禁通过；第一轮物理键盘也确认 Vok 内英文/中文输入，但这不覆盖隐藏后的外部文本框焦点返还 |
+| native visible、输入五门禁与渲染前 `CompositionTarget.Rendering` 都早于屏幕内容，回调还同步执行诊断/进程采样 | 呼出先出现纯背景，整棵静态视觉树约数十毫秒后才出现 | 每代 reveal 临时 DWM cloak；渲染返回后由专属 worker 完成 `DwmFlush`，再解除 cloak、请求焦点并提交第六项 Presented 门禁；采样和批量诊断移到 Background | 修复前外部像素复现约 23.4 ms native visible、约 95.9 ms 内容完整；修复后 25/25 轮首次解除 cloak 的稀疏屏幕样本等于后续稳定样本，见 `decisions.md §10` |
 | 快速排队时新 invocation 可能在 Vok 尚可见时捕获 Vok 自身 | 下一会话可能尝试把已隐藏的旧 Vok 当恢复目标 | 若捕获进程是 Vok，在下一次显示副作用前重取外部目标；仍为自身则降级为无目标 | 状态机 1000 轮纯状态测试通过；GUI 快速连按矩阵仍待真机 |
 | 顶层 foreground 已恢复，但 Windows 未自动恢复目标线程的 captured child 焦点 | 隐藏后外部窗口回到前台，原文本框仍无法输入 | 只在 B 类条件成立时，经同代 HWND/进程/线程/父子关系复核后一次性恢复 captured child；跨线程用 `try/finally` 限定输入队列连接，并在脱离后重新核验实际 foreground/focus | 修复前实测：顶层等于捕获目标、child 仍有效且为合法后代、目标 `hwndFocus=0`；修复后 42/42 自动测试及用户快捷键/Esc 两种物理复验通过 |
 | 本机 WPF `TextBox` 获得焦点后，重复 Show/Hide 与 GDI 持续增长相关；具体未释放对象、TSF/IME/插入符所有权及回收条件尚未识别 | 20 轮为 18→37；60 轮中回落一次后又增长至 57 | M0 通过不使用编辑器控件缩小范围，采用只证明宿主键盘路由的 Border 测试锚点；这是范围规避，不是正式编辑器根因修复 | 最小空窗/全屏/TextBox 未聚焦均不增长；聚焦 TextBox 60 轮严格增长；最终宿主 1000 轮 GDI 峰值 17、斜率 0；正式 Search 的编辑/选区/插入符/候选窗/可访问性/完整 IME 均未验证 |
@@ -43,7 +44,7 @@
 
 ## 4. 同机性能数据
 
-环境为同一台 Windows 机器，Release artifact；交互脚本从发送按键开始计时，包含 80 ms 按键保持时间。`SampledSurfaceStable` 是五点稀疏像素连续稳定的外部近似值，不等同于完整 DWM present 证明。
+环境为同一台 Windows 机器，Release artifact；交互脚本从发送按键开始计时，包含 80 ms 按键保持时间。`SampledSurfaceStable` 是三点稀疏像素连续稳定的外部近似值，不等同于完整 DWM present 证明。
 
 ### 4.1 启动后隐藏常驻（30 秒 warm-up，6 个样本平均）
 
@@ -109,15 +110,19 @@ Workbench 的 WS 样本波动为 118.590–427.340 MiB，不能只把平均值�
 
 旧版探针每 5 ms 枚举全部顶层窗口，在 1000 轮中产生自身约 5 秒观察停顿和 10 个伪失败，并伴随资源平台污染；固定 HWND 单变量复测 200/200 与 1000/1000 均通过。旧结果保留为探针死路证据，不作为宿主性能结论。
 
+### 4.5 generation 级 DWM 揭示回归（2026-08-27）
+
+修复后的 schema 5 探针除 native visible 外，单独读取 `DWMWA_CLOAKED` 并记录 first user-visible；只有解除 cloak 后才采样屏幕三点（左上、中心内容、右下），再与后续连续稳定样本比较。Release 快速路径先运行 20 轮，最终代码再运行 5 轮：25/25 轮 Show、六门禁、Hide、Restore 均成功，所有失败计数为 0；25/25 轮 `FirstUserVisiblePixelsMatchStable=true`。该结果直接反证原来的“首次用户可见只有背景、稳定内容稍后出现”机制仍在触发，但稀疏取样仍不是全帧 ETW/PresentMon 性能分析。
+
 ## 5. 性能门槛状态（尚不具备最终确认依据）
 
 Vok 已有 990 个稳态热样本和完整长期资源曲线，足以描述自身分布；但 Workbench 与 `vok(old)` 仍只有约三份热样本，不能形成可靠 P95。此前提出的 120/320 ms 与隐藏 `GDI ≤ 10、USER ≤ 30` 等数字撤回，不请用户确认；后者还与首次使用后 GDI 17、USER 约 37 的稳定平台冲突。
 
-正式数字必须分别定义“从未呼出隐藏基线、首次使用后隐藏稳态、1000 轮隐藏稳态、5 分钟回落”，并在两参照物取得足量同条件样本后再提出。稀疏像素稳定只保留为诊断指标；本轮未接入 ETW/PresentMon，同等级 Present 门禁仍未验证。
+正式数字必须分别定义“从未呼出隐藏基线、首次使用后隐藏稳态、1000 轮隐藏稳态、5 分钟回落”，并在两参照物取得足量同条件样本后再提出。生产契约现以 WPF render-return、专属 `DwmFlush` 和 generation gate 证明内容可安全揭示；稀疏像素只用于验证首次用户可见内容，尚未接入 ETW/PresentMon 制定最终性能门槛。
 
 ## 6. 已验证、未验证与真机验收
 
-已自动验证：Release 构建零警告/错误；24 项 Core 与 39 项 Windows/WPF 集成测试共 63/63 通过。工作区矩形继续覆盖四种任务栏方向；被动关闭新增覆盖应用级失活时外部前台、HWND 为 0 或捕获异常均隐藏且不调用 Restore，`NotRequested` 诊断，Revealing/Hiding/Hidden 状态门禁，旧代迟到无效，与快捷键/Esc 的排队和 Hide 内同步失活竞态只执行一次，被动隐藏先完成时抑制已排队旧热键，以及下一轮捕获新目标。应用内自有窗口不产生应用级失活信号，宿主也不暴露单窗口失活接口。既有 WPF STA、恢复诊断和 B 类焦点恢复测试继续通过。本轮未运行 1000 轮可见显隐测试；历史 1000/1000 轮只作为合成宿主与资源证据。
+已自动验证：Release 构建零警告/错误；26 项 Core 与 81 项 Windows/WPF 集成测试共 107/107 通过，win-x64 自包含发布成功。除既有工作区、被动关闭、WPF STA、恢复诊断和 B 类焦点恢复外，新增覆盖真实 DWM cloak 往返和 worker fence、Presented 第六门禁、render-return 后排队、无 Rendering watchdog、队列/flush/uncloak 失败、显示中隐藏、同代 fence/watchdog 竞争、旧代迟到、新代 cloak 隔离及 Reveal 阶段 Hide 失败回滚。本轮未重跑 1000 轮；历史 1000/1000 轮只作为合成宿主与资源证据。
 
 历史用户真机结果：物理 `Ctrl+Alt+Space` 可从普通文本框呼出；立即顶层且无闪烁/黑帧/透底；英文、中文候选与提交、中文/英文退格和快速连续 20 次均正常，主观无卡顿。修复前快捷键与 Esc 隐藏均不能返回原文本框；修复后用户分别确认两种隐藏均能返回并继续输入。由此 M0 的核心显隐、输入就绪和焦点往返契约通过并冻结。
 
@@ -127,11 +132,11 @@ Vok 已有 990 个稳态热样本和完整长期资源曲线，足以描述自�
 
 低优先级终端宿主兼容边界：用户确认程序化恢复到 CMD、PowerShell 等终端目标时偶发转圈光标，其他应用正常；焦点和输入不受影响，鼠标移动后立即恢复。该现象不通过 `SetCursor`、`SetCursorPos`、伪造鼠标消息或延时刷新规避。仅当非终端应用复现、鼠标移动后仍不恢复，或实际影响输入时重新打开调查。
 
-该输入结果只证明 M0 Border 锚点的提交后 `TextInput` 路由，不证明正式搜索编辑器、完整 IME 编辑语义或 TextBox/GDI 根因已解决。浏览器视频、最大化窗口、第二显示器、混合 DPI、参照物可靠 P95 与 ETW/PresentMon 仍未验证；这些作为后续平台/性能回归边界保留，不反向扩大已冻结的 M0 范围。
+该输入结果只证明 M0 Border 锚点的提交后 `TextInput` 路由，不证明正式搜索编辑器、完整 IME 编辑语义或 TextBox/GDI 根因已解决。浏览器视频、最大化窗口、第二显示器、混合 DPI、参照物可靠 P95 与 ETW/PresentMon 性能分析仍未验证；这些作为后续平台/性能回归边界保留，不反向扩大已冻结的 M0 范围。
 
 ## 7. 新机制的失败模式
 
-- `Activated`、`GotKeyboardFocus`、首帧回调可能乱序或重复；generation 与状态机完成门防止双执行和跨代完成。
+- `Activated`、`GotKeyboardFocus`、渲染、DWM fence 与 watchdog 可能乱序或重复；同代 continuation 先占有再执行，Presented 前的激活不夺焦，generation 与状态机完成门防止双执行和跨代完成。
 - 控制器只接受代表整个应用失活的 `Application.Deactivated` 并排队，不暴露单窗口失活接口；回调再次要求同 generation 且仍为 `Visible`。第一条隐藏事务占有状态后，快捷键/Esc 引起的同步或迟到应用失活都失效。
 - 单个主窗口失活可能只是 Vok 自有弹窗/所属窗口接管激活，因此不能作为隐藏因果；应用级失活后前台 HWND 又可能暂时为 0，因而该快照只能用于诊断，不能作为隐藏门槛。中文 IME 候选窗已通过真机验收。
 - 被动关闭与全局热键可能跨线程同时到达；隐藏完成时间戳只用于因果排序，已在该次隐藏完成前收到的迟到热键不得开启新代，完成后新按键仍可正常呼出。不使用时间阈值、延时或重试。
@@ -144,4 +149,4 @@ Vok 已有 990 个稳态热样本和完整长期资源曲线，足以描述自�
 - detach 失败不能当作恢复成功，也不得在生产中重试连接；状态会单独报告，下一代仍以自己的不可变捕获和 generation 为准。
 - 窗口已隐藏但退出 Topmost 失败时，不把逻辑状态错误回滚为 Visible；继续尝试返还前台并报告清理 fault。
 - 性能采样或诊断 UI 失败不能改变已经观察到的窗口/焦点事实；异常单独报告。
-- 稀疏像素采样可能被动画、视频或同色画面误导；它只是外部近似，最终稳定帧门禁仍需 ETW/PresentMon 或等价可证明工具补强。
+- 稀疏像素采样可能被动画、视频或同色画面误导；它只反证本次静态壳层的纯背景先暴露，不替代 `DwmFlush` 生产门禁，也不替代 ETW/PresentMon 性能分析。

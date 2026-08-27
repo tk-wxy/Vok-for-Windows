@@ -7,6 +7,7 @@ namespace Vok.Core.Workspace;
 public sealed class WorkspaceSessionStateMachine
 {
     private long _nextGeneration;
+    private WorkspaceState _stateBeforeHide = WorkspaceState.Hidden;
 
     public WorkspaceState State { get; private set; } = WorkspaceState.Hidden;
 
@@ -47,6 +48,7 @@ public sealed class WorkspaceSessionStateMachine
             return WorkspaceTransition.Rejected(State, Current?.Generation ?? 0);
         }
 
+        _stateBeforeHide = State;
         State = WorkspaceState.Hiding;
         return WorkspaceTransition.Applied(State, Current.Generation);
     }
@@ -60,6 +62,7 @@ public sealed class WorkspaceSessionStateMachine
 
         State = WorkspaceState.Hidden;
         Current = null;
+        _stateBeforeHide = WorkspaceState.Hidden;
         return true;
     }
 
@@ -72,6 +75,7 @@ public sealed class WorkspaceSessionStateMachine
 
         State = WorkspaceState.Hidden;
         Current = null;
+        _stateBeforeHide = WorkspaceState.Hidden;
         return true;
     }
 
@@ -82,7 +86,13 @@ public sealed class WorkspaceSessionStateMachine
             return false;
         }
 
-        State = WorkspaceState.Visible;
+        if (_stateBeforeHide is not (WorkspaceState.Revealing or WorkspaceState.Visible))
+        {
+            return false;
+        }
+
+        State = _stateBeforeHide;
+        _stateBeforeHide = WorkspaceState.Hidden;
         return true;
     }
 

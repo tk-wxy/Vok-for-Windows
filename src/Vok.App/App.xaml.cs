@@ -79,6 +79,7 @@ public partial class App : Application
         services.AddSingleton<ITrayIconService, WpfTrayIconService>();
         services.AddSingleton<IPerformanceSampler, ProcessPerformanceSampler>();
         services.AddSingleton<IWorkspaceDiagnosticPublisher, Win32WorkspaceDiagnosticPublisher>();
+        services.AddSingleton<IWorkspacePresentationService, DwmWorkspacePresentationService>();
         services.AddSingleton<IAppSettingsStore>(_ => CreateSettingsStore());
         services.AddSingleton<IAppThemeApplier>(_ => new WpfAppThemeApplier(Current));
         services.AddSingleton<AppearanceController>();

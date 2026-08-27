@@ -2,6 +2,9 @@ AttachThreadInput
 AppendMenu
 CreatePopupMenu
 DestroyMenu
+DwmFlush
+DwmGetWindowAttribute
+DwmSetWindowAttribute
 GetCurrentThreadId
 GetCursorPos
 GetForegroundWindow

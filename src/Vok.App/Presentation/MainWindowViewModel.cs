@@ -68,20 +68,19 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    public void RecordInputReady(TimeSpan elapsed, PerformanceSnapshot snapshot)
+    public void RecordInputReady(TimeSpan elapsed)
     {
         ShowCount++;
         InputReadyText = $"{elapsed.TotalMilliseconds:F1} ms";
-        FirstFrameText = "等待渲染…";
-        StatusText = "面板顶层、前台与键盘输入焦点均已确认。";
-        ApplySnapshot(snapshot);
+        StatusText = "面板内容、顶层、前台与键盘输入焦点均已确认。";
     }
 
-    public void RecordFirstFrame(TimeSpan elapsed, PerformanceSnapshot snapshot)
+    public void RecordFirstFrame(TimeSpan elapsed)
     {
         FirstFrameText = $"{elapsed.TotalMilliseconds:F1} ms";
-        ApplySnapshot(snapshot);
     }
+
+    public void RecordPerformanceSnapshot(PerformanceSnapshot snapshot) => ApplySnapshot(snapshot);
 
     public void RecordHidden(ForegroundRestoreResult result, PerformanceSnapshot snapshot)
     {

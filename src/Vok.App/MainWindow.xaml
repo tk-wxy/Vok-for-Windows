@@ -9,6 +9,7 @@
         WindowState="Normal"
         AllowsTransparency="False"
         ShowInTaskbar="False"
+        ShowActivated="False"
         Topmost="False"
         Background="{DynamicResource ApplicationBackgroundBrush}"
         Foreground="{DynamicResource TextFillColorPrimaryBrush}"

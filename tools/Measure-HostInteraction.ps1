@@ -33,8 +33,9 @@ public static class VokHostInteractionProbe
     public const uint KeyUp = 0x0002;
     public const uint MonitorDefaultToNearest = 0x00000002;
     public const int GwlExStyle = -20;
+    public const int DwmwaCloaked = 14;
     public const long WsExTopmost = 0x00000008L;
-    public const long AllReadyFlags = 0x1f;
+    public const long AllReadyFlags = 0x3f;
     private const string Prefix = "Vok.M0.Diagnostics.";
 
     public sealed class WindowSnapshot
@@ -58,7 +59,7 @@ public static class VokHostInteractionProbe
         public long LastHideRequestedTimestamp { get; set; }
         public long LastRestoreCompletedTimestamp { get; set; }
         public long LastRestoreStatus { get; set; }
-        public bool IsFiveGateVisible { get { return State == 2 && Flags == AllReadyFlags && InputReadyTimestamp > 0; } }
+        public bool IsPresentationReady { get { return State == 2 && Flags == AllReadyFlags && InputReadyTimestamp > 0 && FirstFrameTimestamp > 0; } }
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -100,6 +101,7 @@ public static class VokHostInteractionProbe
     [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr window);
     [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr window, IntPtr dc);
     [DllImport("gdi32.dll")] private static extern uint GetPixel(IntPtr dc, int x, int y);
+    [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out uint value, int valueSize);
     [DllImport("user32.dll")] public static extern uint GetGuiResources(IntPtr process, uint flags);
 
     public static WindowSnapshot FindLargestWindow(uint[] processIds)
@@ -150,6 +152,14 @@ public static class VokHostInteractionProbe
     public static bool IsTopmost(IntPtr window)
     {
         return (GetWindowLongPtr(window, GwlExStyle).ToInt64() & WsExTopmost) != 0;
+    }
+
+    public static bool IsCloaked(IntPtr window)
+    {
+        uint value;
+        int result = DwmGetWindowAttribute(window, DwmwaCloaked, out value, sizeof(uint));
+        if (result < 0) Marshal.ThrowExceptionForHR(result);
+        return value != 0;
     }
 
     public static DiagnosticSnapshot ReadDiagnostic(IntPtr window)
@@ -287,7 +297,7 @@ function Get-PercentileSummary {
 
 function Get-LatencySetSummary {
     param([object[]] $Rows)
-    $properties = @('ExternalVisibleMs','ExternalForegroundMs','ExternalWin32FocusMs','ExternalFiveGateReadyMs','ExternalHiddenMs','ExternalRestoreMs','InternalInputReadyMs','InternalFirstFrameMs','InternalRestoreMs')
+    $properties = @('ExternalVisibleMs','ExternalUserVisibleMs','ExternalForegroundMs','ExternalWin32FocusMs','ExternalPresentationReadyMs','SparsePixelStableMs','ExternalHiddenMs','ExternalRestoreMs','InternalInputReadyMs','InternalFirstFrameMs','InternalRestoreMs')
     $result = [ordered]@{}
     foreach ($property in $properties) { $result[$property] = Get-PercentileSummary $Rows $property }
     [pscustomobject]$result
@@ -348,7 +358,7 @@ try {
     $resourceSamples = @()
     $resourceSamples += Get-TreeResourceSnapshot $treeIds 'never-shown-hidden-baseline' 0
     $cyclesResult = @()
-    $failureCounts = [ordered]@{ Show = 0; FiveGate = 0; Hide = 0; Restore = 0; RestoreDegraded = 0; FocusRestore = 0 }
+    $failureCounts = [ordered]@{ Show = 0; PresentationReady = 0; Hide = 0; Restore = 0; RestoreDegraded = 0; FocusRestore = 0 }
     $lastEndedGeneration = 0L
 
     for ($cycle = 1; $cycle -le $Cycles; $cycle++) {
@@ -356,32 +366,36 @@ try {
         $row = [ordered]@{ Cycle = $cycle; Phase = if ($cycle -le 10) { 'warmup' } else { 'steady' }; Failure = $null }
         try {
             $showTimer = [Diagnostics.Stopwatch]::StartNew(); Send-Gesture
-            $shown = $window; $diagnosticReady = $null; $visibleMs = $null; $foregroundMs = $null; $focusMs = $null; $fiveGateMs = $null
-            $surfaceMs = $null; $lastPixels = ''; $stableCount = 0; $nextPixelSampleMs = 0.0
-            while ($showTimer.Elapsed -lt $timeout -and ($null -eq $fiveGateMs -or ($HostDiagnostics -eq 'required' -and $null -eq $diagnosticReady))) {
+            $shown = $window; $diagnosticReady = $null; $visibleMs = $null; $userVisibleMs = $null; $foregroundMs = $null; $focusMs = $null; $presentationReadyMs = $null
+            $surfaceMs = $null; $lastPixels = ''; $firstUserVisiblePixels = $null; $firstUserVisibleMatchesStable = $null; $stableCount = 0; $nextPixelSampleMs = 0.0
+            while ($showTimer.Elapsed -lt $timeout -and ($null -eq $presentationReadyMs -or ($HostDiagnostics -eq 'required' -and $null -eq $diagnosticReady) -or ($SampleSparsePixels -and $null -eq $surfaceMs))) {
                 if ([VokHostInteractionProbe]::IsWindowVisible($windowHandle)) {
                     if ($null -eq $visibleMs) { $visibleMs = $showTimer.Elapsed.TotalMilliseconds }
+                    $cloaked = [VokHostInteractionProbe]::IsCloaked($windowHandle)
+                    if ($null -eq $userVisibleMs -and -not $cloaked) { $userVisibleMs = $showTimer.Elapsed.TotalMilliseconds }
                     $foregroundInTree = Test-OwnerInTree ([VokHostInteractionProbe]::GetForegroundWindow()) $treeIds
                     if ($null -eq $foregroundMs -and $foregroundInTree) { $foregroundMs = $showTimer.Elapsed.TotalMilliseconds }
                     if ($null -eq $focusMs -and $foregroundInTree -and (Test-OwnerInTree ([VokHostInteractionProbe]::GetKeyboardFocusWindow()) $treeIds)) { $focusMs = $showTimer.Elapsed.TotalMilliseconds }
                     if ($HostDiagnostics -eq 'required') {
                         $diagnostic = [VokHostInteractionProbe]::ReadDiagnostic($windowHandle)
-                        if ($null -ne $diagnostic -and $diagnostic.Generation -gt $lastEndedGeneration -and $diagnostic.IsFiveGateVisible) {
-                            $diagnosticReady = $diagnostic; $fiveGateMs = $showTimer.Elapsed.TotalMilliseconds
+                        if ($null -ne $diagnostic -and $diagnostic.Generation -gt $lastEndedGeneration -and $diagnostic.IsPresentationReady) {
+                            $diagnosticReady = $diagnostic; $presentationReadyMs = $showTimer.Elapsed.TotalMilliseconds
                         }
                     }
-                    elseif ($null -ne $visibleMs -and $null -ne $foregroundMs -and $null -ne $focusMs) { $fiveGateMs = $focusMs }
-                    if ($SampleSparsePixels -and $null -eq $surfaceMs -and $showTimer.Elapsed.TotalMilliseconds -ge $nextPixelSampleMs) {
+                    elseif ($null -ne $visibleMs -and $null -ne $foregroundMs -and $null -ne $focusMs) { $presentationReadyMs = $focusMs }
+                    if ($SampleSparsePixels -and -not $cloaked -and $null -eq $surfaceMs -and $showTimer.Elapsed.TotalMilliseconds -ge $nextPixelSampleMs) {
                         $pixels = [VokHostInteractionProbe]::SamplePixels(([VokHostInteractionProbe]::InspectWindow($windowHandle)).Rect)
+                        if ($null -eq $firstUserVisiblePixels) { $firstUserVisiblePixels = $pixels }
                         if ($pixels -ne $baselinePixels -and $pixels -eq $lastPixels) { $stableCount++ } else { $stableCount = 0 }
-                        if ($stableCount -ge 2) { $surfaceMs = $showTimer.Elapsed.TotalMilliseconds }
+                        if ($stableCount -ge 2) { $surfaceMs = $showTimer.Elapsed.TotalMilliseconds; $firstUserVisibleMatchesStable = $firstUserVisiblePixels -eq $pixels }
                         $lastPixels = $pixels; $nextPixelSampleMs = $showTimer.Elapsed.TotalMilliseconds + 10
                     }
                 }
                 Start-Sleep -Milliseconds $pollMilliseconds
             }
             if ($null -eq $visibleMs) { $failureCounts.Show++; throw "Visible HWND timeout on cycle $cycle." }
-            if ($null -eq $fiveGateMs) { $failureCounts.FiveGate++; throw "Five-gate input-ready timeout on cycle $cycle." }
+            if ($null -eq $userVisibleMs) { $failureCounts.Show++; throw "User-visible HWND timeout on cycle $cycle." }
+            if ($null -eq $presentationReadyMs) { $failureCounts.PresentationReady++; throw "Presentation-ready timeout on cycle $cycle." }
             $shown = [VokHostInteractionProbe]::InspectWindow($windowHandle)
             $row.FullScreen = $shown.Rect.Left -eq $monitorWorkArea.Left -and $shown.Rect.Top -eq $monitorWorkArea.Top -and $shown.Rect.Right -eq $monitorWorkArea.Right -and $shown.Rect.Bottom -eq $monitorWorkArea.Bottom
             if (-not $row.FullScreen) { throw "Window did not match the target monitor work area on cycle $cycle." }
@@ -399,9 +413,10 @@ try {
                 $row.InternalFirstFrameMs = [Math]::Round((($diagnosticReady.FirstFrameTimestamp - $diagnosticReady.HotkeyReceivedTimestamp) * 1000.0) / $frequency, 1)
             }
             else { $generation = 0L; $row.Generation = $null; $row.InternalInputReadyMs = $null; $row.InternalFirstFrameMs = $null }
-            $row.ExternalVisibleMs = [Math]::Round($visibleMs, 1); $row.ExternalForegroundMs = if ($null -eq $foregroundMs) { $null } else { [Math]::Round($foregroundMs, 1) }
-            $row.ExternalWin32FocusMs = if ($null -eq $focusMs) { $null } else { [Math]::Round($focusMs, 1) }; $row.ExternalFiveGateReadyMs = [Math]::Round($fiveGateMs, 1)
+            $row.ExternalVisibleMs = [Math]::Round($visibleMs, 1); $row.ExternalUserVisibleMs = [Math]::Round($userVisibleMs, 1); $row.ExternalForegroundMs = if ($null -eq $foregroundMs) { $null } else { [Math]::Round($foregroundMs, 1) }
+            $row.ExternalWin32FocusMs = if ($null -eq $focusMs) { $null } else { [Math]::Round($focusMs, 1) }; $row.ExternalPresentationReadyMs = [Math]::Round($presentationReadyMs, 1)
             $row.SparsePixelStableMs = if ($null -eq $surfaceMs) { $null } else { [Math]::Round($surfaceMs, 1) }
+            $row.FirstUserVisiblePixelsMatchStable = $firstUserVisibleMatchesStable
             $row.SessionTopmost = [VokHostInteractionProbe]::IsTopmost($shown.Handle)
             if ($sampleResources) { $resourceSamples += Get-TreeResourceSnapshot $treeIds 'shown' $cycle }
 
@@ -468,7 +483,7 @@ try {
         $peaks[$property] = ($resourceSamples | Measure-Object $property -Maximum).Maximum
     }
     $result = [pscustomobject]@{
-        Schema = 4; Label = $Label; AppPath = $resolved; ArtifactLastWriteTime = (Get-Item -LiteralPath $resolved).LastWriteTime
+        Schema = 5; Label = $Label; AppPath = $resolved; ArtifactLastWriteTime = (Get-Item -LiteralPath $resolved).LastWriteTime
         Gesture = $Gesture; HoldMilliseconds = $HoldMilliseconds; HostDiagnostics = $HostDiagnostics; CyclesRequested = $Cycles
         SuccessfulCycles = $successful.Count; FailedCycles = $Cycles - $successful.Count; FailureCounts = [pscustomobject]$failureCounts
         Latency = [pscustomobject]@{
@@ -485,7 +500,7 @@ try {
             SteadyAfter10SlopePerCycle = [pscustomobject]$slopes; TailHalfSlopePerCycle = [pscustomobject]$tailSlopes
             Samples = $resourceSamples
         }
-        SparsePixelNote = if ($SampleSparsePixels) { 'Diagnostic only; not a formal present measurement.' } else { 'Disabled; formal present remains unverified without ETW/PresentMon.' }
+        SparsePixelNote = if ($SampleSparsePixels) { 'Diagnostic only; compares the first uncloaked sparse-pixel sample with the later stable sample.' } else { 'Disabled; formal present remains unverified without ETW/PresentMon.' }
         Cycles = $cyclesResult
     }
     $json = $result | ConvertTo-Json -Depth 8

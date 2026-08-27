@@ -41,6 +41,24 @@ public partial class MainWindow : Window, IWorkspaceWindow
     public void PostNormal(Action action) =>
         _ = Dispatcher.BeginInvoke(DispatcherPriority.Normal, action);
 
+    public void PostBackground(Action action) =>
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, action);
+
+    public IDisposable ScheduleNormal(TimeSpan dueTime, Action action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(dueTime, TimeSpan.Zero);
+
+        var registration = new DispatcherTimerRegistration(
+            new DispatcherTimer(DispatcherPriority.Normal, Dispatcher)
+            {
+                Interval = dueTime,
+            },
+            action);
+        registration.Start();
+        return registration;
+    }
+
     protected override void OnInitialized(EventArgs e)
     {
         base.OnInitialized(e);
@@ -100,6 +118,33 @@ public partial class MainWindow : Window, IWorkspaceWindow
         HideRequested?.Invoke(
             this,
             new WorkspaceHideRequestedEventArgs(WorkspaceHideReason.Escape));
+    }
+
+    private sealed class DispatcherTimerRegistration(
+        DispatcherTimer timer,
+        Action action) : IDisposable
+    {
+        private Action? _action = action;
+
+        public void Start()
+        {
+            timer.Tick += OnTick;
+            timer.Start();
+        }
+
+        public void Dispose()
+        {
+            timer.Stop();
+            timer.Tick -= OnTick;
+            _action = null;
+        }
+
+        private void OnTick(object? sender, EventArgs e)
+        {
+            var callback = _action;
+            Dispose();
+            callback?.Invoke();
+        }
     }
 
 }

@@ -12,6 +12,7 @@ public enum WorkspaceDiagnosticFlags
     Foreground = 1 << 2,
     Win32KeyboardFocus = 1 << 3,
     WpfInputAnchorFocus = 1 << 4,
+    Presented = 1 << 5,
 }
 
 /// <summary>
@@ -43,4 +44,7 @@ public sealed record WorkspaceDiagnosticSnapshot(
 
     public bool HasWpfInputAnchorFocus =>
         (Flags & WorkspaceDiagnosticFlags.WpfInputAnchorFocus) != 0;
+
+    public bool IsPresented =>
+        (Flags & WorkspaceDiagnosticFlags.Presented) != 0;
 }

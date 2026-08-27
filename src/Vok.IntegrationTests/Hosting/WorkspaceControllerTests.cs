@@ -463,6 +463,7 @@ public sealed class WorkspaceControllerTests
         using var rig = await TestRig.CreateAsync();
         rig.Placement.OsGatesReady = false;
         rig.Window.FocusSucceeds = false;
+        rig.Window.RaiseRenderingAfterShow = false;
         rig.Hotkey.Raise(ExternalTarget);
         rig.Hotkey.Raise(ExternalTarget);
 
@@ -480,6 +481,237 @@ public sealed class WorkspaceControllerTests
         Assert.Equal(0, rig.Publisher.Last.FirstFrameTimestamp);
         Assert.Equal(1, rig.Publisher.Last.Restore.Generation);
         Assert.Equal(1, rig.Publisher.Last.LastEndedGeneration);
+    }
+
+    [Fact]
+    public async Task DwmFenceKeepsWorkspaceCloakedAndUnfocusedUntilContentIsPresented()
+    {
+        using var rig = await TestRig.CreateAsync();
+        rig.Presentation.AutoComplete = false;
+        rig.Window.RaiseRenderingAfterShow = false;
+        rig.Placement.OsGatesReady = true;
+        rig.Window.FocusSucceeds = true;
+
+        rig.Hotkey.Raise(ExternalTarget);
+        rig.Window.RaiseActivated();
+        rig.Window.RaiseInputAnchorFocused();
+
+        Assert.Equal(WorkspaceState.Revealing, rig.StateMachine.State);
+        Assert.True(rig.Presentation.Cloaked);
+        Assert.DoesNotContain("placement.foreground", rig.Log);
+        Assert.DoesNotContain("window.activate", rig.Log);
+        Assert.DoesNotContain("window.focus", rig.Log);
+
+        rig.Frames.RaiseRendering();
+
+        Assert.Contains("presentation.fence-request", rig.Log);
+        Assert.True(rig.Presentation.Cloaked);
+        Assert.Equal(WorkspaceState.Revealing, rig.StateMachine.State);
+
+        rig.Presentation.CompleteNext();
+
+        Assert.False(rig.Presentation.Cloaked);
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.True(rig.Publisher.Last.IsPresented);
+        Assert.True(rig.Publisher.Last.FirstFrameTimestamp > 0);
+        AssertOrdered(
+            rig.Log,
+            "presentation.cloak",
+            "window.show",
+            "presentation.fence-request",
+            "presentation.fence-complete",
+            "presentation.uncloak",
+            "placement.foreground",
+            "window.activate",
+            "window.focus");
+    }
+
+    [Fact]
+    public async Task RenderingCallbackDefersFenceUntilAfterTheRenderDispatcherOperation()
+    {
+        using var rig = await TestRig.CreateAsync();
+        rig.Presentation.AutoComplete = false;
+        rig.Window.RaiseRenderingAfterShow = false;
+        rig.Window.QueueBackgroundPosts = true;
+        rig.Hotkey.Raise(ExternalTarget);
+        var snapshotsBeforeRendering = rig.Publisher.Snapshots.Count;
+        var samplesBeforeRendering = rig.Sampler.CaptureCount;
+
+        rig.Frames.RaiseRendering();
+
+        Assert.DoesNotContain("presentation.fence-request", rig.Log);
+        Assert.Equal(snapshotsBeforeRendering, rig.Publisher.Snapshots.Count);
+        Assert.Equal(samplesBeforeRendering, rig.Sampler.CaptureCount);
+
+        rig.Window.DrainBackgroundPosts();
+
+        Assert.Contains("presentation.fence-request", rig.Log);
+    }
+
+    [Fact]
+    public async Task MissingRenderingEventFailsClosedThroughWatchdog()
+    {
+        using var rig = await TestRig.CreateAsync();
+        rig.Window.RaiseRenderingAfterShow = false;
+
+        rig.Hotkey.Raise(ExternalTarget);
+        rig.Window.RaiseLastScheduledAction();
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.False(rig.Window.IsVisible);
+        Assert.False(rig.Presentation.Cloaked);
+        Assert.Contains("window.hide", rig.Log);
+        Assert.Contains("foreground.restore", rig.Log);
+        Assert.Contains("failure watchdog", rig.ViewModel.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task WatchdogWinningAgainstPendingFenceCannotDoubleFinishTheGeneration()
+    {
+        using var rig = await TestRig.CreateAsync();
+        rig.Presentation.AutoComplete = false;
+        rig.Hotkey.Raise(ExternalTarget);
+
+        rig.Window.RaiseLastScheduledAction();
+        var hideCalls = rig.Log.Count(entry => entry == "window.hide");
+        rig.Presentation.CompleteNext();
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.Equal(hideCalls, rig.Log.Count(entry => entry == "window.hide"));
+        Assert.DoesNotContain("window.focus", rig.Log);
+    }
+
+    [Fact]
+    public async Task RejectedFenceRequestFailsClosedWithoutWaitingForWatchdog()
+    {
+        using var rig = await TestRig.CreateAsync();
+        rig.Presentation.RejectFenceRequest = true;
+
+        rig.Hotkey.Raise(ExternalTarget);
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.False(rig.Window.IsVisible);
+        Assert.False(rig.Presentation.Cloaked);
+        Assert.Contains("queue is full", rig.ViewModel.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task HideDuringFenceInvalidatesItsLateCompletion()
+    {
+        using var rig = await TestRig.CreateAsync();
+        rig.Presentation.AutoComplete = false;
+        rig.Placement.OsGatesReady = true;
+        rig.Window.FocusSucceeds = true;
+        rig.Hotkey.Raise(ExternalTarget);
+        Assert.Equal(WorkspaceState.Revealing, rig.StateMachine.State);
+
+        rig.Hotkey.Raise(ExternalTarget);
+        var focusCallsAfterHide = rig.Log.Count(entry => entry == "window.focus");
+        var uncloakCallsAfterHide = rig.Log.Count(entry => entry == "presentation.uncloak");
+        rig.Presentation.CompleteNext();
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.False(rig.Presentation.Cloaked);
+        Assert.Equal(focusCallsAfterHide, rig.Log.Count(entry => entry == "window.focus"));
+        Assert.Equal(uncloakCallsAfterHide, rig.Log.Count(entry => entry == "presentation.uncloak"));
+    }
+
+    [Fact]
+    public async Task FailedHideDuringRevealRestoresTheRevealPipelineInsteadOfClaimingVisible()
+    {
+        using var rig = await TestRig.CreateAsync();
+        rig.Presentation.AutoComplete = false;
+        rig.Window.RaiseRenderingAfterShow = false;
+        rig.Placement.OsGatesReady = true;
+        rig.Window.FocusSucceeds = true;
+        rig.Hotkey.Raise(ExternalTarget);
+        rig.Window.HideFailuresRemaining = 1;
+
+        rig.Hotkey.Raise(ExternalTarget);
+
+        Assert.Equal(WorkspaceState.Revealing, rig.StateMachine.State);
+        Assert.True(rig.Window.IsVisible);
+        Assert.True(rig.Presentation.Cloaked);
+
+        rig.Frames.RaiseRendering();
+        rig.Presentation.CompleteNext();
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.False(rig.Presentation.Cloaked);
+    }
+
+    [Fact]
+    public async Task OldFenceCannotUncloakANewerGeneration()
+    {
+        using var rig = await TestRig.CreateAsync();
+        rig.Presentation.AutoComplete = false;
+        rig.Placement.OsGatesReady = true;
+        rig.Window.FocusSucceeds = true;
+        rig.Hotkey.Raise(ExternalTarget);
+        rig.Hotkey.Raise(ExternalTarget);
+
+        rig.Window.RaiseRenderingAfterShow = false;
+        rig.Hotkey.Raise(NewSessionTarget);
+        var secondGeneration = rig.StateMachine.Current!.Generation;
+        Assert.True(rig.Presentation.Cloaked);
+
+        rig.Presentation.CompleteNext();
+
+        Assert.Equal(secondGeneration, rig.StateMachine.Current!.Generation);
+        Assert.Equal(WorkspaceState.Revealing, rig.StateMachine.State);
+        Assert.True(rig.Presentation.Cloaked);
+
+        rig.Frames.RaiseRendering();
+        rig.Presentation.CompleteNext();
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.False(rig.Presentation.Cloaked);
+    }
+
+    [Fact]
+    public async Task FenceOrUncloakFailureHidesBeforeClearingCloakAndRestoresTarget()
+    {
+        using var fenceFailureRig = await TestRig.CreateAsync();
+        fenceFailureRig.Presentation.AutoComplete = false;
+        fenceFailureRig.Hotkey.Raise(ExternalTarget);
+        fenceFailureRig.Presentation.CompleteNext(new InvalidOperationException("fence failure"));
+
+        Assert.Equal(WorkspaceState.Hidden, fenceFailureRig.StateMachine.State);
+        Assert.False(fenceFailureRig.Presentation.Cloaked);
+        AssertOrdered(
+            fenceFailureRig.Log,
+            "presentation.fence-complete",
+            "window.hide",
+            "presentation.uncloak",
+            "foreground.restore");
+
+        using var uncloakFailureRig = await TestRig.CreateAsync();
+        uncloakFailureRig.Presentation.AutoComplete = false;
+        uncloakFailureRig.Presentation.UncloakFailuresRemaining = 1;
+        uncloakFailureRig.Hotkey.Raise(ExternalTarget);
+        uncloakFailureRig.Presentation.CompleteNext();
+
+        Assert.Equal(WorkspaceState.Hidden, uncloakFailureRig.StateMachine.State);
+        Assert.False(uncloakFailureRig.Presentation.Cloaked);
+        AssertOrdered(
+            uncloakFailureRig.Log,
+            "presentation.fence-complete",
+            "presentation.uncloak",
+            "window.hide",
+            "foreground.restore");
+    }
+
+    [Fact]
+    public async Task CancelledWatchdogCannotFinishOrAbortAnAlreadyVisibleGeneration()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        var generation = rig.StateMachine.Current!.Generation;
+
+        rig.Window.RaiseLastScheduledAction(includeCancelled: true);
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.Equal(generation, rig.StateMachine.Current!.Generation);
+        Assert.DoesNotContain("window.hide", rig.Log);
     }
 
     [Fact]
@@ -544,10 +776,13 @@ public sealed class WorkspaceControllerTests
         {
             Window = new FakeWindow(Log);
             Frames = new FakeFrameSource();
+            Window.AfterShow = Frames.RaiseRendering;
             Placement = new FakePlacement(Log, Window);
             Foreground = new FakeForeground(Log);
             Hotkey = new FakeHotkey();
             Publisher = new FakePublisher();
+            Presentation = new FakePresentationService(Log);
+            Sampler = new FakePerformanceSampler();
             StateMachine = new WorkspaceSessionStateMachine();
             ViewModel = CreateViewModel();
             Controller = new WorkspaceController(
@@ -558,8 +793,9 @@ public sealed class WorkspaceControllerTests
                 Hotkey,
                 Foreground,
                 Placement,
-                new FakePerformanceSampler(),
+                Sampler,
                 Publisher,
+                Presentation,
                 new WorkspaceHostOptions(false));
         }
 
@@ -570,6 +806,8 @@ public sealed class WorkspaceControllerTests
         public FakeForeground Foreground { get; }
         public FakeHotkey Hotkey { get; }
         public FakePublisher Publisher { get; }
+        public FakePresentationService Presentation { get; }
+        public FakePerformanceSampler Sampler { get; }
         public WorkspaceSessionStateMachine StateMachine { get; }
         public MainWindowViewModel ViewModel { get; }
         public WorkspaceController Controller { get; }
@@ -593,7 +831,11 @@ public sealed class WorkspaceControllerTests
             return rig;
         }
 
-        public void Dispose() => Controller.Dispose();
+        public void Dispose()
+        {
+            Controller.Dispose();
+            Presentation.Dispose();
+        }
 
         private static MainWindowViewModel CreateViewModel()
         {
@@ -613,6 +855,8 @@ public sealed class WorkspaceControllerTests
         private readonly List<EventHandler> _removedInputFocused = [];
         private readonly Queue<Action> _inputPosts = [];
         private readonly Queue<Action> _normalPosts = [];
+        private readonly Queue<Action> _backgroundPosts = [];
+        private readonly List<FakeScheduledAction> _scheduledActions = [];
 
         public event EventHandler? Activated
         {
@@ -633,11 +877,15 @@ public sealed class WorkspaceControllerTests
         public bool InputFocus { get; set; }
         public bool FocusSucceeds { get; set; }
         public bool ThrowAfterShow { get; set; }
+        public int HideFailuresRemaining { get; set; }
         public bool QueueInputPosts { get; set; }
         public bool QueueNormalPosts { get; set; }
+        public bool QueueBackgroundPosts { get; set; }
+        public bool RaiseRenderingAfterShow { get; set; } = true;
         public bool RaiseApplicationDeactivatedDuringHide { get; set; }
         public bool TopmostWasAppliedWhenShown { get; private set; }
         public Func<bool>? IsTopmost { get; set; }
+        public Action? AfterShow { get; set; }
 
         public nint EnsureHandle() { log.Add("window.ensure"); return 0x777; }
         public void Show()
@@ -646,11 +894,18 @@ public sealed class WorkspaceControllerTests
             IsVisible = true;
             TopmostWasAppliedWhenShown = IsTopmost?.Invoke() == true;
             if (ThrowAfterShow) throw new InvalidOperationException("show failure");
+            if (RaiseRenderingAfterShow) AfterShow?.Invoke();
         }
 
         public void Hide()
         {
             log.Add("window.hide");
+            if (HideFailuresRemaining > 0)
+            {
+                HideFailuresRemaining--;
+                throw new InvalidOperationException("hide failure");
+            }
+
             IsVisible = false;
             InputFocus = false;
             if (RaiseApplicationDeactivatedDuringHide)
@@ -678,6 +933,20 @@ public sealed class WorkspaceControllerTests
             if (QueueNormalPosts) _normalPosts.Enqueue(action); else action();
         }
 
+        public void PostBackground(Action action)
+        {
+            log.Add("window.post-background");
+            if (QueueBackgroundPosts) _backgroundPosts.Enqueue(action); else action();
+        }
+
+        public IDisposable ScheduleNormal(TimeSpan dueTime, Action action)
+        {
+            log.Add("window.schedule-normal");
+            var scheduled = new FakeScheduledAction(action);
+            _scheduledActions.Add(scheduled);
+            return scheduled;
+        }
+
         public void DrainInputPosts()
         {
             while (_inputPosts.TryDequeue(out var action)) action();
@@ -687,6 +956,14 @@ public sealed class WorkspaceControllerTests
         {
             while (_normalPosts.TryDequeue(out var action)) action();
         }
+
+        public void DrainBackgroundPosts()
+        {
+            while (_backgroundPosts.TryDequeue(out var action)) action();
+        }
+
+        public void RaiseLastScheduledAction(bool includeCancelled = false) =>
+            _scheduledActions[^1].Raise(includeCancelled);
 
         public void RaiseActivated() => _activated?.Invoke(this, EventArgs.Empty);
         public void RaiseApplicationDeactivated() =>
@@ -699,6 +976,21 @@ public sealed class WorkspaceControllerTests
 
         public void RaiseHideRequested(WorkspaceHideReason reason = WorkspaceHideReason.UserAction) =>
             HideRequested?.Invoke(this, new WorkspaceHideRequestedEventArgs(reason));
+
+        private sealed class FakeScheduledAction(Action action) : IDisposable
+        {
+            private bool _cancelled;
+
+            public void Dispose() => _cancelled = true;
+
+            public void Raise(bool includeCancelled)
+            {
+                if (includeCancelled || !_cancelled)
+                {
+                    action();
+                }
+            }
+        }
     }
 
     private sealed class FakeFrameSource : IWorkspaceFrameSource
@@ -847,8 +1139,71 @@ public sealed class WorkspaceControllerTests
         public void Clear(nint workspaceWindow) { }
     }
 
+    private sealed class FakePresentationService(List<string> log)
+        : IWorkspacePresentationService
+    {
+        private readonly Queue<long> _requests = [];
+
+        public event EventHandler<WorkspacePresentationFenceCompletedEventArgs>? FenceCompleted;
+
+        public bool AutoComplete { get; set; } = true;
+        public bool Cloaked { get; private set; }
+        public bool RejectFenceRequest { get; set; }
+        public int UncloakFailuresRemaining { get; set; }
+
+        public void SetCloaked(nint workspaceWindow, bool cloaked)
+        {
+            log.Add(cloaked ? "presentation.cloak" : "presentation.uncloak");
+            if (!cloaked && UncloakFailuresRemaining > 0)
+            {
+                UncloakFailuresRemaining--;
+                throw new InvalidOperationException("uncloak failure");
+            }
+
+            Cloaked = cloaked;
+        }
+
+        public bool IsCloaked(nint workspaceWindow) => Cloaked;
+
+        public bool TryRequestFence(long generation)
+        {
+            log.Add("presentation.fence-request");
+            if (RejectFenceRequest)
+            {
+                return false;
+            }
+
+            _requests.Enqueue(generation);
+            if (AutoComplete)
+            {
+                CompleteNext();
+            }
+
+            return true;
+        }
+
+        public void CompleteNext(Exception? exception = null)
+        {
+            var generation = _requests.Dequeue();
+            log.Add("presentation.fence-complete");
+            FenceCompleted?.Invoke(
+                this,
+                new WorkspacePresentationFenceCompletedEventArgs(generation, exception));
+        }
+
+        public void Dispose()
+        {
+        }
+    }
+
     private sealed class FakePerformanceSampler : IPerformanceSampler
     {
-        public PerformanceSnapshot Capture() => new(DateTimeOffset.UtcNow, 0, 0, 0, 0, 0, 0);
+        public int CaptureCount { get; private set; }
+
+        public PerformanceSnapshot Capture()
+        {
+            CaptureCount++;
+            return new PerformanceSnapshot(DateTimeOffset.UtcNow, 0, 0, 0, 0, 0, 0);
+        }
     }
 }

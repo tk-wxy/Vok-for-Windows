@@ -27,4 +27,8 @@ public interface IWorkspaceWindow
     void PostInput(Action action);
 
     void PostNormal(Action action);
+
+    void PostBackground(Action action);
+
+    IDisposable ScheduleNormal(TimeSpan dueTime, Action action);
 }

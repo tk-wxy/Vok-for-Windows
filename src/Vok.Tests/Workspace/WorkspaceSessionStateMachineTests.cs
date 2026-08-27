@@ -6,7 +6,7 @@ namespace Vok.Tests.Workspace;
 public sealed class WorkspaceSessionStateMachineTests
 {
     private static readonly ForegroundTarget Target = new(42, 7, 9);
-    private static readonly WorkspacePresentationStatus Ready = new(true, true, true, true, true);
+    private static readonly WorkspacePresentationStatus Ready = new(true, true, true, true, true, true);
 
     [Fact]
     public void StartsHiddenWithoutSession()
@@ -78,17 +78,19 @@ public sealed class WorkspaceSessionStateMachineTests
     }
 
     [Theory]
-    [InlineData(false, true, true, true, true)]
-    [InlineData(true, false, true, true, true)]
-    [InlineData(true, true, false, true, true)]
-    [InlineData(true, true, true, false, true)]
-    [InlineData(true, true, true, true, false)]
+    [InlineData(false, true, true, true, true, true)]
+    [InlineData(true, false, true, true, true, true)]
+    [InlineData(true, true, false, true, true, true)]
+    [InlineData(true, true, true, false, true, true)]
+    [InlineData(true, true, true, true, false, true)]
+    [InlineData(true, true, true, true, true, false)]
     public void ShowCannotCompleteUntilEveryPresentationGateIsObserved(
         bool visible,
         bool topmost,
         bool foreground,
         bool win32Focus,
-        bool wpfFocus)
+        bool wpfFocus,
+        bool presented)
     {
         var machine = new WorkspaceSessionStateMachine();
         var show = machine.BeginShow(Target, 100);
@@ -97,7 +99,8 @@ public sealed class WorkspaceSessionStateMachineTests
             topmost,
             foreground,
             win32Focus,
-            wpfFocus);
+            wpfFocus,
+            presented);
 
         Assert.False(machine.CompleteShow(show.Generation, incomplete));
         Assert.Equal(WorkspaceState.Revealing, machine.State);
@@ -214,6 +217,18 @@ public sealed class WorkspaceSessionStateMachineTests
 
         Assert.True(machine.RollBackHide(hide.Generation));
         Assert.Equal(WorkspaceState.Visible, machine.State);
+        Assert.Equal(show.Generation, machine.Current?.Generation);
+    }
+
+    [Fact]
+    public void HideFailureDuringRevealRollsBackToRevealingState()
+    {
+        var machine = new WorkspaceSessionStateMachine();
+        var show = machine.BeginShow(Target, 100);
+        var hide = machine.BeginHide(WorkspaceHideReason.UserAction);
+
+        Assert.True(machine.RollBackHide(hide.Generation));
+        Assert.Equal(WorkspaceState.Revealing, machine.State);
         Assert.Equal(show.Generation, machine.Current?.Generation);
     }
 
