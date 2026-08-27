@@ -16,6 +16,24 @@ public partial class SettingsView : UserControl
     private SettingsViewModel? Settings =>
         (DataContext as MainWindowViewModel)?.Settings;
 
+    private void OnMaskMouseLeftButtonDown(
+        object sender,
+        MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Left ||
+            DataContext is not MainWindowViewModel viewModel)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        viewModel.CloseSettingsCommand.Execute(null);
+    }
+
+    private void OnSettingsWindowMouseLeftButtonDown(
+        object sender,
+        MouseButtonEventArgs e) => e.Handled = true;
+
     private async void OnHotkeyRecorderClick(object sender, RoutedEventArgs e)
     {
         if (Settings is not { } settings)

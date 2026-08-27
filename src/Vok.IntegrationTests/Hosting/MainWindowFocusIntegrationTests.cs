@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Vok.Core.Workspace;
@@ -80,9 +81,75 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
 
                 viewModel.NavigateTo(WorkspaceSection.Settings);
                 Assert.True(viewModel.IsSettingsVisible);
-                Assert.False(openSettingsButton.IsVisible);
+                Assert.True(openSettingsButton.IsVisible);
+                var settingsOverlay = Assert.IsType<SettingsView>(
+                    window.FindName("SettingsOverlay"));
+                Assert.True(settingsOverlay.IsVisible);
+                Assert.Equal(2, Grid.GetRowSpan(settingsOverlay));
+                var settingsWindow = Assert.IsType<Border>(
+                    settingsOverlay.FindName("SettingsWindow"));
+                Assert.Equal(720, settingsWindow.Width);
+                Assert.Equal(540, settingsWindow.Height);
+                var settingsCloseButton = Assert.IsType<Button>(
+                    settingsOverlay.FindName("SettingsCloseButton"));
+                Assert.Same(
+                    DependencyProperty.UnsetValue,
+                    settingsCloseButton.ReadLocalValue(FrameworkElement.StyleProperty));
+                var settingsNavigation = Assert.IsType<ListBox>(
+                    settingsOverlay.FindName("SettingsNavigation"));
+                var generalPanel = Assert.IsType<ScrollViewer>(
+                    settingsOverlay.FindName("GeneralPanel"));
+                var hotkeyPanel = Assert.IsType<ScrollViewer>(
+                    settingsOverlay.FindName("HotkeyPanel"));
+                var aboutPanel = Assert.IsType<ScrollViewer>(
+                    settingsOverlay.FindName("AboutPanel"));
+                settingsOverlay.UpdateLayout();
+                Assert.Equal(Visibility.Visible, generalPanel.Visibility);
+                Assert.Equal(Visibility.Collapsed, hotkeyPanel.Visibility);
+                Assert.Equal(Visibility.Collapsed, aboutPanel.Visibility);
+                settingsNavigation.SelectedIndex = 1;
+                settingsOverlay.UpdateLayout();
+                Assert.Equal(Visibility.Collapsed, generalPanel.Visibility);
+                Assert.Equal(Visibility.Visible, hotkeyPanel.Visibility);
+                settingsNavigation.SelectedIndex = 2;
+                settingsOverlay.UpdateLayout();
+                Assert.Equal(Visibility.Collapsed, hotkeyPanel.Visibility);
+                Assert.Equal(Visibility.Visible, aboutPanel.Visibility);
+                settingsNavigation.SelectedIndex = 0;
                 Assert.True(FocusAtInputPriority(window));
                 Assert.True(window.HasInputAnchorFocus);
+
+                WorkspaceHideReason? settingsEscapeReason = null;
+                EventHandler<WorkspaceHideRequestedEventArgs> settingsEscapeHandler =
+                    (_, eventArgs) => settingsEscapeReason = eventArgs.Reason;
+                window.HideRequested += settingsEscapeHandler;
+                Assert.Same(
+                    settingsCloseButton,
+                    Keyboard.Focus(settingsCloseButton));
+                RaiseEscape(window);
+                window.Dispatcher.Invoke(
+                    DispatcherPriority.Input,
+                    static () => { });
+                window.HideRequested -= settingsEscapeHandler;
+                Assert.Null(settingsEscapeReason);
+                Assert.True(viewModel.IsWorkspaceVisible);
+                Assert.False(settingsOverlay.IsVisible);
+                Assert.True(window.HasInputAnchorFocus);
+
+                viewModel.NavigateTo(WorkspaceSection.Settings);
+                var settingsMask = Assert.IsType<Grid>(
+                    settingsOverlay.FindName("SettingsMask"));
+                settingsMask.RaiseEvent(new MouseButtonEventArgs(
+                    Mouse.PrimaryDevice,
+                    Environment.TickCount,
+                    MouseButton.Left)
+                {
+                    RoutedEvent = UIElement.MouseLeftButtonDownEvent,
+                });
+                Assert.True(viewModel.IsWorkspaceVisible);
+                Assert.False(settingsOverlay.IsVisible);
+
+                viewModel.NavigateTo(WorkspaceSection.Settings);
 
                 viewModel.Settings
                     .BeginHotkeyRecordingAsync()
@@ -92,14 +159,7 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                 EventHandler<WorkspaceHideRequestedEventArgs> recordingEscapeHandler =
                     (_, eventArgs) => recordingEscapeReason = eventArgs.Reason;
                 window.HideRequested += recordingEscapeHandler;
-                window.RaiseEvent(new System.Windows.Input.KeyEventArgs(
-                    System.Windows.Input.Keyboard.PrimaryDevice,
-                    PresentationSource.FromVisual(window)!,
-                    Environment.TickCount,
-                    System.Windows.Input.Key.Escape)
-                {
-                    RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent,
-                });
+                RaiseEscape(window);
                 window.HideRequested -= recordingEscapeHandler;
                 Assert.Null(recordingEscapeReason);
                 viewModel.Settings
@@ -133,6 +193,16 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
         Dispatcher.PushFrame(frame);
         return focused;
     }
+
+    private static void RaiseEscape(MainWindow window) =>
+        window.RaiseEvent(new System.Windows.Input.KeyEventArgs(
+            System.Windows.Input.Keyboard.PrimaryDevice,
+            PresentationSource.FromVisual(window)!,
+            Environment.TickCount,
+            System.Windows.Input.Key.Escape)
+        {
+            RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent,
+        });
 
     private sealed class InMemorySettingsStore : IAppSettingsStore
     {

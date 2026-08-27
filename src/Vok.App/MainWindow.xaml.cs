@@ -12,11 +12,14 @@ namespace Vok;
 public partial class MainWindow : Window, IWorkspaceWindow
 {
     private Application? _application;
+    private readonly MainWindowViewModel _viewModel;
 
     public MainWindow(MainWindowViewModel viewModel)
     {
         InitializeComponent();
+        _viewModel = viewModel;
         DataContext = viewModel;
+        _viewModel.PropertyChanged += OnViewModelPropertyChanged;
     }
 
     public event EventHandler<WorkspaceHideRequestedEventArgs>? HideRequested;
@@ -72,6 +75,7 @@ public partial class MainWindow : Window, IWorkspaceWindow
 
     protected override void OnClosed(EventArgs e)
     {
+        _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
         if (_application is not null)
         {
             _application.Deactivated -= OnApplicationDeactivated;
@@ -88,6 +92,18 @@ public partial class MainWindow : Window, IWorkspaceWindow
         if (ReferenceEquals(e.NewFocus, WorkspaceInputAnchor))
         {
             InputAnchorFocused?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void OnViewModelPropertyChanged(
+        object? sender,
+        PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(MainWindowViewModel.IsWorkspaceVisible) &&
+            _viewModel.IsWorkspaceVisible &&
+            IsVisible)
+        {
+            PostInput(() => _ = FocusInputAnchor());
         }
     }
 
@@ -114,15 +130,18 @@ public partial class MainWindow : Window, IWorkspaceWindow
             return;
         }
 
-        if (DataContext is MainWindowViewModel
-            {
-                Settings.IsHotkeyRecording: true,
-            })
+        if (_viewModel.Settings.IsHotkeyRecording)
         {
             return;
         }
 
         e.Handled = true;
+        if (_viewModel.IsSettingsVisible)
+        {
+            _viewModel.NavigateTo(WorkspaceSection.Workspace);
+            return;
+        }
+
         HideRequested?.Invoke(
             this,
             new WorkspaceHideRequestedEventArgs(WorkspaceHideReason.Escape));
