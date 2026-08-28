@@ -485,6 +485,36 @@ public sealed class WorkspaceControllerTests
     }
 
     [Fact]
+    public async Task PasteActionReturnsCapturedTargetAndConfirmedRestore()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        var capturedTarget = rig.StateMachine.Current!.Target;
+
+        var result = await rig.Controller.HideForPasteActionAsync(
+            TestContext.Current.CancellationToken);
+
+        Assert.True(result.Hidden);
+        Assert.True(result.CanInjectInput);
+        Assert.Equal(capturedTarget, result.Target);
+        Assert.Equal(ForegroundRestoreStatus.Confirmed, result.RestoreResult.Status);
+        Assert.Equal(WorkspaceHideReason.ClipboardPaste, rig.Publisher.Last.Restore.HideReason);
+    }
+
+    [Fact]
+    public async Task PasteActionExposesRestoreFailureAndForbidsInput()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        rig.Foreground.ThrowOnRestore = true;
+
+        var result = await rig.Controller.HideForPasteActionAsync(
+            TestContext.Current.CancellationToken);
+
+        Assert.True(result.Hidden);
+        Assert.False(result.CanInjectInput);
+        Assert.Equal(ForegroundRestoreStatus.RequestDenied, result.RestoreResult.Status);
+    }
+
+    [Fact]
     public async Task ApplicationDeactivationStillHidesWhenForegroundObservationFails()
     {
         using var rig = await TestRig.CreateVisibleAsync();

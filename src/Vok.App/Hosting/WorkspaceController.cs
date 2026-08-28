@@ -113,12 +113,24 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
             EnsureVisibleCore(foregroundTarget, requestedTimestamp, destination));
     }
 
-    public Task<bool> HideForLauncherActionAsync(
-        CancellationToken cancellationToken = default)
+    public async Task<bool> HideForLauncherActionAsync(
+        CancellationToken cancellationToken = default) =>
+        (await HideForActionAsync(
+                WorkspaceHideReason.LauncherAction,
+                cancellationToken)
+            .ConfigureAwait(false)).Hidden;
+
+    public Task<WorkspaceActionHideResult> HideForPasteActionAsync(
+        CancellationToken cancellationToken = default) =>
+        HideForActionAsync(WorkspaceHideReason.ClipboardPaste, cancellationToken);
+
+    private Task<WorkspaceActionHideResult> HideForActionAsync(
+        WorkspaceHideReason reason,
+        CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
-        var completion = new TaskCompletionSource<bool>(
+        var completion = new TaskCompletionSource<WorkspaceActionHideResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var transactionClaim = 0;
         var cancellationRegistration = cancellationToken.Register(
@@ -141,18 +153,17 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
 
                 if (_disposed || Volatile.Read(ref _exitRequested) != 0)
                 {
-                    completion.TrySetResult(false);
+                    completion.TrySetResult(WorkspaceActionHideResult.NotHidden);
                     return;
                 }
 
                 if (_stateMachine.State is not (WorkspaceState.Revealing or WorkspaceState.Visible))
                 {
-                    completion.TrySetResult(false);
+                    completion.TrySetResult(WorkspaceActionHideResult.NotHidden);
                     return;
                 }
 
-                Hide(WorkspaceHidePolicy.For(WorkspaceHideReason.LauncherAction));
-                completion.TrySetResult(_stateMachine.State is WorkspaceState.Hidden);
+                completion.TrySetResult(Hide(WorkspaceHidePolicy.For(reason)));
             });
         }
         catch (Exception exception)
@@ -163,13 +174,13 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
             }
         }
 
-        return AwaitLauncherHideCompletionAsync(
+        return AwaitActionHideCompletionAsync(
             completion.Task,
             cancellationRegistration);
     }
 
-    private static async Task<bool> AwaitLauncherHideCompletionAsync(
-        Task<bool> completion,
+    private static async Task<WorkspaceActionHideResult> AwaitActionHideCompletionAsync(
+        Task<WorkspaceActionHideResult> completion,
         CancellationTokenRegistration cancellationRegistration)
     {
         try
@@ -615,7 +626,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         }
     }
 
-    private void Hide(
+    private WorkspaceActionHideResult Hide(
         WorkspaceHidePolicy policy,
         ForegroundTarget currentForeground = default)
     {
@@ -624,7 +635,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         var transition = _stateMachine.BeginHide(policy.Reason);
         if (!transition.Accepted || session is null)
         {
-            return;
+            return WorkspaceActionHideResult.NotHidden;
         }
 
         _lastHideRequestedTimestamp = Stopwatch.GetTimestamp();
@@ -662,14 +673,14 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
                     hideFailure,
                     new InvalidOperationException(
                         "The failed hide could not roll back its owned generation.")));
-                return;
+                return WorkspaceActionHideResult.NotHidden;
             }
 
             ResumeRevealAfterFailedHide(session);
             RefreshObservation(recordInViewModel: false);
             TryPublishDiagnostic();
             _viewModel.RecordFault(hideFailure);
-            return;
+            return WorkspaceActionHideResult.NotHidden;
         }
 
         if (hideFailure is not null)
@@ -707,7 +718,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         {
             _viewModel.RecordFault(new InvalidOperationException(
                 "A stale hide completion was rejected by the workspace state machine."));
-            return;
+            return WorkspaceActionHideResult.NotHidden;
         }
 
         _lastEndedGeneration = transition.Generation;
@@ -722,6 +733,11 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
                 ? cleanupFailures[0]
                 : new AggregateException(cleanupFailures));
         }
+
+        return new WorkspaceActionHideResult(
+            Hidden: true,
+            session.Target,
+            restoreResult);
     }
 
     private void CleanUpFailedShow(long generation, ForegroundTarget target, Exception showException)

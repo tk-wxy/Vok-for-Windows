@@ -6,11 +6,13 @@ using Vok.Appearance;
 using Vok.Core.Appearance;
 using Vok.Core.Diagnostics;
 using Vok.Core.Launcher;
+using Vok.Core.Clipboard;
 using Vok.Core.Platform;
 using Vok.Core.Workspace;
 using Vok.Hosting;
 using Vok.Infrastructure.Windows.Diagnostics;
 using Vok.Infrastructure.Windows.Input;
+using Vok.Infrastructure.Windows.Clipboard;
 using Vok.Infrastructure.Windows.Launcher;
 using Vok.Infrastructure.Windows.Persistence;
 using Vok.Infrastructure.Windows.Shell;
@@ -19,6 +21,7 @@ using Vok.Features.Tray;
 using Vok.Presentation;
 using Vok.Features.Settings;
 using Vok.Features.Launcher;
+using Vok.Features.Clipboard;
 using Vok.Hotkeys;
 
 namespace Vok;
@@ -52,15 +55,20 @@ public partial class App : Application
         await hotkeys.InitializeAsync();
         var launcher = _services.GetRequiredService<LauncherViewModel>();
         await launcher.InitializeAsync();
+        var clipboard = _services.GetRequiredService<ClipboardViewModel>();
+        await clipboard.InitializeAsync();
         var window = _services.GetRequiredService<MainWindow>();
         var controller = _services.GetRequiredService<WorkspaceController>();
         _ = _services.GetRequiredService<LauncherActionController>();
+        _ = _services.GetRequiredService<ClipboardPasteController>();
+        var clipboardController = _services.GetRequiredService<ClipboardController>();
         var applicationController = _services.GetRequiredService<ApplicationController>();
         MainWindow = window;
 
         try
         {
             await applicationController.StartAsync();
+            await clipboardController.StartAsync();
         }
         catch (Exception exception)
         {
@@ -101,6 +109,11 @@ public partial class App : Application
             new SqliteAppSettingsStore(provider.GetRequiredService<SqliteStorageExecutor>()));
         services.AddSingleton<ILauncherRepository>(provider =>
             new SqliteLauncherRepository(provider.GetRequiredService<SqliteStorageExecutor>()));
+        services.AddSingleton<IClipboardHistoryRepository>(provider =>
+            new SqliteClipboardHistoryRepository(provider.GetRequiredService<SqliteStorageExecutor>()));
+        services.AddSingleton<IClipboardPlatformService, WindowsClipboardPlatformService>();
+        services.AddSingleton<IClipboardCaptureNormalizer, ClipboardTextNormalizer>();
+        services.AddSingleton<IPasteInputService, Win32PasteInputService>();
         services.AddSingleton<ILauncherShellService, WindowsLauncherShellService>();
         services.AddSingleton<IAppThemeApplier>(_ => new WpfAppThemeApplier(Current));
         services.AddSingleton<AppearanceController>();
@@ -108,6 +121,7 @@ public partial class App : Application
         services.AddSingleton<SettingsViewModel>();
         services.AddSingleton<LauncherLayoutProfileCache>();
         services.AddSingleton<LauncherViewModel>();
+        services.AddSingleton<ClipboardViewModel>();
         services.AddSingleton<MainWindowViewModel>();
         services.AddSingleton<MainWindow>();
         services.AddSingleton<IWorkspaceWindow>(provider => provider.GetRequiredService<MainWindow>());
@@ -116,6 +130,8 @@ public partial class App : Application
         services.AddSingleton<IWorkspaceCommands>(provider =>
             provider.GetRequiredService<WorkspaceController>());
         services.AddSingleton<LauncherActionController>();
+        services.AddSingleton<ClipboardPasteController>();
+        services.AddSingleton<ClipboardController>();
         services.AddSingleton<IApplicationLifetime, WpfApplicationLifetime>();
         services.AddSingleton<ApplicationController>();
 

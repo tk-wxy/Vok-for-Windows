@@ -9,4 +9,5 @@ public enum WorkspaceHideReason
     ShowFailure,
     ForegroundLost,
     LauncherAction,
+    ClipboardPaste,
 }

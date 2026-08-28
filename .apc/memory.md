@@ -11,31 +11,31 @@
 
 ## §0 快照
 
-- **状态**：M0 宿主与 Workbench 1:2:1 壳层保持可用；M1 启动台已按 `decisions.md §18–§19` 完成真实引用、SQLite 去重/分页/持久化排序、Shell 原图标、外部拖入、单击反馈后打开、右键操作及内部拖动排序。
-- **最近进展**：外部拖放卡死根因已从 DragOver 外部 COM 热读和被坐标过滤的 DragLeave 终态泄漏修复；数据只在 Drop 读取一次，已可见界面的显式热键关闭可抢占陈旧租约。用户确认外部拖放、关闭与内部排序测试通过，并否决额外洗色/提示内容；蓝框最终为覆盖整个启动台的零边距、零圆角、无背景/文字纯描边。隔离 Release 190/190 测试、浅/深渲染和 win-x64 自包含发布通过。
-- **下一步**：启动台本轮功能与视觉调整完成；后续由用户决定进入非文件系统应用发现、图标磁盘缓存或其他纵向切片。
-- **已知问题**：外部拖入仍限定 Windows FileDrop 文件系统目标，不含 AppUserModelID/UWP Shell namespace；混合 DPI 边缘滚动仍可专项回归。搜索、中转站和剪贴板仍无功能。
+- **状态**：M0 宿主、Workbench 1:2:1 壳层与 M1 启动台保持可用。M2.0 平台契约和 M2.1 文本纵向切片已接入产品：后台 Clipboard STA 监听，Unicode/ANSI/OEM、HTML/RTF 规范化，schema 3 历史、虚拟化文本卡、固定/二次确认删除、多表示写回与安全粘贴均已实现。
+- **最近进展**：Release 55/55 Core 与 202/202 Windows/WPF 共 257/257 测试、win-x64 自包含发布和浅/深 80 卡真实 WPF 渲染通过；独立非交互 Window Station 探针真实验证即时/延迟捕获、隐私跳过、HTML+RTF+Unicode 写回、SelfWrite receipt 抑制及外部覆盖失效。用户随后确认真机文本捕获、历史展示与粘贴测试通过；只读复核运行中 PID 3608 使用的真实数据库已升 schema 3，并含 2 条记录及 2 个表示层。
+- **下一步**：进入 M2.2 文件列表纵向切片：`CF_HDROP`、Preferred DropEffect COPY/MOVE、路径规范化、文件卡/缺失状态、Shell 图标和安全 COPY/MOVE 写回；先保持文本路径可用。
+- **已知问题**：文件列表和图片/截图遇到更强格式时当前会安全跳过而不误建文本卡；`CF_BITMAP` 仍只编目，图片资产/缩略图属于 M2.3。虚拟文件、未知私有格式、音视频/EMF 不在基线，4K/8K 容量阈值待 M2.3/M2.4 实测；搜索和中转站仍无功能。
 
 ## §0A 最近会话
 
-### 会话 2026-08-28 - 启动台单击反馈、内部排序与外部拖放终态修复
+### 会话 2026-08-28 - M2.1 文本历史、卡片与安全粘贴
 
-- 根因复现为同一条 OLE 生命周期故障链：旧 DragOver 在 UI STA 反复同步读取外国 `IDataObject`，窗口 DragLeave 又因指针坐标仍在 HWND 内被忽略；源取消或终态缺失后，拖放租约持续延后失活/热键隐藏，活动蓝框与卡顿同时遗留。
-- 外部拖放改为 Enter 探测、Over 纯视觉、Drop 先认领清理再单次快照；窗口级 DragLeave、隐藏、关闭和下一 Enter 均可幂等收尾，显式热键关闭抢占陈旧租约而原始长按呼出仍等待终态。用户否决额外洗色、内容降噪与中央提示，蓝框最终只保留覆盖整个启动台的 2 DIP Accent 矩形描边，无边距、圆角、背景或子内容。
-- 卡片单击加入 Completed 驱动的 160 ms 缩放反馈和只处理缺失回调的 500 ms generation watchdog；内部拖动使用系统阈值、四列实时预览、渲染帧边缘滚动、完整快照回滚与松手单次 `MoveToSlotAsync`。用户确认功能测试通过；最终隔离 Release 190/190 自动测试、浅/深 WPF 渲染和 win-x64 自包含发布通过，混合 DPI 仍可专项回归。
+- 在 M2.0 快照之上新增有界 Unicode/ANSI/OEM、HTML/RTF 规范化与精确语义哈希；schema 3 由既有 SQLite 执行器单事务建表/结构识别，支持去重回顶、64 条 keyset 分页、固定、级联删除和重启多表示回放。右侧真实 ClipboardView 使用 Recycling 虚拟化文本卡，删除改为卡片内二次确认，避免模态框干扰工作台失活事务。
+- Clipboard STA 新增可认领 write/verify 命令和 instance + operation + semantic hash marker，receipt 同时核验 sequence；按代粘贴只在写回、同代隐藏/恢复、receipt 当前与顶层/子焦点再次匹配后 SendInput，恢复失败、外部覆盖、焦点变化和重复点击均不注入。
+- Release 55/55 + 202/202 共 257/257 自动测试、自包含发布和浅/深 80 卡渲染通过；独立 Window Station 探针真实验证多表示写回、自写抑制与外部覆盖失效。用户确认真机文本捕获、历史展示与粘贴测试通过；只读复核运行中 PID 3608 的真实库为 schema 3，含 2 条记录及 2 个表示层。
 
-### 会话 2026-08-28 - 启动台基础业务、外部拖入与 Shell 原图标
+### 会话 2026-08-28 - M2.0 剪贴板平台契约与隔离探针
 
-- 以 Core 不可变引用模型、单一 SQLite WAL 执行器和专属 Shell/COM STA 建立启动台基础：文件/目录/`.lnk` 保留自身路径，规范键去重，256 条分页，四列组成虚拟化行；Shell 提取原图标并负责打开/Explorer 定位，移除只删引用。
-- 主窗用 WPF FileDrop 接收外部拖入，仅真实 DragEnter 建立 Workspace generation 拖放租约；失活/热键动作延后到 Drop/DragLeave，终态、动作和 Shell 队列均先占有，隐藏/换代/退出清理陈旧租约。单击及右键打开必须先完成隐藏、Topmost 清理与原前台恢复，隐藏失败不调用 Shell。
-- 隔离 Release 0 警告/错误，Core 42/42 与 Windows/WPF 129/129 共 171/171 测试、自包含 win-x64 发布和浅/深真实 WPF 渲染通过。当前 PID 23520 未替换；物理拖入、真实图标/Explorer 交互、混合 DPI 与短长按拖入组合待用户验收。
-- 用户真机旧库随后暴露 `target_kind` 缺列；只读检查确认 schema 1 仍含 2 条快捷方式。已补 schema 2 结构识别与单事务迁移，覆盖旧数据保留、类型转换、重复启动、去重、未知结构与复制冲突回滚；最终 42/42 + 132/132 共 174/174 通过。用户确认真机测试通过，只读复核真实库已升 schema 2、旧条目保留且多种新条目写入成功。
+- Core 新增捕获结果、格式角色/状态、容量/重试选项、只含计数的诊断快照和只比较 sequence 相等性的协调器；不同 sequence 在活动捕获期间只保留最新 pending，完成时以实际观测 sequence 合并，覆盖重复通知与 DWORD 回绕。
+- Infrastructure.Windows 新增独立 Clipboard STA、message-only listener HWND、白名单标准/注册格式目录、一次 `OpenClipboard` 内自有字节快照、隐私/实例 marker、双容量有界读取、实际忙占用后的计时器退避和有界 `IAsyncEnumerable` 结果流；服务未注册到 App，避免未持久化功能提前读取用户剪贴板。
+- 默认隔离 Release 构建 0 警告/错误，Core 48/48 与 Windows/WPF 162/162 共 210/210 测试、自包含 win-x64 发布通过。新增非交互 Window Station 真实探针，不接触用户交互剪贴板，已验证即时 HTML+Unicode、CF_LOCALE/TEXT/OEMTEXT 系统合成、延迟渲染及隐私 marker 跳过；运行中 PID 20584 未替换。
 
-### 会话 2026-08-28 - 启动台四列动态卡片与 Fluent 悬浮视觉
+### 会话 2026-08-28 - M2 剪贴板业务模型规划
 
-- 用户确认启动台卡片单元宽度为有效区域四分之一，并纠正“留出不足一行空白/整行滚动”方案：完整视口必须由整数行动态卡片均分，用户滚动保持原生自由偏移。
-- 启动时枚举全部显示器工作区与 DPI 预热进程内档案；实际视口只按精确量化高度查表，新环境首次缺失才计算。卡片单元以 100 DIP 为目标在 94–116 DIP 舒适区选行并取 `H/N`，禁用逐卡布局取整后 490/770/910 DIP 均无余量；四列模板加入透明静止态、Fluent 悬浮态、46 DIP 图标、双行名称、ToolTip 与自动化名称。
-- 隔离 Release 构建 0 警告/错误，Core 42/42 与 Windows/WPF 114/114 共 156/156 测试、win-x64 自包含发布及 620/900 DIP 浅色/深色/悬浮五套渲染复核通过。当前 PID 7360 未替换，混合 DPI 跨屏和物理快速悬浮待用户验收。
+- 以 Windows “一次逻辑内容可同时包含多个格式”为边界，将 sequence 对应的稳定系统快照建模为一条历史，HTML/RTF/Unicode 或 PNG/DIB 等作为同条记录的表示层；文本剪切不伪判，文件 COPY/MOVE 显式建模，截图无证据时统一归为图片。
+- 规划专属 Clipboard STA、一次 OpenClipboard 内白名单快照、sequence + 自写 marker/receipt 双门禁、有界规范化/图片 worker、SQLite 元数据与内容寻址资产，以及 Materialize→Write→Hide→Restore→Verify→Inject 的按代取用状态机。
+- 新增 `docs/M2_CLIPBOARD_PLAN.md` 并由 `docs/ARCHITECTURE.md` 链接；规划按平台探针、文本、文件、图片和规模故障门禁分阶段，明确虚拟文件与任意私有格式暂不冒充支持。本轮仅文档变更，未实现或运行代码测试。
+
 
 ## 指引
 

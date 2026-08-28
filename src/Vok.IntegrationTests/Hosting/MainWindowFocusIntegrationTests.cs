@@ -15,7 +15,9 @@ using Vok.Core.Appearance;
 using Vok.Core.Launcher;
 using Vok.Features.Settings;
 using Vok.Features.Launcher;
+using Vok.Features.Clipboard;
 using Vok.Core.Platform;
+using Vok.Core.Clipboard;
 using Vok.Hotkeys;
 using Vok.IntegrationTests.Infrastructure;
 using Xunit;
@@ -159,7 +161,27 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                 new SettingsViewModel(appearance, hotkeys));
             var launcherLayouts = CreateLauncherLayouts(620, 900);
             using var launcherViewModel = CreateLauncherViewModel(itemCount: 40);
-            var window = new MainWindow(viewModel, launcherLayouts, launcherViewModel)
+            using var clipboardViewModel = new ClipboardViewModel(
+                new NoopClipboardRepository());
+            for (var index = 0; index < 80; index++)
+            {
+                clipboardViewModel.ApplyCaptured(new ClipboardEntry(
+                    Guid.NewGuid(),
+                    ClipboardContentKind.Text,
+                    (index + 1).ToString("x64"),
+                    $"剪贴板文本 {index}\n第二行用于验证换行与省略。",
+                    DateTimeOffset.UtcNow,
+                    DateTimeOffset.UtcNow,
+                    index + 1,
+                    1,
+                    index == 79,
+                    1));
+            }
+            var window = new MainWindow(
+                viewModel,
+                launcherLayouts,
+                launcherViewModel,
+                clipboardViewModel)
             {
                 Width = 1440,
                 Height = 900,
@@ -253,7 +275,23 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                 var stage = Assert.IsType<Border>(window.FindName("StageRegion"));
                 var clipboard = Assert.IsType<Border>(window.FindName("ClipboardRegion"));
                 AssertPlaceholderBodyIsEmpty(stage);
-                AssertPlaceholderBodyIsEmpty(clipboard);
+                var clipboardPanel = Assert.IsType<ClipboardView>(clipboard.Child);
+                var clipboardLayout = Assert.IsType<Grid>(clipboardPanel.Content);
+                Assert.Collection(
+                    clipboardLayout.RowDefinitions,
+                    row => Assert.Equal(new GridLength(24), row.Height),
+                    row => Assert.Equal(new GridLength(1, GridUnitType.Star), row.Height),
+                    row => Assert.Equal(new GridLength(28), row.Height));
+                var clipboardList = Assert.IsType<ListBox>(
+                    clipboardPanel.FindName("ClipboardItemsList"));
+                Assert.True(VirtualizingPanel.GetIsVirtualizing(clipboardList));
+                Assert.Equal(
+                    VirtualizationMode.Recycling,
+                    VirtualizingPanel.GetVirtualizationMode(clipboardList));
+                Assert.Equal(80, clipboardList.Items.Count);
+                Assert.True(
+                    FindVisualDescendants<ListBoxItem>(clipboardList).Count() < 80,
+                    "The clipboard list realized every card instead of virtualizing its viewport.");
 
                 var bottomBar = Assert.IsType<Border>(window.FindName("BottomBar"));
                 Assert.True(bottomBar.IsVisible);
@@ -918,6 +956,36 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
             _ = PressChanged;
             _ = Faulted;
         }
+    }
+
+    private sealed class NoopClipboardRepository : IClipboardHistoryRepository
+    {
+        public Task<ClipboardPage> LoadPageAsync(
+            ClipboardPageCursor? after,
+            int pageSize,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ClipboardPage([], null, 0));
+
+        public Task<ClipboardEntry> UpsertTextAsync(
+            ClipboardTextContent content,
+            DateTimeOffset capturedUtc,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<ClipboardReplayPayload?> GetReplayPayloadAsync(
+            Guid entryId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<ClipboardReplayPayload?>(null);
+
+        public Task<ClipboardEntry?> SetPinnedAsync(
+            Guid entryId,
+            bool isPinned,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<ClipboardEntry?>(null);
+
+        public Task<bool> RemoveAsync(
+            Guid entryId,
+            CancellationToken cancellationToken = default) => Task.FromResult(false);
     }
 
 }

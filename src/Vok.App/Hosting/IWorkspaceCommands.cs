@@ -11,6 +11,10 @@ public interface IWorkspaceCommands
 
     Task<bool> HideForLauncherActionAsync(CancellationToken cancellationToken = default);
 
+    Task<WorkspaceActionHideResult> HideForPasteActionAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(WorkspaceActionHideResult.NotHidden);
+
     void EnsureVisible(
         ForegroundTarget foregroundTarget,
         long requestedTimestamp,

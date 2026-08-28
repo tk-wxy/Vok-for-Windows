@@ -112,9 +112,9 @@
 
 - [ ] R3：隐藏、启动和粘贴不得把 `SetForegroundWindow` 返回前台视为必然成功；必须观察真实前台窗口，失败或 UIPI 权限不匹配时明确降级。
   - 范围：目标窗口恢复、应用启动、剪贴板粘贴。
-  - 证据：https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-setforegroundwindow 明确说明系统限制前台切换且即使满足条件也可能拒绝；2026-08-24 逐代实测将失败归为 B：顶层已恢复，目标线程子焦点为 0。按 `decisions.md §4` 做窄回退后，用户确认快捷键与 Esc 隐藏均返回原文本框。
-  - 最后验证：2026-08-24。
-  - 状态：active；M0 隐藏恢复已通过真实物理回归。后续启动与粘贴仍必须分别验证，不能从 M0 结果外推；默认禁止连接输入队列，只有 §4 已证明的 B 类条件允许单次窄回退。
+  - 证据：https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-setforegroundwindow 明确说明系统限制前台切换且即使满足条件也可能拒绝；2026-08-24 逐代实测将失败归为 B：顶层已恢复，目标线程子焦点为 0。按 `decisions.md §4` 做窄回退后，用户确认快捷键与 Esc 隐藏均返回原文本框。M2.1 粘贴只有 Workspace 同代隐藏成功、恢复结果 `Succeeded`、receipt 仍当前且注入前顶层/子焦点身份再次匹配才发送 Ctrl+V；自动测试覆盖恢复失败、外部覆盖、焦点变化、重复动作和成功顺序。
+  - 最后验证：2026-08-28。
+  - 状态：active；M0 隐藏恢复已通过真实物理回归，M2.1 粘贴门禁已自动验证，且 2026-08-28 用户确认真机文本捕获、历史展示与粘贴测试通过。默认禁止连接输入队列，只有 §4 已证明的 B 类条件允许单次窄回退。
 
 ### 宿主验收
 
@@ -142,17 +142,17 @@
 
 - [ ] R4：所有系统剪贴板读写由单一 STA 服务负责；`WM_CLIPBOARDUPDATE` 只负责唤醒，以 `GetClipboardSequenceNumber` 提交水位并隔离自写回流。
   - 范围：剪贴板监听、捕获、回写和粘贴。
-  - 证据：https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-addclipboardformatlistener 与 https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-getclipboardsequencenumber。
-  - 最后验证：2026-08-23。
-  - 状态：active。
+  - 证据：https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-addclipboardformatlistener 与 https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-getclipboardsequencenumber。M2.0 已实现独立 STA/message-only listener HWND、只比较相等性的 sequence 协调器、一次 `OpenClipboard` 内多格式快照和实际忙占用后的有界退避；M2.1 将 write/verify 作为同一 STA 的可认领命令，marker 绑定 instance/operation/semantic hash，只有匹配当前 receipt 与 sequence 才抑制自写。自动测试覆盖取消认领、重复/回绕/替换、隐私、容量、忙耗尽、外部覆盖和写入失败；独立 Window Station 真实探针覆盖即时/延迟捕获、多表示写回、自写抑制及外部覆盖失效。
+  - 最后验证：2026-08-28。
+  - 状态：active；M2.0 与 M2.1 文本平台服务已接入产品组合根并闭环 receipt；文件 COPY/MOVE 与图片多表示仍分别属于 M2.2/M2.3。
 
 ### 存储与规模
 
 - [ ] R5：不得在 UI Dispatcher 上执行 Microsoft.Data.Sqlite；数据库写入由显式执行器串行化并使用 WAL。数据库升级必须同时核验版本号与真实表结构，在单事务内迁移并让未知结构原样回滚；`CREATE TABLE IF NOT EXISTS` 只能建新表，不能冒充已有表迁移。大集合必须同时实施 SQL 分页和 WPF 容器虚拟化，不能把 UI 虚拟化当作数据虚拟化。
   - 范围：SQLite、启动台、剪贴板历史、图片与后续大列表。
-  - 证据：https://learn.microsoft.com/dotnet/standard/data/sqlite/async 说明 Async 方法实际同步；https://learn.microsoft.com/dotnet/desktop/wpf/advanced/optimizing-performance-controls 说明 WPF 没有内建数据虚拟化。2026-08-28 真机旧库因已有 `launcher_items` 使 `CREATE TABLE IF NOT EXISTS` 静默跳过，但代码仍写入版本并查询新列，复现 `no such column: target_kind`；schema 2 改为列集合识别和单事务迁移，测试确认旧记录保留、重复启动幂等及未知结构不被替换。启动台与设置共享容量 64 的单连接 WAL 执行器；启动项按 256 条 SQL 页增量加载，四列先组成行再由 Recycling `VirtualizingStackPanel` 以 Pixel ScrollUnit 虚拟化，37.5 DIP 自由偏移仍由真实 WPF 测试确认。
+  - 证据：https://learn.microsoft.com/dotnet/standard/data/sqlite/async 说明 Async 方法实际同步；https://learn.microsoft.com/dotnet/desktop/wpf/advanced/optimizing-performance-controls 说明 WPF 没有内建数据虚拟化。2026-08-28 真机旧库因已有 `launcher_items` 使 `CREATE TABLE IF NOT EXISTS` 静默跳过，但代码仍写入版本并查询新列，复现 `no such column: target_kind`；schema 2 改为列集合识别和单事务迁移。M2.1 schema 3 在同一容量 64 的单连接 WAL 执行器中增加结构识别的剪贴板表，130 条测试验证 64 条 keyset 页、精确去重回顶、固定保留、重启回放和级联删除；80 卡浅/深真实 WPF 渲染验证 Recycling 列表未全量实例化容器。
   - 最后验证：2026-08-28。
-  - 状态：active；设置与启动台串行所有权、schema 1→2 迁移、失败回滚、分页、行虚拟化、重启持久化、去重、排序和取消一致性均有自动测试；用户真实库迁移后旧条目保留且新条目可继续写入。
+  - 状态：active；设置、启动台与剪贴板共享串行所有权，schema 1→2→3、失败回滚、SQL 分页、WPF 虚拟化、重启持久化、去重/排序和取消一致性均有自动测试；2026-08-28 只读复核运行中新版进程的用户真实库已升 schema 3，且含已写入的剪贴板记录与表示层。
 
 ### 发布与互操作
 

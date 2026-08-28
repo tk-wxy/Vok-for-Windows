@@ -59,7 +59,7 @@ public sealed class SqliteLauncherRepositoryTests
             }
 
             using var connection = OpenDatabase(databasePath);
-            Assert.Equal(2L, ExecuteInt64(connection, "PRAGMA user_version;"));
+            Assert.Equal(3L, ExecuteInt64(connection, "PRAGMA user_version;"));
             Assert.Equal(
                 [
                     "id", "target_kind", "target_value", "canonical_key",

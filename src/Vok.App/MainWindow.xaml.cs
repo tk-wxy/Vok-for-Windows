@@ -6,6 +6,7 @@ using System.Windows.Interop;
 using System.Windows.Threading;
 using Vok.Core.Workspace;
 using Vok.Features.Launcher;
+using Vok.Features.Clipboard;
 using Vok.Hosting;
 using Vok.Presentation;
 
@@ -22,7 +23,8 @@ public partial class MainWindow : Window, IWorkspaceWindow
     public MainWindow(
         MainWindowViewModel viewModel,
         LauncherLayoutProfileCache launcherLayoutProfiles,
-        LauncherViewModel? launcherViewModel = null)
+        LauncherViewModel? launcherViewModel = null,
+        ClipboardViewModel? clipboardViewModel = null)
     {
         InitializeComponent();
         _viewModel = viewModel;
@@ -31,6 +33,10 @@ public partial class MainWindow : Window, IWorkspaceWindow
         if (launcherViewModel is not null)
         {
             LauncherPanel.DataContext = launcherViewModel;
+        }
+        if (clipboardViewModel is not null)
+        {
+            ClipboardPanel.DataContext = clipboardViewModel;
         }
         LauncherPanel.UseLayoutProfiles(launcherLayoutProfiles);
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
