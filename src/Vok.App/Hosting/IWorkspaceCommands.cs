@@ -9,6 +9,8 @@ public interface IWorkspaceCommands
 
     Task StartAsync();
 
+    Task<bool> HideForLauncherActionAsync(CancellationToken cancellationToken = default);
+
     void EnsureVisible(
         ForegroundTarget foregroundTarget,
         long requestedTimestamp,

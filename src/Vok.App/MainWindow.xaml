@@ -14,7 +14,12 @@
         Topmost="False"
         Background="{DynamicResource ApplicationBackgroundBrush}"
         Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+        AllowDrop="True"
         Closing="OnClosing"
+        PreviewDragEnter="OnPreviewDragEnter"
+        PreviewDragOver="OnPreviewDragOver"
+        PreviewDragLeave="OnPreviewDragLeave"
+        PreviewDrop="OnPreviewDrop"
         PreviewKeyDown="OnPreviewKeyDown">
   <Grid x:Name="WorkspaceInputAnchor"
         Focusable="True"

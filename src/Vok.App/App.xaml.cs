@@ -5,11 +5,13 @@ using Microsoft.Extensions.DependencyInjection;
 using Vok.Appearance;
 using Vok.Core.Appearance;
 using Vok.Core.Diagnostics;
+using Vok.Core.Launcher;
 using Vok.Core.Platform;
 using Vok.Core.Workspace;
 using Vok.Hosting;
 using Vok.Infrastructure.Windows.Diagnostics;
 using Vok.Infrastructure.Windows.Input;
+using Vok.Infrastructure.Windows.Launcher;
 using Vok.Infrastructure.Windows.Persistence;
 using Vok.Infrastructure.Windows.Shell;
 using Vok.Infrastructure.Windows.Windowing;
@@ -48,9 +50,12 @@ public partial class App : Application
         await appearance.InitializeAsync();
         var hotkeys = _services.GetRequiredService<HotkeyController>();
         await hotkeys.InitializeAsync();
+        var launcher = _services.GetRequiredService<LauncherViewModel>();
+        await launcher.InitializeAsync();
         var window = _services.GetRequiredService<MainWindow>();
-        var applicationController = _services.GetRequiredService<ApplicationController>();
         var controller = _services.GetRequiredService<WorkspaceController>();
+        _ = _services.GetRequiredService<LauncherActionController>();
+        var applicationController = _services.GetRequiredService<ApplicationController>();
         MainWindow = window;
 
         try
@@ -91,12 +96,18 @@ public partial class App : Application
         services.AddSingleton<IPerformanceSampler, ProcessPerformanceSampler>();
         services.AddSingleton<IWorkspaceDiagnosticPublisher, Win32WorkspaceDiagnosticPublisher>();
         services.AddSingleton<IWorkspacePresentationService, DwmWorkspacePresentationService>();
-        services.AddSingleton<IAppSettingsStore>(_ => CreateSettingsStore());
+        services.AddSingleton(_ => CreateStorageExecutor());
+        services.AddSingleton<IAppSettingsStore>(provider =>
+            new SqliteAppSettingsStore(provider.GetRequiredService<SqliteStorageExecutor>()));
+        services.AddSingleton<ILauncherRepository>(provider =>
+            new SqliteLauncherRepository(provider.GetRequiredService<SqliteStorageExecutor>()));
+        services.AddSingleton<ILauncherShellService, WindowsLauncherShellService>();
         services.AddSingleton<IAppThemeApplier>(_ => new WpfAppThemeApplier(Current));
         services.AddSingleton<AppearanceController>();
         services.AddSingleton<HotkeyController>();
         services.AddSingleton<SettingsViewModel>();
         services.AddSingleton<LauncherLayoutProfileCache>();
+        services.AddSingleton<LauncherViewModel>();
         services.AddSingleton<MainWindowViewModel>();
         services.AddSingleton<MainWindow>();
         services.AddSingleton<IWorkspaceWindow>(provider => provider.GetRequiredService<MainWindow>());
@@ -104,6 +115,7 @@ public partial class App : Application
         services.AddSingleton<WorkspaceController>();
         services.AddSingleton<IWorkspaceCommands>(provider =>
             provider.GetRequiredService<WorkspaceController>());
+        services.AddSingleton<LauncherActionController>();
         services.AddSingleton<IApplicationLifetime, WpfApplicationLifetime>();
         services.AddSingleton<ApplicationController>();
 
@@ -131,16 +143,17 @@ public partial class App : Application
         }
     }
 
-    private static IAppSettingsStore CreateSettingsStore()
+    private static SqliteStorageExecutor CreateStorageExecutor()
     {
-        try
+        var localAppData = Environment.GetFolderPath(
+            Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(localAppData))
         {
-            return SqliteAppSettingsStore.CreateDefault();
+            throw new InvalidOperationException(
+                "The local application data directory is unavailable.");
         }
-        catch (Exception exception) when (
-            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
-        {
-            return new UnavailableAppSettingsStore(exception);
-        }
+
+        return new SqliteStorageExecutor(
+            Path.Combine(localAppData, "Vok", "vok.db"));
     }
 }

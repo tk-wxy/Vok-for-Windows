@@ -362,6 +362,106 @@ public sealed class WorkspaceControllerTests
     }
 
     [Fact]
+    public async Task ExternalDragLeaseDefersForegroundLossUntilCanceledDragEnds()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        rig.Foreground.CaptureResult = SelectedExternalTarget;
+
+        rig.Window.RaiseExternalDragStarted(41);
+        rig.Window.RaiseApplicationDeactivated();
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.DoesNotContain("window.hide", rig.Log);
+
+        rig.Window.RaiseExternalDragEnded(41, dropAccepted: false);
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.Equal(1, rig.Log.Count(entry => entry == "window.hide"));
+        Assert.Equal(WorkspaceHideReason.ForegroundLost, rig.Publisher.Last.Restore.HideReason);
+        Assert.Equal(0, rig.Foreground.RestoreCallCount);
+    }
+
+    [Fact]
+    public async Task AcceptedExternalDropReassertsFocusAndConsumesDeferredDeactivation()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+
+        rig.Window.RaiseExternalDragStarted(42);
+        rig.Window.RaiseApplicationDeactivated();
+        rig.Window.RaiseExternalDragEnded(42, dropAccepted: true);
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.Contains("placement.foreground", rig.Log);
+        Assert.Contains("window.activate", rig.Log);
+        Assert.Contains("window.focus", rig.Log);
+        Assert.DoesNotContain("window.hide", rig.Log);
+    }
+
+    [Fact]
+    public async Task DeferredHotkeyHideWinsOnceWhenExternalDragTerminates()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        rig.Window.RaiseExternalDragStarted(43);
+        var pressGeneration = rig.Hotkey.RaiseStarted(ExternalTarget);
+
+        rig.Hotkey.RaiseReleased(pressGeneration, TimeSpan.FromMilliseconds(25));
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.DoesNotContain("window.hide", rig.Log);
+
+        rig.Window.RaiseExternalDragEnded(43, dropAccepted: true);
+        rig.Window.RaiseExternalDragEnded(43, dropAccepted: true);
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.Equal(1, rig.Log.Count(entry => entry == "window.hide"));
+        Assert.Equal(WorkspaceHideReason.Hotkey, rig.Publisher.Last.Restore.HideReason);
+    }
+
+    [Fact]
+    public async Task StaleDragTerminalCannotAffectANewerWorkspaceGeneration()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        rig.Window.RaiseExternalDragStarted(44);
+        rig.Window.RaiseHideRequested(WorkspaceHideReason.Escape);
+        rig.Hotkey.Raise(NewSessionTarget);
+        var generation = rig.StateMachine.Current!.Generation;
+        rig.Log.Clear();
+
+        rig.Window.RaiseExternalDragEnded(44, dropAccepted: false);
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.Equal(generation, rig.StateMachine.Current!.Generation);
+        Assert.DoesNotContain("window.hide", rig.Log);
+    }
+
+    [Fact]
+    public async Task LauncherActionCompletesHideTransactionBeforeReportingSuccess()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+
+        var hidden = await rig.Controller.HideForLauncherActionAsync(
+            TestContext.Current.CancellationToken);
+
+        Assert.True(hidden);
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        AssertOrdered(rig.Log, "window.hide", "placement.exit", "foreground.restore");
+        Assert.Equal(WorkspaceHideReason.LauncherAction, rig.Publisher.Last.Restore.HideReason);
+    }
+
+    [Fact]
+    public async Task LauncherActionIsRejectedWhenHideRollsBack()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        rig.Window.HideFailuresRemaining = 1;
+
+        var hidden = await rig.Controller.HideForLauncherActionAsync(
+            TestContext.Current.CancellationToken);
+
+        Assert.False(hidden);
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+    }
+
+    [Fact]
     public async Task ApplicationDeactivationStillHidesWhenForegroundObservationFails()
     {
         using var rig = await TestRig.CreateVisibleAsync();
@@ -1007,6 +1107,8 @@ public sealed class WorkspaceControllerTests
 
         public event EventHandler<WorkspaceHideRequestedEventArgs>? HideRequested;
         public event EventHandler? ApplicationDeactivated;
+        public event EventHandler<WorkspaceExternalDragStartedEventArgs>? ExternalDragStarted;
+        public event EventHandler<WorkspaceExternalDragEndedEventArgs>? ExternalDragEnded;
         public bool IsVisible { get; private set; }
         public bool HasInputAnchorFocus => InputFocus;
         public bool InputFocus { get; set; }
@@ -1103,6 +1205,12 @@ public sealed class WorkspaceControllerTests
         public void RaiseActivated() => _activated?.Invoke(this, EventArgs.Empty);
         public void RaiseApplicationDeactivated() =>
             ApplicationDeactivated?.Invoke(this, EventArgs.Empty);
+        public void RaiseExternalDragStarted(long dragId) =>
+            ExternalDragStarted?.Invoke(this, new WorkspaceExternalDragStartedEventArgs(dragId));
+        public void RaiseExternalDragEnded(long dragId, bool dropAccepted) =>
+            ExternalDragEnded?.Invoke(
+                this,
+                new WorkspaceExternalDragEndedEventArgs(dragId, dropAccepted));
         public void RaiseInputAnchorFocused() => _inputFocused?.Invoke(this, EventArgs.Empty);
         public void RaiseFirstRemovedActivation() => _removedActivated[0](this, EventArgs.Empty);
         public void RaiseLastRemovedActivation() => _removedActivated[^1](this, EventArgs.Empty);

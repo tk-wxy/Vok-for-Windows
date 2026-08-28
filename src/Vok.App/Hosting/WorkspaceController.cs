@@ -36,6 +36,10 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
     private long _lastHideRequestedTimestamp;
     private long _lastHiddenCompletedTimestamp;
     private long _lastRestoreCompletedTimestamp;
+    private long _externalDragId;
+    private long _externalDragWorkspaceGeneration;
+    private long _pendingDragDeactivationGeneration;
+    private long _pendingDragHotkeyHideGeneration;
     private ActiveHotkeyPress? _activeHotkeyPress;
     private ForegroundRestoreStatus _lastRestoreStatus = ForegroundRestoreStatus.InvalidTarget;
     private WorkspaceRestoreDiagnosticSnapshot _restoreDiagnostic = WorkspaceRestoreDiagnosticSnapshot.None;
@@ -78,6 +82,8 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         _hotkeyService.Faulted += OnHotkeyFaulted;
         _window.HideRequested += OnHideRequested;
         _window.ApplicationDeactivated += OnApplicationDeactivated;
+        _window.ExternalDragStarted += OnExternalDragStarted;
+        _window.ExternalDragEnded += OnExternalDragEnded;
         _presentationService.FenceCompleted += OnPresentationFenceCompleted;
     }
 
@@ -105,6 +111,75 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         ThrowIfDisposed();
         _window.PostNormal(() =>
             EnsureVisibleCore(foregroundTarget, requestedTimestamp, destination));
+    }
+
+    public Task<bool> HideForLauncherActionAsync(
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+        var completion = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var transactionClaim = 0;
+        var cancellationRegistration = cancellationToken.Register(
+            () =>
+            {
+                if (Interlocked.CompareExchange(ref transactionClaim, 2, 0) == 0)
+                {
+                    completion.TrySetCanceled(cancellationToken);
+                }
+            });
+        try
+        {
+            _window.PostNormal(() =>
+            {
+                // Claim before hide side effects; cancellation and the dispatcher cannot both win.
+                if (Interlocked.CompareExchange(ref transactionClaim, 1, 0) != 0)
+                {
+                    return;
+                }
+
+                if (_disposed || Volatile.Read(ref _exitRequested) != 0)
+                {
+                    completion.TrySetResult(false);
+                    return;
+                }
+
+                if (_stateMachine.State is not (WorkspaceState.Revealing or WorkspaceState.Visible))
+                {
+                    completion.TrySetResult(false);
+                    return;
+                }
+
+                Hide(WorkspaceHidePolicy.For(WorkspaceHideReason.LauncherAction));
+                completion.TrySetResult(_stateMachine.State is WorkspaceState.Hidden);
+            });
+        }
+        catch (Exception exception)
+        {
+            if (Interlocked.CompareExchange(ref transactionClaim, 2, 0) == 0)
+            {
+                completion.TrySetException(exception);
+            }
+        }
+
+        return AwaitLauncherHideCompletionAsync(
+            completion.Task,
+            cancellationRegistration);
+    }
+
+    private static async Task<bool> AwaitLauncherHideCompletionAsync(
+        Task<bool> completion,
+        CancellationTokenRegistration cancellationRegistration)
+    {
+        try
+        {
+            return await completion.ConfigureAwait(false);
+        }
+        finally
+        {
+            cancellationRegistration.Dispose();
+        }
     }
 
     public void RequestExit()
@@ -158,7 +233,10 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         _hotkeyService.Faulted -= OnHotkeyFaulted;
         _window.HideRequested -= OnHideRequested;
         _window.ApplicationDeactivated -= OnApplicationDeactivated;
+        _window.ExternalDragStarted -= OnExternalDragStarted;
+        _window.ExternalDragEnded -= OnExternalDragEnded;
         _presentationService.FenceCompleted -= OnPresentationFenceCompleted;
+        ClearExternalDragLease();
         TryClearDiagnostic();
     }
 
@@ -196,9 +274,68 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
             return;
         }
 
-        // Future M1 external OLE drag may need a scoped suppression policy here.
-        // Do not suppress ordinary foreground loss or create drag lifecycle state early.
+        if (OwnsExternalDragLease(generation))
+        {
+            _pendingDragDeactivationGeneration = generation;
+            return;
+        }
+
         _window.PostNormal(() => TryHideAfterApplicationDeactivation(generation));
+    }
+
+    private void OnExternalDragStarted(
+        object? sender,
+        WorkspaceExternalDragStartedEventArgs e)
+    {
+        if (_disposed ||
+            Volatile.Read(ref _exitRequested) != 0 ||
+            _stateMachine.State is not (WorkspaceState.Revealing or WorkspaceState.Visible) ||
+            _stateMachine.Current is not { Generation: var generation })
+        {
+            return;
+        }
+
+        // A new genuine DragEnter is also the cleanup boundary for a missing old terminal event.
+        ClearExternalDragLease();
+        _externalDragId = e.DragId;
+        _externalDragWorkspaceGeneration = generation;
+    }
+
+    private void OnExternalDragEnded(
+        object? sender,
+        WorkspaceExternalDragEndedEventArgs e)
+    {
+        if (_disposed || e.DragId != _externalDragId)
+        {
+            return;
+        }
+
+        // Claim the terminal event before activation/hide side effects; duplicates become stale.
+        var generation = _externalDragWorkspaceGeneration;
+        var hadDeferredDeactivation = _pendingDragDeactivationGeneration == generation;
+        var hadDeferredHotkeyHide = _pendingDragHotkeyHideGeneration == generation;
+        ClearExternalDragLease();
+
+        if (!_stateMachine.IsCurrentSession(generation) ||
+            _stateMachine.State is not (WorkspaceState.Revealing or WorkspaceState.Visible))
+        {
+            return;
+        }
+
+        if (hadDeferredHotkeyHide)
+        {
+            Hide(WorkspaceHidePolicy.For(WorkspaceHideReason.Hotkey));
+            return;
+        }
+
+        if (e.DropAccepted)
+        {
+            ReassertWorkspaceAfterAcceptedDrop(generation, hadDeferredDeactivation);
+        }
+        else if (hadDeferredDeactivation)
+        {
+            TryHideAfterApplicationDeactivation(generation);
+        }
     }
 
     private void HandleHotkeyPressEvent(HotkeyPressEvent pressEvent)
@@ -274,6 +411,12 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
                 released.HeldDuration,
                 active.WorkspaceWasOpenAtPress) is HotkeyReleaseAction.Hide)
         {
+            if (OwnsExternalDragLease(active.WorkspaceGeneration))
+            {
+                _pendingDragHotkeyHideGeneration = active.WorkspaceGeneration;
+                return;
+            }
+
             Hide(WorkspaceHidePolicy.For(WorkspaceHideReason.Hotkey));
         }
     }
@@ -393,6 +536,12 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
             return;
         }
 
+        if (OwnsExternalDragLease(generation))
+        {
+            _pendingDragDeactivationGeneration = generation;
+            return;
+        }
+
         ForegroundTarget foreground;
         try
         {
@@ -411,6 +560,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
 
     private void Show(HotkeyInvocation invocation)
     {
+        ClearExternalDragLease();
         var foregroundTarget = invocation.ForegroundTarget.ProcessId == Environment.ProcessId
             ? _foregroundWindowService.Capture()
             : invocation.ForegroundTarget;
@@ -466,6 +616,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         WorkspaceHidePolicy policy,
         ForegroundTarget currentForeground = default)
     {
+        ClearExternalDragLease();
         var session = _stateMachine.Current;
         var transition = _stateMachine.BeginHide(policy.Reason);
         if (!transition.Accepted || session is null)
@@ -694,6 +845,81 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         _lastRestoreStatus = result.Status;
         _lastRestoreCompletedTimestamp = 0;
         return result;
+    }
+
+    private bool OwnsExternalDragLease(long generation) =>
+        _externalDragId != 0 && _externalDragWorkspaceGeneration == generation;
+
+    private void ClearExternalDragLease()
+    {
+        _externalDragId = 0;
+        _externalDragWorkspaceGeneration = 0;
+        _pendingDragDeactivationGeneration = 0;
+        _pendingDragHotkeyHideGeneration = 0;
+    }
+
+    private void ReassertWorkspaceAfterAcceptedDrop(
+        long generation,
+        bool hadDeferredDeactivation)
+    {
+        var activationFailed = false;
+        try
+        {
+            _ = _windowPlacementService.RequestForeground(_windowHandle);
+            _ = _window.Activate();
+            _ = _window.FocusInputAnchor();
+        }
+        catch (Exception exception)
+        {
+            activationFailed = true;
+            _viewModel.RecordFault(exception);
+        }
+
+        try
+        {
+            _window.PostInput(() => VerifyWorkspaceAfterAcceptedDrop(
+                generation,
+                hadDeferredDeactivation || activationFailed));
+        }
+        catch (Exception exception)
+        {
+            _viewModel.RecordFault(exception);
+            if (hadDeferredDeactivation || activationFailed)
+            {
+                TryHideAfterApplicationDeactivation(generation);
+            }
+        }
+    }
+
+    private void VerifyWorkspaceAfterAcceptedDrop(
+        long generation,
+        bool hideIfUnconfirmed)
+    {
+        if (_disposed ||
+            !_stateMachine.IsCurrentSession(generation) ||
+            _stateMachine.State is not WorkspaceState.Visible)
+        {
+            return;
+        }
+
+        try
+        {
+            RefreshObservation(recordInViewModel: false);
+            if (_lastObservation.IsForeground && _window.HasInputAnchorFocus)
+            {
+                return;
+            }
+        }
+        catch (Exception exception)
+        {
+            _viewModel.RecordFault(exception);
+            hideIfUnconfirmed = true;
+        }
+
+        if (hideIfUnconfirmed)
+        {
+            TryHideAfterApplicationDeactivation(generation);
+        }
     }
 
     private sealed record ActiveHotkeyPress(

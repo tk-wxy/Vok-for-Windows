@@ -8,4 +8,5 @@ public enum WorkspaceHideReason
     ApplicationExit,
     ShowFailure,
     ForegroundLost,
+    LauncherAction,
 }

@@ -11,6 +11,7 @@ using Vok.Hosting;
 using Vok.Presentation;
 using Vok.Appearance;
 using Vok.Core.Appearance;
+using Vok.Core.Launcher;
 using Vok.Features.Settings;
 using Vok.Features.Launcher;
 using Vok.Core.Platform;
@@ -40,7 +41,8 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
             var viewModel = new MainWindowViewModel(
                 new SettingsViewModel(appearance, hotkeys));
             var launcherLayouts = CreateLauncherLayouts(620, 900);
-            var window = new MainWindow(viewModel, launcherLayouts)
+            using var launcherViewModel = CreateLauncherViewModel(itemCount: 40);
+            var window = new MainWindow(viewModel, launcherLayouts, launcherViewModel)
             {
                 Width = 1440,
                 Height = 900,
@@ -76,15 +78,14 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                 var launcher = Assert.IsType<LauncherView>(window.FindName("LauncherPanel"));
                 var launcherLayout = Assert.IsType<Grid>(launcher.Content);
                 AssertPanelUsesCompactFixedHeaderAndFlexibleBody(launcherLayout);
-                var launcherGrid = Assert.IsType<UniformGrid>(
-                    launcher.FindName("LauncherPlaceholderGrid"));
-                Assert.Equal(4, launcherGrid.Columns);
-                Assert.Equal(8, launcherGrid.Children.Count);
-                Assert.True(launcherGrid.IsHitTestVisible);
-                Assert.All(
-                    launcherGrid.Children.OfType<ContentControl>(),
-                    tile => Assert.Null(tile.ContextMenu));
-                AssertLauncherCardsFillFourColumnLayout(launcher, launcherGrid);
+                var launcherList = Assert.IsType<ListBox>(
+                    launcher.FindName("LauncherItemsList"));
+                Assert.Equal(10, launcherViewModel.Rows.Count);
+                Assert.Equal(40, launcherViewModel.Count);
+                AssertLauncherCardsFillFourColumnLayout(
+                    launcher,
+                    launcherList,
+                    launcherViewModel);
                 Assert.Equal(2, launcherLayouts.CalculationCount);
 
                 var stage = Assert.IsType<Border>(window.FindName("StageRegion"));
@@ -98,7 +99,7 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                 CaptureWindowIfRequested(window, "workbench-layout-light.png");
                 CaptureLauncherHoverIfRequested(
                     window,
-                    launcherGrid,
+                    launcherList,
                     "workbench-launcher-hover-light.png");
                 appearance.ChangeThemeAsync(AppThemeMode.Dark).GetAwaiter().GetResult();
                 window.UpdateLayout();
@@ -106,10 +107,10 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                 CaptureWindowIfRequested(window, "workbench-layout-dark.png");
                 CaptureLauncherHoverIfRequested(
                     window,
-                    launcherGrid,
+                    launcherList,
                     "workbench-launcher-hover-dark.png");
 
-                AssertLauncherScrollPreservesArbitraryOffset(launcher, launcherGrid);
+                AssertLauncherScrollPreservesArbitraryOffset(launcher, launcherList);
                 for (var iteration = 0; iteration < 10; iteration++)
                 {
                     window.Hide();
@@ -313,20 +314,28 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
 
     private static void AssertLauncherCardsFillFourColumnLayout(
         LauncherView launcher,
-        UniformGrid launcherGrid)
+        ListBox launcherList,
+        LauncherViewModel launcherViewModel)
     {
         var viewport = Assert.IsType<Grid>(launcher.FindName("LauncherItemsViewport"));
         var scrollViewer = Assert.IsType<ScrollViewer>(
-            launcher.FindName("LauncherScrollViewer"));
-        Assert.False(scrollViewer.CanContentScroll);
-        Assert.Equal(ScrollBarVisibility.Hidden, scrollViewer.VerticalScrollBarVisibility);
+            FindVisualDescendant<ScrollViewer>(launcherList));
+        Assert.True(scrollViewer.CanContentScroll);
+        Assert.Equal(ScrollBarVisibility.Auto, scrollViewer.VerticalScrollBarVisibility);
+        Assert.True(VirtualizingPanel.GetIsVirtualizing(launcherList));
+        Assert.Equal(
+            VirtualizationMode.Recycling,
+            VirtualizingPanel.GetVirtualizationMode(launcherList));
+        Assert.Equal(ScrollUnit.Pixel, VirtualizingPanel.GetScrollUnit(launcherList));
         Assert.Equal(
             viewport.ActualHeight,
             launcher.VisibleRowCount * launcher.CardUnitHeight,
             precision: 8);
 
-        var tiles = launcherGrid.Children.OfType<ContentControl>().ToArray();
-        Assert.Equal(8, tiles.Length);
+        var tiles = FindVisualDescendants<Button>(launcherList)
+            .Where(button => button.DataContext is LauncherItemViewModel)
+            .ToArray();
+        Assert.NotEmpty(tiles);
         Assert.All(
             tiles,
             tile =>
@@ -336,15 +345,17 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                 Assert.Equal(5, tile.Margin.Right);
                 Assert.Equal(3, tile.Margin.Top);
                 Assert.Equal(3, tile.Margin.Bottom);
-                Assert.False(tile.Focusable);
+                Assert.True(tile.Focusable);
                 Assert.NotNull(tile.ToolTip);
+                Assert.NotNull(tile.ContextMenu);
+                Assert.Equal(4, tile.ContextMenu.Items.Count);
             });
 
         var first = tiles[0];
         Assert.Equal(
-            launcherGrid.ActualWidth / 4,
+            launcherList.ActualWidth / 4,
             first.ActualWidth + first.Margin.Left + first.Margin.Right,
-            precision: 3);
+            precision: 8);
         _ = first.ApplyTemplate();
         var surface = Assert.IsType<Border>(first.Template.FindName("CardSurface", first));
         var hover = Assert.IsType<Border>(first.Template.FindName("HoverOverlay", first));
@@ -361,30 +372,42 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
         Assert.NotEmpty(hoverTrigger.ExitActions);
 
         var content = Assert.IsType<Grid>(first.Content);
-        var icon = Assert.IsType<Border>(content.Children[0]);
+        var iconHost = Assert.IsType<Grid>(content.Children[0]);
+        var fallback = Assert.IsType<Border>(iconHost.Children[0]);
         var name = Assert.IsType<TextBlock>(content.Children[1]);
-        Assert.Equal(46, icon.Width);
-        Assert.Equal(46, icon.Height);
-        Assert.Equal("文件资源管理器", name.Text);
+        Assert.Equal(46, fallback.Width);
+        Assert.Equal(46, fallback.Height);
+        Assert.Equal(launcherViewModel.Items[0].DisplayName, name.Text);
         Assert.Equal(27, name.MaxHeight);
         Assert.Equal(TextWrapping.Wrap, name.TextWrapping);
         Assert.Equal(TextTrimming.CharacterEllipsis, name.TextTrimming);
+
+        var contextMenu = Assert.IsType<ContextMenu>(first.ContextMenu);
+        contextMenu.PlacementTarget = first;
+        contextMenu.IsOpen = true;
+        try
+        {
+            first.Dispatcher.Invoke(DispatcherPriority.Render, static () => { });
+            var open = Assert.IsType<MenuItem>(contextMenu.Items[0]);
+            var reveal = Assert.IsType<MenuItem>(contextMenu.Items[1]);
+            var remove = Assert.IsType<MenuItem>(contextMenu.Items[3]);
+            Assert.Same(launcherViewModel.OpenCommand, open.Command);
+            Assert.Same(launcherViewModel.RevealCommand, reveal.Command);
+            Assert.Same(launcherViewModel.RemoveCommand, remove.Command);
+            Assert.Same(first.DataContext, open.CommandParameter);
+        }
+        finally
+        {
+            contextMenu.IsOpen = false;
+        }
     }
 
     private static void AssertLauncherScrollPreservesArbitraryOffset(
         LauncherView launcher,
-        UniformGrid launcherGrid)
+        ListBox launcherList)
     {
         var scrollViewer = Assert.IsType<ScrollViewer>(
-            launcher.FindName("LauncherScrollViewer"));
-        while (launcherGrid.Children.Count < 40)
-        {
-            launcherGrid.Children.Add(new Border
-            {
-                Height = launcher.CardSurfaceHeight,
-                Margin = new Thickness(5, 3, 5, 3),
-            });
-        }
+            FindVisualDescendant<ScrollViewer>(launcherList));
 
         launcher.UpdateLayout();
         Assert.True(scrollViewer.ScrollableHeight > 37.5);
@@ -403,6 +426,15 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
             96,
             96)));
         return cache;
+    }
+
+    private static LauncherViewModel CreateLauncherViewModel(int itemCount)
+    {
+        var viewModel = new LauncherViewModel(
+            new StaticLauncherRepository(itemCount),
+            new NoIconLauncherShellService());
+        viewModel.InitializeAsync().GetAwaiter().GetResult();
+        return viewModel;
     }
 
     private static void AssertPanelUsesCompactFixedHeaderAndFlexibleBody(Grid layout) =>
@@ -459,12 +491,14 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
 
     private static void CaptureLauncherHoverIfRequested(
         Window window,
-        UniformGrid launcherGrid,
+        ListBox launcherList,
         string fileName)
     {
+        var tile = FindVisualDescendants<Button>(launcherList)
+            .FirstOrDefault(button => button.DataContext is LauncherItemViewModel);
         if (string.IsNullOrWhiteSpace(
                 Environment.GetEnvironmentVariable("VOK_CAPTURE_DIR")) ||
-            launcherGrid.Children[0] is not ContentControl tile)
+            tile is null)
         {
             return;
         }
@@ -486,6 +520,103 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
             hover.ClearValue(UIElement.OpacityProperty);
             scale.ClearValue(ScaleTransform.ScaleXProperty);
             scale.ClearValue(ScaleTransform.ScaleYProperty);
+        }
+    }
+
+    private static T? FindVisualDescendant<T>(DependencyObject root)
+        where T : DependencyObject => FindVisualDescendants<T>(root).FirstOrDefault();
+
+    private static IEnumerable<T> FindVisualDescendants<T>(DependencyObject root)
+        where T : DependencyObject
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            if (child is T match)
+            {
+                yield return match;
+            }
+
+            foreach (var descendant in FindVisualDescendants<T>(child))
+            {
+                yield return descendant;
+            }
+        }
+    }
+
+    private sealed class StaticLauncherRepository : ILauncherRepository
+    {
+        private readonly IReadOnlyList<LauncherItem> _items;
+
+        public StaticLauncherRepository(int itemCount)
+        {
+            var now = DateTimeOffset.UtcNow;
+            _items = Enumerable.Range(0, itemCount)
+                .Select(index => new LauncherItem(
+                    Guid.NewGuid(),
+                    LauncherItemKind.File,
+                    $"C:\\Apps\\App-{index + 1}.exe",
+                    $"0:C:\\Apps\\App-{index + 1}.exe",
+                    $"应用 {index + 1}",
+                    null,
+                    index,
+                    1,
+                    now,
+                    now))
+                .ToArray();
+        }
+
+        public Task<LauncherPage> LoadPageAsync(
+            long? afterSortOrder,
+            int pageSize,
+            CancellationToken cancellationToken = default)
+        {
+            var page = _items
+                .Where(item => afterSortOrder is null || item.SortOrder > afterSortOrder)
+                .Take(pageSize)
+                .ToArray();
+            long? next = page.Length == pageSize ? page[^1].SortOrder : null;
+            return Task.FromResult(new LauncherPage(page, next, _items.Count));
+        }
+
+        public Task<LauncherAddResult> AddAsync(
+            IReadOnlyList<LauncherTargetDescriptor> targets,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new LauncherAddResult([], []));
+
+        public Task<bool> RemoveAsync(
+            Guid itemId,
+            CancellationToken cancellationToken = default) => Task.FromResult(false);
+
+        public Task<bool> MoveToSlotAsync(
+            Guid itemId,
+            int slot,
+            CancellationToken cancellationToken = default) => Task.FromResult(false);
+    }
+
+    private sealed class NoIconLauncherShellService : ILauncherShellService
+    {
+        public Task<IReadOnlyList<LauncherTargetResolution>> ResolveAsync(
+            IReadOnlyList<string> inputs,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<LauncherTargetResolution>>([]);
+
+        public Task<LauncherIconData?> GetIconAsync(
+            LauncherItem item,
+            int pixelSize,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<LauncherIconData?>(null);
+
+        public Task OpenAsync(
+            LauncherItem item,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task RevealInExplorerAsync(
+            LauncherItem item,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public void Dispose()
+        {
         }
     }
 

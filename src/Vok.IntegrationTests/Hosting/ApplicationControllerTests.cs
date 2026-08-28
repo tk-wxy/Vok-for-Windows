@@ -176,6 +176,9 @@ public sealed class ApplicationControllerTests
             return Task.CompletedTask;
         }
 
+        public Task<bool> HideForLauncherActionAsync(
+            CancellationToken cancellationToken = default) => Task.FromResult(true);
+
         public void EnsureVisible(
             ForegroundTarget foregroundTarget,
             long requestedTimestamp,

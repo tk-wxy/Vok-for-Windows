@@ -5,20 +5,20 @@
              xmlns:launcher="clr-namespace:Vok.Features.Launcher"
              UseLayoutRounding="False"
              SnapsToDevicePixels="True"
-             automation:AutomationProperties.Name="启动台静态区域">
+             automation:AutomationProperties.Name="启动台">
   <UserControl.Resources>
-    <Style x:Key="LauncherTileStyle" TargetType="ContentControl">
+    <Style x:Key="LauncherTileStyle" TargetType="Button">
       <Setter Property="Height"
               Value="{Binding CardSurfaceHeight, RelativeSource={RelativeSource AncestorType={x:Type launcher:LauncherView}}}" />
       <Setter Property="Margin" Value="5,3" />
       <Setter Property="Padding" Value="0" />
       <Setter Property="Background" Value="Transparent" />
-      <Setter Property="Focusable" Value="False" />
+      <Setter Property="BorderThickness" Value="0" />
       <Setter Property="HorizontalContentAlignment" Value="Stretch" />
       <Setter Property="VerticalContentAlignment" Value="Stretch" />
       <Setter Property="Template">
         <Setter.Value>
-          <ControlTemplate TargetType="ContentControl">
+          <ControlTemplate TargetType="Button">
             <Border x:Name="CardSurface"
                     Background="Transparent"
                     BorderBrush="Transparent"
@@ -49,24 +49,13 @@
                     <Storyboard>
                       <DoubleAnimation Storyboard.TargetName="HoverOverlay"
                                        Storyboard.TargetProperty="Opacity"
-                                       To="1"
-                                       Duration="0:0:0.12" />
+                                       To="1" Duration="0:0:0.12" />
                       <DoubleAnimation Storyboard.TargetName="CardScale"
                                        Storyboard.TargetProperty="ScaleX"
-                                       To="1.025"
-                                       Duration="0:0:0.14">
-                        <DoubleAnimation.EasingFunction>
-                          <CubicEase EasingMode="EaseOut" />
-                        </DoubleAnimation.EasingFunction>
-                      </DoubleAnimation>
+                                       To="1.025" Duration="0:0:0.14" />
                       <DoubleAnimation Storyboard.TargetName="CardScale"
                                        Storyboard.TargetProperty="ScaleY"
-                                       To="1.025"
-                                       Duration="0:0:0.14">
-                        <DoubleAnimation.EasingFunction>
-                          <CubicEase EasingMode="EaseOut" />
-                        </DoubleAnimation.EasingFunction>
-                      </DoubleAnimation>
+                                       To="1.025" Duration="0:0:0.14" />
                     </Storyboard>
                   </BeginStoryboard>
                 </Trigger.EnterActions>
@@ -75,27 +64,19 @@
                     <Storyboard>
                       <DoubleAnimation Storyboard.TargetName="HoverOverlay"
                                        Storyboard.TargetProperty="Opacity"
-                                       To="0"
-                                       Duration="0:0:0.16" />
+                                       To="0" Duration="0:0:0.16" />
                       <DoubleAnimation Storyboard.TargetName="CardScale"
                                        Storyboard.TargetProperty="ScaleX"
-                                       To="1"
-                                       Duration="0:0:0.16">
-                        <DoubleAnimation.EasingFunction>
-                          <CubicEase EasingMode="EaseOut" />
-                        </DoubleAnimation.EasingFunction>
-                      </DoubleAnimation>
+                                       To="1" Duration="0:0:0.16" />
                       <DoubleAnimation Storyboard.TargetName="CardScale"
                                        Storyboard.TargetProperty="ScaleY"
-                                       To="1"
-                                       Duration="0:0:0.16">
-                        <DoubleAnimation.EasingFunction>
-                          <CubicEase EasingMode="EaseOut" />
-                        </DoubleAnimation.EasingFunction>
-                      </DoubleAnimation>
+                                       To="1" Duration="0:0:0.16" />
                     </Storyboard>
                   </BeginStoryboard>
                 </Trigger.ExitActions>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="CardSurface" Property="Opacity" Value="0.55" />
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -127,6 +108,10 @@
             BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
             BorderThickness="0,0,0,1">
       <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
           <TextBlock Text="启动台" FontSize="12" FontWeight="SemiBold" />
           <Border Margin="8,0,0,0"
@@ -134,165 +119,189 @@
                   Padding="6,2"
                   Background="{DynamicResource LayerFillColorDefaultBrush}"
                   CornerRadius="9">
-            <TextBlock Text="8"
+            <TextBlock Text="{Binding Count}"
                        FontSize="10"
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                        HorizontalAlignment="Center" />
           </Border>
         </StackPanel>
+        <TextBlock Grid.Column="1"
+                   Margin="12,0,0,0"
+                   Text="{Binding StatusText}"
+                   FontSize="9.5"
+                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                   TextTrimming="CharacterEllipsis"
+                   HorizontalAlignment="Stretch"
+                   VerticalAlignment="Center" />
       </Grid>
     </Border>
 
     <Grid x:Name="LauncherItemsViewport" Grid.Row="1" Margin="8,6,8,8">
-      <ScrollViewer x:Name="LauncherScrollViewer"
-                    HorizontalScrollBarVisibility="Disabled"
-                    VerticalScrollBarVisibility="Hidden"
-                    CanContentScroll="False"
-                    Focusable="False"
-                    PanningMode="VerticalOnly">
-        <UniformGrid x:Name="LauncherPlaceholderGrid"
-                     Columns="4"
-                     HorizontalAlignment="Stretch"
-                     VerticalAlignment="Top"
-                     ClipToBounds="False"
-                     automation:AutomationProperties.Name="启动台占位应用">
-          <ContentControl Style="{StaticResource LauncherTileStyle}"
-                          ToolTip="文件资源管理器"
-                          automation:AutomationProperties.Name="文件资源管理器">
-            <Grid>
-              <Grid.RowDefinitions>
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-              </Grid.RowDefinitions>
-              <Border Width="46" Height="46" Background="#2563EB" CornerRadius="10"
-                      HorizontalAlignment="Center" VerticalAlignment="Center">
-                <TextBlock Text="&#xE8B7;" FontFamily="Segoe Fluent Icons" FontSize="23"
-                           Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
-              </Border>
-              <TextBlock Grid.Row="1" Text="文件资源管理器" Style="{StaticResource LauncherItemNameStyle}" />
-            </Grid>
-          </ContentControl>
+      <ListBox x:Name="LauncherItemsList"
+               ItemsSource="{Binding Rows}"
+               Background="Transparent"
+               BorderThickness="0"
+               HorizontalContentAlignment="Stretch"
+               ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+               ScrollViewer.VerticalScrollBarVisibility="Auto"
+               ScrollViewer.CanContentScroll="True"
+               VirtualizingPanel.IsVirtualizing="True"
+               VirtualizingPanel.VirtualizationMode="Recycling"
+               VirtualizingPanel.ScrollUnit="Pixel"
+               Focusable="False"
+               automation:AutomationProperties.Name="启动项">
+        <ListBox.ItemsPanel>
+          <ItemsPanelTemplate>
+            <VirtualizingStackPanel />
+          </ItemsPanelTemplate>
+        </ListBox.ItemsPanel>
+        <ListBox.ItemContainerStyle>
+          <Style TargetType="ListBoxItem">
+            <Setter Property="Height"
+                    Value="{Binding CardUnitHeight, RelativeSource={RelativeSource AncestorType={x:Type launcher:LauncherView}}}" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Template">
+              <Setter.Value>
+                <ControlTemplate TargetType="ListBoxItem">
+                  <ContentPresenter HorizontalAlignment="Stretch" />
+                </ControlTemplate>
+              </Setter.Value>
+            </Setter>
+          </Style>
+        </ListBox.ItemContainerStyle>
+        <ListBox.ItemTemplate>
+          <DataTemplate DataType="{x:Type launcher:LauncherRowViewModel}">
+            <ItemsControl ItemsSource="{Binding Items}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <UniformGrid Columns="4" />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate DataType="{x:Type launcher:LauncherItemViewModel}">
+                  <Button Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType={x:Type launcher:LauncherView}}}"
+                          Command="{Binding DataContext.OpenCommand, RelativeSource={RelativeSource AncestorType={x:Type launcher:LauncherView}}}"
+                          CommandParameter="{Binding}"
+                          ToolTip="{Binding TargetValue}"
+                          automation:AutomationProperties.Name="{Binding DisplayName}">
+                    <Button.Style>
+                      <Style TargetType="Button" BasedOn="{StaticResource LauncherTileStyle}">
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                            <Setter Property="IsEnabled" Value="False" />
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </Button.Style>
+                    <Button.ContextMenu>
+                      <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                        <MenuItem Header="打开"
+                                  Command="{Binding PlacementTarget.Tag.OpenCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                                  CommandParameter="{Binding}" />
+                        <MenuItem Header="打开所在目录"
+                                  IsEnabled="{Binding CanRevealInExplorer}"
+                                  Command="{Binding PlacementTarget.Tag.RevealCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                                  CommandParameter="{Binding}" />
+                        <Separator />
+                        <MenuItem Header="从启动台移除"
+                                  Command="{Binding PlacementTarget.Tag.RemoveCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                                  CommandParameter="{Binding}" />
+                      </ContextMenu>
+                    </Button.ContextMenu>
+                    <Grid>
+                      <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                      </Grid.RowDefinitions>
+                      <Grid Width="50" Height="50"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center">
+                        <Border x:Name="IconFallback"
+                                Width="46" Height="46"
+                                Background="{DynamicResource AccentFillColorSecondaryBrush}"
+                                CornerRadius="10"
+                                Visibility="Collapsed">
+                          <TextBlock Text="&#xE8A5;"
+                                     FontFamily="Segoe Fluent Icons"
+                                     FontSize="22"
+                                     Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}"
+                                     HorizontalAlignment="Center"
+                                     VerticalAlignment="Center" />
+                        </Border>
+                        <Image x:Name="OriginalIcon"
+                               Width="48" Height="48"
+                               Source="{Binding Icon}"
+                               Stretch="Uniform"
+                               RenderOptions.BitmapScalingMode="HighQuality" />
+                      </Grid>
+                      <TextBlock Grid.Row="1"
+                                 Text="{Binding DisplayName}"
+                                 Style="{StaticResource LauncherItemNameStyle}" />
+                    </Grid>
+                  </Button>
+                  <DataTemplate.Triggers>
+                    <DataTrigger Binding="{Binding Icon}" Value="{x:Null}">
+                      <Setter TargetName="IconFallback" Property="Visibility" Value="Visible" />
+                      <Setter TargetName="OriginalIcon" Property="Visibility" Value="Collapsed" />
+                    </DataTrigger>
+                  </DataTemplate.Triggers>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
 
-          <ContentControl Style="{StaticResource LauncherTileStyle}"
-                          ToolTip="记事本"
-                          automation:AutomationProperties.Name="记事本">
-            <Grid>
-              <Grid.RowDefinitions>
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-              </Grid.RowDefinitions>
-              <Border Width="46" Height="46" Background="#0F766E" CornerRadius="10"
-                      HorizontalAlignment="Center" VerticalAlignment="Center">
-                <TextBlock Text="&#xE70F;" FontFamily="Segoe Fluent Icons" FontSize="23"
-                           Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
-              </Border>
-              <TextBlock Grid.Row="1" Text="记事本" Style="{StaticResource LauncherItemNameStyle}" />
-            </Grid>
-          </ContentControl>
-
-          <ContentControl Style="{StaticResource LauncherTileStyle}"
-                          ToolTip="计算器"
-                          automation:AutomationProperties.Name="计算器">
-            <Grid>
-              <Grid.RowDefinitions>
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-              </Grid.RowDefinitions>
-              <Border Width="46" Height="46" Background="#7C3AED" CornerRadius="10"
-                      HorizontalAlignment="Center" VerticalAlignment="Center">
-                <TextBlock Text="&#xE8EF;" FontFamily="Segoe Fluent Icons" FontSize="23"
-                           Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
-              </Border>
-              <TextBlock Grid.Row="1" Text="计算器" Style="{StaticResource LauncherItemNameStyle}" />
-            </Grid>
-          </ContentControl>
-
-          <ContentControl Style="{StaticResource LauncherTileStyle}"
-                          ToolTip="Windows 设置"
-                          automation:AutomationProperties.Name="Windows 设置">
-            <Grid>
-              <Grid.RowDefinitions>
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-              </Grid.RowDefinitions>
-              <Border Width="46" Height="46" Background="#475569" CornerRadius="10"
-                      HorizontalAlignment="Center" VerticalAlignment="Center">
-                <TextBlock Text="&#xE713;" FontFamily="Segoe Fluent Icons" FontSize="23"
-                           Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
-              </Border>
-              <TextBlock Grid.Row="1" Text="Windows 设置" Style="{StaticResource LauncherItemNameStyle}" />
-            </Grid>
-          </ContentControl>
-
-          <ContentControl Style="{StaticResource LauncherTileStyle}"
-                          ToolTip="终端"
-                          automation:AutomationProperties.Name="终端">
-            <Grid>
-              <Grid.RowDefinitions>
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-              </Grid.RowDefinitions>
-              <Border Width="46" Height="46" Background="#111827" CornerRadius="10"
-                      HorizontalAlignment="Center" VerticalAlignment="Center">
-                <TextBlock Text="&#xE756;" FontFamily="Segoe Fluent Icons" FontSize="23"
-                           Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
-              </Border>
-              <TextBlock Grid.Row="1" Text="终端" Style="{StaticResource LauncherItemNameStyle}" />
-            </Grid>
-          </ContentControl>
-
-          <ContentControl Style="{StaticResource LauncherTileStyle}"
-                          ToolTip="画图"
-                          automation:AutomationProperties.Name="画图">
-            <Grid>
-              <Grid.RowDefinitions>
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-              </Grid.RowDefinitions>
-              <Border Width="46" Height="46" Background="#DB2777" CornerRadius="10"
-                      HorizontalAlignment="Center" VerticalAlignment="Center">
-                <TextBlock Text="&#xE790;" FontFamily="Segoe Fluent Icons" FontSize="23"
-                           Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
-              </Border>
-              <TextBlock Grid.Row="1" Text="画图" Style="{StaticResource LauncherItemNameStyle}" />
-            </Grid>
-          </ContentControl>
-
-          <ContentControl Style="{StaticResource LauncherTileStyle}"
-                          ToolTip="任务管理器"
-                          automation:AutomationProperties.Name="任务管理器">
-            <Grid>
-              <Grid.RowDefinitions>
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-              </Grid.RowDefinitions>
-              <Border Width="46" Height="46" Background="#EA580C" CornerRadius="10"
-                      HorizontalAlignment="Center" VerticalAlignment="Center">
-                <TextBlock Text="&#xE9D9;" FontFamily="Segoe Fluent Icons" FontSize="23"
-                           Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
-              </Border>
-              <TextBlock Grid.Row="1" Text="任务管理器" Style="{StaticResource LauncherItemNameStyle}" />
-            </Grid>
-          </ContentControl>
-
-          <ContentControl Style="{StaticResource LauncherTileStyle}"
-                          ToolTip="控制面板"
-                          automation:AutomationProperties.Name="控制面板">
-            <Grid>
-              <Grid.RowDefinitions>
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-              </Grid.RowDefinitions>
-              <Border Width="46" Height="46" Background="#0891B2" CornerRadius="10"
-                      HorizontalAlignment="Center" VerticalAlignment="Center">
-                <TextBlock Text="&#xE770;" FontFamily="Segoe Fluent Icons" FontSize="23"
-                           Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
-              </Border>
-              <TextBlock Grid.Row="1" Text="控制面板" Style="{StaticResource LauncherItemNameStyle}" />
-            </Grid>
-          </ContentControl>
-        </UniformGrid>
-      </ScrollViewer>
+      <TextBlock Text="把文件、应用快捷方式或文件夹拖到这里"
+                 FontSize="11"
+                 Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                 TextAlignment="Center"
+                 TextWrapping="Wrap"
+                 HorizontalAlignment="Center"
+                 VerticalAlignment="Center"
+                 IsHitTestVisible="False">
+        <TextBlock.Style>
+          <Style TargetType="TextBlock">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+              <DataTrigger Binding="{Binding IsEmpty}" Value="True">
+                <Setter Property="Visibility" Value="Visible" />
+              </DataTrigger>
+            </Style.Triggers>
+          </Style>
+        </TextBlock.Style>
+      </TextBlock>
     </Grid>
+
+    <Border x:Name="DropOverlay"
+            Grid.RowSpan="2"
+            Margin="6"
+            Background="{DynamicResource LayerFillColorDefaultBrush}"
+            BorderBrush="{DynamicResource AccentFillColorDefaultBrush}"
+            BorderThickness="2"
+            CornerRadius="12"
+            Opacity="0.96"
+            Panel.ZIndex="20"
+            IsHitTestVisible="False"
+            Visibility="Collapsed">
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+        <TextBlock Text="&#xE74D;"
+                   FontFamily="Segoe Fluent Icons"
+                   FontSize="28"
+                   Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}"
+                   HorizontalAlignment="Center" />
+        <TextBlock x:Name="DropOverlayText"
+                   Margin="0,10,0,0"
+                   Text="松手添加到启动台"
+                   FontSize="12"
+                   FontWeight="SemiBold"
+                   HorizontalAlignment="Center" />
+      </StackPanel>
+    </Border>
   </Grid>
 </UserControl>

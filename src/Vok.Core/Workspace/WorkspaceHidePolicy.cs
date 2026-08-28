@@ -27,6 +27,7 @@ public readonly record struct WorkspaceHidePolicy
         WorkspaceHideReason.Hotkey or
         WorkspaceHideReason.Escape or
         WorkspaceHideReason.UserAction or
+        WorkspaceHideReason.LauncherAction or
         WorkspaceHideReason.ApplicationExit or
         WorkspaceHideReason.ShowFailure =>
             new(reason, WorkspaceTargetRestoreMode.RestoreCapturedTarget),

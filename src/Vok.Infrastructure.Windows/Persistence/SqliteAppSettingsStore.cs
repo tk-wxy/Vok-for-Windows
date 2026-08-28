@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO;
 using Microsoft.Data.Sqlite;
 using Vok.Core.Appearance;
 using Vok.Core.Platform;
@@ -10,10 +11,24 @@ public sealed class SqliteAppSettingsStore : IAppSettingsStore, IDisposable
     private const string ThemeModeKey = "appearance.theme-mode";
     private const string HotkeyGestureKey = "input.global-hotkey";
     private readonly SqliteStorageExecutor _executor;
+    private readonly bool _ownsExecutor;
 
     public SqliteAppSettingsStore(string databasePath)
+        : this(new SqliteStorageExecutor(databasePath), ownsExecutor: true)
     {
-        _executor = new SqliteStorageExecutor(databasePath);
+    }
+
+    public SqliteAppSettingsStore(SqliteStorageExecutor executor)
+        : this(executor, ownsExecutor: false)
+    {
+    }
+
+    private SqliteAppSettingsStore(
+        SqliteStorageExecutor executor,
+        bool ownsExecutor)
+    {
+        _executor = executor ?? throw new ArgumentNullException(nameof(executor));
+        _ownsExecutor = ownsExecutor;
     }
 
     public static SqliteAppSettingsStore CreateDefault()
@@ -70,7 +85,13 @@ public sealed class SqliteAppSettingsStore : IAppSettingsStore, IDisposable
             cancellationToken);
     }
 
-    public void Dispose() => _executor.Dispose();
+    public void Dispose()
+    {
+        if (_ownsExecutor)
+        {
+            _executor.Dispose();
+        }
+    }
 
     private static AppSettings Load(SqliteConnection connection)
     {

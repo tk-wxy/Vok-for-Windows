@@ -10,6 +10,10 @@ public interface IWorkspaceWindow
 
     event EventHandler? InputAnchorFocused;
 
+    event EventHandler<WorkspaceExternalDragStartedEventArgs>? ExternalDragStarted;
+
+    event EventHandler<WorkspaceExternalDragEndedEventArgs>? ExternalDragEnded;
+
     bool IsVisible { get; }
 
     bool HasInputAnchorFocus { get; }
