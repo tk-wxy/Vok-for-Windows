@@ -10,7 +10,7 @@ namespace Vok.IntegrationTests.Persistence;
 public sealed class SqliteClipboardHistoryRepositoryTests
 {
     [Fact]
-    public async Task SchemaTwoUpgradesToThreeWithoutLosingLauncherRows()
+    public async Task SchemaTwoUpgradesToFourWithoutLosingLauncherRows()
     {
         var directory = CreateTestDirectory();
         var databasePath = Path.Combine(directory, "upgrade.db");
@@ -29,7 +29,7 @@ public sealed class SqliteClipboardHistoryRepositoryTests
             }
 
             using var connection = OpenDatabase(databasePath);
-            Assert.Equal(3L, ExecuteInt64(connection, "PRAGMA user_version;"));
+            Assert.Equal(4L, ExecuteInt64(connection, "PRAGMA user_version;"));
             Assert.Equal(
                 "keep-launcher",
                 ExecuteString(
@@ -37,6 +37,232 @@ public sealed class SqliteClipboardHistoryRepositoryTests
                     "SELECT resolved_name FROM launcher_items WHERE id = '00000000-0000-0000-0000-000000000001';"));
             Assert.Equal(1L, TableExists(connection, "clipboard_entries"));
             Assert.Equal(1L, TableExists(connection, "clipboard_representations"));
+            Assert.Equal(1L, TableExists(connection, "clipboard_files"));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task SchemaThreeMigratesTransactionallyAndPreservesTextReplay()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "schema3.db");
+        try
+        {
+            CreateSchemaThreeDatabase(databasePath);
+
+            using (var repository = new SqliteClipboardHistoryRepository(databasePath))
+            {
+                var page = await repository.LoadPageAsync(
+                    null,
+                    32,
+                    TestContext.Current.CancellationToken);
+                var entry = Assert.Single(page.Items);
+                Assert.Null(entry.FileIntent);
+                Assert.Equal(0, entry.ItemCount);
+                var replay = await repository.GetReplayPayloadAsync(
+                    entry.Id,
+                    TestContext.Current.CancellationToken);
+                Assert.NotNull(replay);
+                Assert.Equal("preserved", replay.PlainText);
+            }
+
+            using var connection = OpenDatabase(databasePath);
+            Assert.Equal(4L, ExecuteInt64(connection, "PRAGMA user_version;"));
+            Assert.Equal(1L, TableExists(connection, "clipboard_files"));
+            Assert.Equal(
+                0L,
+                ExecuteInt64(connection, "SELECT COUNT(*) FROM clipboard_files;"));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task SchemaThreeWithBrokenKeysFailsAndRollsBackMigration()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "broken-schema3.db");
+        try
+        {
+            CreateSchemaThreeDatabase(databasePath);
+            using (var connection = OpenDatabase(databasePath))
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    PRAGMA foreign_keys = OFF;
+                    ALTER TABLE clipboard_representations
+                    RENAME TO clipboard_representations_valid;
+                    CREATE TABLE clipboard_representations (
+                        entry_id TEXT NOT NULL,
+                        representation_kind INTEGER NOT NULL,
+                        fidelity_rank INTEGER NOT NULL,
+                        inline_text TEXT NOT NULL,
+                        byte_length INTEGER NOT NULL,
+                        PRIMARY KEY (entry_id, representation_kind)
+                    );
+                    INSERT INTO clipboard_representations
+                    SELECT * FROM clipboard_representations_valid;
+                    DROP TABLE clipboard_representations_valid;
+                    DROP INDEX ux_clipboard_entries_semantic;
+                    CREATE UNIQUE INDEX ux_clipboard_entries_semantic
+                    ON clipboard_entries(semantic_hash);
+                    """;
+                command.ExecuteNonQuery();
+            }
+
+            using (var repository = new SqliteClipboardHistoryRepository(databasePath))
+            {
+                var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+                    () => repository.LoadPageAsync(
+                        null,
+                        32,
+                        TestContext.Current.CancellationToken));
+                Assert.Contains("foreign keys or indexes", exception.Message);
+            }
+
+            using var reopened = OpenDatabase(databasePath);
+            Assert.Equal(3L, ExecuteInt64(reopened, "PRAGMA user_version;"));
+            Assert.Equal(0L, TableExists(reopened, "clipboard_files"));
+            Assert.Equal(
+                0L,
+                ExecuteInt64(
+                    reopened,
+                    "SELECT COUNT(*) FROM pragma_table_info('clipboard_entries') WHERE name IN ('file_intent', 'item_count');"));
+            Assert.Equal(
+                "preserved",
+                ExecuteString(
+                    reopened,
+                    "SELECT inline_text FROM clipboard_representations LIMIT 1;"));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task FileListsPersistDeduplicateByIntentAndNeverMutateSourceFiles()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "files.db");
+        var sourcePath = Path.Combine(directory, "source.txt");
+        try
+        {
+            File.WriteAllText(sourcePath, "source-content");
+            var copyContent = FileList(
+                ClipboardFileTransferIntent.Copy,
+                sourcePath);
+            var moveContent = FileList(
+                ClipboardFileTransferIntent.Move,
+                sourcePath);
+            Guid copyId;
+            Guid moveId;
+            using (var repository = new SqliteClipboardHistoryRepository(databasePath))
+            {
+                var copy = await repository.UpsertFileListAsync(
+                    copyContent,
+                    DateTimeOffset.UnixEpoch,
+                    TestContext.Current.CancellationToken);
+                var repeated = await repository.UpsertFileListAsync(
+                    copyContent,
+                    DateTimeOffset.UnixEpoch.AddMinutes(1),
+                    TestContext.Current.CancellationToken);
+                var move = await repository.UpsertFileListAsync(
+                    moveContent,
+                    DateTimeOffset.UnixEpoch.AddMinutes(2),
+                    TestContext.Current.CancellationToken);
+
+                Assert.Equal(copy.Id, repeated.Id);
+                Assert.Equal(2, repeated.CaptureCount);
+                Assert.NotEqual(copy.Id, move.Id);
+                Assert.Equal(ClipboardFileTransferIntent.Move, move.FileIntent);
+                Assert.Equal(1, move.ItemCount);
+                copyId = copy.Id;
+                moveId = move.Id;
+            }
+
+            using (var reopened = new SqliteClipboardHistoryRepository(databasePath))
+            {
+                var copyReplay = await reopened.GetReplayPayloadAsync(
+                    copyId,
+                    TestContext.Current.CancellationToken);
+                Assert.NotNull(copyReplay);
+                Assert.Equal(ClipboardContentKind.FileList, copyReplay.Kind);
+                Assert.Equal(ClipboardFileTransferIntent.Copy, copyReplay.FileIntent);
+                Assert.Equal(sourcePath, Assert.Single(copyReplay.FileReferences).CanonicalPath);
+
+                Assert.True(await reopened.RemoveAsync(
+                    copyId,
+                    TestContext.Current.CancellationToken));
+                Assert.True(File.Exists(sourcePath));
+                Assert.Equal("source-content", File.ReadAllText(sourcePath));
+
+                Assert.True(await reopened.RemoveAsync(
+                    moveId,
+                    TestContext.Current.CancellationToken));
+                Assert.True(File.Exists(sourcePath));
+            }
+
+            using var connection = OpenDatabase(databasePath);
+            Assert.Equal(0L, ExecuteInt64(connection, "SELECT COUNT(*) FROM clipboard_files;"));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task CorruptedRelativeFileReplayIsRejectedAsAWhole()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "corrupt-file.db");
+        try
+        {
+            Guid id;
+            using (var repository = new SqliteClipboardHistoryRepository(databasePath))
+            {
+                id = (await repository.UpsertFileListAsync(
+                    FileList(
+                        ClipboardFileTransferIntent.Copy,
+                        Path.Combine(directory, "valid.txt")),
+                    DateTimeOffset.UtcNow,
+                    TestContext.Current.CancellationToken)).Id;
+            }
+
+            const string relativePath = "relative.txt";
+            var corruptHash = ClipboardFileSemanticIdentity.Compute(
+                ClipboardFileTransferIntent.Copy,
+                [new ClipboardFileReference(0, relativePath, relativePath, relativePath)]);
+            using (var connection = OpenDatabase(databasePath))
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    UPDATE clipboard_entries
+                    SET semantic_hash = $hash
+                    WHERE id = $id;
+                    UPDATE clipboard_files
+                    SET original_path = $path,
+                        canonical_path = $path,
+                        display_name = $path
+                    WHERE entry_id = $id;
+                    """;
+                command.Parameters.AddWithValue("$id", id.ToString("D"));
+                command.Parameters.AddWithValue("$hash", corruptHash);
+                command.Parameters.AddWithValue("$path", relativePath);
+                command.ExecuteNonQuery();
+            }
+
+            using var reopened = new SqliteClipboardHistoryRepository(databasePath);
+            Assert.Null(await reopened.GetReplayPayloadAsync(
+                id,
+                TestContext.Current.CancellationToken));
         }
         finally
         {
@@ -251,6 +477,25 @@ public sealed class SqliteClipboardHistoryRepositoryTests
                 (value.Length * 2) + 2),
         ]);
 
+    private static ClipboardFileListContent FileList(
+        ClipboardFileTransferIntent intent,
+        params string[] paths)
+    {
+        var files = paths.Select((path, index) => new ClipboardFileReference(
+                index,
+                path,
+                Path.GetFullPath(path),
+                Path.GetFileName(path)))
+            .ToArray();
+        return new ClipboardFileListContent(
+            ClipboardFileSemanticIdentity.Compute(intent, files),
+            intent,
+            files.Length == 1
+                ? files[0].DisplayName
+                : $"{files[0].DisplayName} + 另外 {files.Length - 1} 项",
+            files);
+    }
+
     private static string Hash(int value) => value.ToString("x64", CultureInfo.InvariantCulture);
 
     private static void CreateSchemaTwoDatabase(string databasePath)
@@ -285,6 +530,48 @@ public sealed class SqliteClipboardHistoryRepositoryTests
                 'keep-launcher', NULL, 0, 1,
                 '2026-08-28T00:00:00.0000000+00:00', '2026-08-28T00:00:00.0000000+00:00');
             PRAGMA user_version = 2;
+            """;
+        command.ExecuteNonQuery();
+    }
+
+    private static void CreateSchemaThreeDatabase(string databasePath)
+    {
+        CreateSchemaTwoDatabase(databasePath);
+        using var connection = OpenDatabase(databasePath);
+        using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            CREATE TABLE clipboard_entries (
+                id TEXT NOT NULL PRIMARY KEY,
+                kind INTEGER NOT NULL,
+                semantic_hash TEXT NOT NULL,
+                plain_preview TEXT NOT NULL,
+                first_captured_utc TEXT NOT NULL,
+                last_captured_utc TEXT NOT NULL,
+                last_capture_order INTEGER NOT NULL,
+                capture_count INTEGER NOT NULL,
+                is_pinned INTEGER NOT NULL,
+                revision INTEGER NOT NULL
+            );
+            CREATE TABLE clipboard_representations (
+                entry_id TEXT NOT NULL,
+                representation_kind INTEGER NOT NULL,
+                fidelity_rank INTEGER NOT NULL,
+                inline_text TEXT NOT NULL,
+                byte_length INTEGER NOT NULL,
+                PRIMARY KEY (entry_id, representation_kind),
+                FOREIGN KEY (entry_id) REFERENCES clipboard_entries(id) ON DELETE CASCADE
+            );
+            CREATE UNIQUE INDEX ux_clipboard_entries_semantic
+            ON clipboard_entries(kind, semantic_hash);
+            CREATE INDEX ix_clipboard_entries_capture_order
+            ON clipboard_entries(last_capture_order DESC, id DESC);
+            INSERT INTO clipboard_entries VALUES (
+                '00000000-0000-0000-0000-000000000002', 0, '{Hash(77)}', 'preserved',
+                '2026-08-28T00:00:00.0000000+00:00',
+                '2026-08-28T00:00:00.0000000+00:00', 1, 1, 0, 1);
+            INSERT INTO clipboard_representations VALUES (
+                '00000000-0000-0000-0000-000000000002', 1, 100, 'preserved', 20);
+            PRAGMA user_version = 3;
             """;
         command.ExecuteNonQuery();
     }

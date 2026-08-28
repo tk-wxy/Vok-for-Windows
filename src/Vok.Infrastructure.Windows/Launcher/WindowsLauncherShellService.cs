@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -13,27 +12,33 @@ namespace Vok.Infrastructure.Windows.Launcher;
 
 public sealed partial class WindowsLauncherShellService : ILauncherShellService
 {
-    private const int QueueCapacity = 128;
     private const int IconCacheCapacity = 256;
     private static readonly Guid ShellItemImageFactoryId =
         new("BCC18B79-BA16-442F-80C4-8A59C30C463B");
 
-    private readonly BlockingCollection<IWorkItem> _queue = new(QueueCapacity);
+    private readonly WindowsShellStaExecutor _executor;
+    private readonly bool _ownsExecutor;
     private readonly Dictionary<string, LauncherIconData> _iconCache =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Queue<string> _iconCacheOrder = new();
-    private readonly Thread _thread;
     private int _disposed;
 
     public WindowsLauncherShellService()
+        : this(new WindowsShellStaExecutor(), ownsExecutor: true)
     {
-        _thread = new Thread(Run)
-        {
-            IsBackground = true,
-            Name = "Vok Shell/COM STA",
-        };
-        _thread.SetApartmentState(ApartmentState.STA);
-        _thread.Start();
+    }
+
+    public WindowsLauncherShellService(WindowsShellStaExecutor executor)
+        : this(executor, ownsExecutor: false)
+    {
+    }
+
+    private WindowsLauncherShellService(
+        WindowsShellStaExecutor executor,
+        bool ownsExecutor)
+    {
+        _executor = executor ?? throw new ArgumentNullException(nameof(executor));
+        _ownsExecutor = ownsExecutor;
     }
 
     public Task<IReadOnlyList<LauncherTargetResolution>> ResolveAsync(
@@ -112,44 +117,20 @@ public sealed partial class WindowsLauncherShellService : ILauncherShellService
             return;
         }
 
-        _queue.CompleteAdding();
-        _thread.Join();
-        _queue.Dispose();
+        if (_ownsExecutor)
+        {
+            _executor.Dispose();
+        }
     }
 
     private Task<T> ExecuteAsync<T>(
         Func<T> operation,
         CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(operation);
         ObjectDisposedException.ThrowIf(
             Volatile.Read(ref _disposed) != 0,
             this);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var item = new WorkItem<T>(operation, cancellationToken);
-        try
-        {
-            if (!_queue.TryAdd(item))
-            {
-                throw new InvalidOperationException("The Shell/COM queue is full.");
-            }
-        }
-        catch
-        {
-            item.Abandon();
-            throw;
-        }
-
-        return item.Task;
-    }
-
-    private void Run()
-    {
-        foreach (var item in _queue.GetConsumingEnumerable())
-        {
-            item.Execute();
-        }
+        return _executor.ExecuteAsync(operation, cancellationToken);
     }
 
     private static LauncherTargetResolution ResolveOne(string input)
@@ -227,7 +208,7 @@ public sealed partial class WindowsLauncherShellService : ILauncherShellService
         return icon;
     }
 
-    private static byte[]? TryExtractShellIcon(string target, int pixelSize)
+    internal static byte[]? TryExtractShellIcon(string target, int pixelSize)
     {
         nint factoryPointer = 0;
         object? factoryObject = null;
@@ -354,60 +335,6 @@ public sealed partial class WindowsLauncherShellService : ILauncherShellService
                 NotSupportedException)
         {
             return $"unavailable:{item.Revision}";
-        }
-    }
-
-    private interface IWorkItem
-    {
-        void Execute();
-    }
-
-    private sealed class WorkItem<T> : IWorkItem
-    {
-        private readonly TaskCompletionSource<T> _completion =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private readonly Func<T> _operation;
-        private readonly CancellationTokenRegistration _cancellationRegistration;
-        private int _claim;
-
-        public WorkItem(Func<T> operation, CancellationToken cancellationToken)
-        {
-            _operation = operation;
-            _cancellationRegistration = cancellationToken.Register(() =>
-            {
-                if (Interlocked.CompareExchange(ref _claim, 2, 0) == 0)
-                {
-                    _completion.TrySetCanceled(cancellationToken);
-                }
-            });
-        }
-
-        public Task<T> Task => _completion.Task;
-
-        public void Abandon()
-        {
-            _ = Interlocked.CompareExchange(ref _claim, 2, 0);
-            _cancellationRegistration.Dispose();
-        }
-
-        public void Execute()
-        {
-            // The Shell thread and cancellation compete for one pre-side-effect claim.
-            if (Interlocked.CompareExchange(ref _claim, 1, 0) != 0)
-            {
-                _cancellationRegistration.Dispose();
-                return;
-            }
-
-            _cancellationRegistration.Dispose();
-            try
-            {
-                _completion.TrySetResult(_operation());
-            }
-            catch (Exception exception)
-            {
-                _completion.TrySetException(exception);
-            }
         }
     }
 

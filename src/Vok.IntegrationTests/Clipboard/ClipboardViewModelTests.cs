@@ -50,6 +50,68 @@ public sealed class ClipboardViewModelTests
         Assert.True(viewModel.IsEmpty);
     }
 
+    [Fact]
+    public async Task FileEntryLoadsPresentationAndExposesCopyOnlyAction()
+    {
+        var id = Guid.NewGuid();
+        const string firstPath = @"C:\Vok tests\第一项.txt";
+        const string secondPath = @"C:\Vok tests\second.txt";
+        var files = new[]
+        {
+            new ClipboardFileReference(0, firstPath, firstPath, "第一项.txt"),
+            new ClipboardFileReference(1, secondPath, secondPath, "second.txt"),
+        };
+        var hash = ClipboardFileSemanticIdentity.Compute(
+            ClipboardFileTransferIntent.Move,
+            files);
+        var entry = new ClipboardEntry(
+            id,
+            ClipboardContentKind.FileList,
+            hash,
+            "第一项.txt + 另外 1 项",
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            1,
+            1,
+            false,
+            1,
+            ClipboardFileTransferIntent.Move,
+            2);
+        var replay = new ClipboardReplayPayload(
+            ClipboardContentKind.FileList,
+            hash,
+            [],
+            ClipboardFileTransferIntent.Move,
+            files);
+        var repository = new FakeRepository(
+            new ClipboardPage([entry], null, TotalCount: 1),
+            new Dictionary<Guid, ClipboardReplayPayload> { [id] = replay });
+        using var presentation = new FakePresentationService(
+            ClipboardFileAvailability.Missing);
+        using var viewModel = new ClipboardViewModel(repository, presentation);
+
+        await viewModel.InitializeAsync();
+        var item = Assert.Single(viewModel.Items);
+
+        Assert.Equal(1, presentation.CallCount);
+        Assert.Equal(firstPath, item.FileDetailsText);
+        Assert.Equal("剪切", item.IntentText);
+        Assert.Equal("源文件已失效", item.AvailabilityText);
+        Assert.Contains("移动源文件", item.PasteToolTip);
+
+        var copyCount = 0;
+        viewModel.CopyFileActionAsync = _ =>
+        {
+            copyCount++;
+            return Task.CompletedTask;
+        };
+        await viewModel.CopyFileCommand.ExecuteAsync(item);
+        await viewModel.CopyFileCommand.ExecuteAsync(
+            new ClipboardItemViewModel(Entry("text", 1, 2)));
+
+        Assert.Equal(1, copyCount);
+    }
+
     private static ClipboardEntry Entry(string preview, int captureCount, long order) => new(
         Guid.NewGuid(),
         ClipboardContentKind.Text,
@@ -62,7 +124,10 @@ public sealed class ClipboardViewModelTests
         false,
         captureCount);
 
-    private sealed class FakeRepository(ClipboardPage page) : IClipboardHistoryRepository
+    private sealed class FakeRepository(
+        ClipboardPage page,
+        IReadOnlyDictionary<Guid, ClipboardReplayPayload>? replayPayloads = null)
+        : IClipboardHistoryRepository
     {
         public int RemoveCallCount { get; private set; }
 
@@ -76,10 +141,18 @@ public sealed class ClipboardViewModelTests
             DateTimeOffset capturedUtc,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+        public Task<ClipboardEntry> UpsertFileListAsync(
+            ClipboardFileListContent content,
+            DateTimeOffset capturedUtc,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
         public Task<ClipboardReplayPayload?> GetReplayPayloadAsync(
             Guid entryId,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult<ClipboardReplayPayload?>(null);
+            CancellationToken cancellationToken = default) => Task.FromResult(
+                replayPayloads is not null &&
+                replayPayloads.TryGetValue(entryId, out var payload)
+                    ? payload
+                    : null);
 
         public Task<ClipboardEntry?> SetPinnedAsync(
             Guid entryId,
@@ -93,6 +166,26 @@ public sealed class ClipboardViewModelTests
         {
             RemoveCallCount++;
             return Task.FromResult(true);
+        }
+    }
+
+    private sealed class FakePresentationService(
+        ClipboardFileAvailability availability)
+        : IClipboardFilePresentationService
+    {
+        public int CallCount { get; private set; }
+
+        public Task<ClipboardFilePresentation> InspectAsync(
+            IReadOnlyList<ClipboardFileReference> files,
+            int pixelSize,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            return Task.FromResult(new ClipboardFilePresentation(null, availability));
+        }
+
+        public void Dispose()
+        {
         }
     }
 }

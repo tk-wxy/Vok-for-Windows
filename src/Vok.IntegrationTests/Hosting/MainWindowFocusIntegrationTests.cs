@@ -177,6 +177,19 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                     index == 79,
                     1));
             }
+            clipboardViewModel.ApplyCaptured(new ClipboardEntry(
+                Guid.NewGuid(),
+                ClipboardContentKind.FileList,
+                new string('f', 64),
+                "报告.docx + 另外 1 项",
+                DateTimeOffset.UtcNow,
+                DateTimeOffset.UtcNow,
+                81,
+                1,
+                false,
+                1,
+                ClipboardFileTransferIntent.Move,
+                2));
             var window = new MainWindow(
                 viewModel,
                 launcherLayouts,
@@ -288,10 +301,26 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                 Assert.Equal(
                     VirtualizationMode.Recycling,
                     VirtualizingPanel.GetVirtualizationMode(clipboardList));
-                Assert.Equal(80, clipboardList.Items.Count);
+                Assert.Equal(81, clipboardList.Items.Count);
                 Assert.True(
-                    FindVisualDescendants<ListBoxItem>(clipboardList).Count() < 80,
+                    FindVisualDescendants<ListBoxItem>(clipboardList).Count() < 81,
                     "The clipboard list realized every card instead of virtualizing its viewport.");
+                var filePasteButton = FindVisualDescendants<Button>(clipboardList)
+                    .First(button =>
+                        button.DataContext is ClipboardItemViewModel { IsFileList: true } &&
+                        Equals(button.Command, clipboardViewModel.PasteCommand));
+                Assert.Contains("移动源文件", filePasteButton.ToolTip?.ToString());
+                Assert.Contains(
+                    "粘贴可能移动源文件",
+                    System.Windows.Automation.AutomationProperties.GetName(filePasteButton));
+                var fileCopyButton = FindVisualDescendants<Button>(clipboardList)
+                    .First(button =>
+                        button.DataContext is ClipboardItemViewModel { IsFileList: true } &&
+                        Equals(button.Command, clipboardViewModel.CopyFileCommand));
+                Assert.Equal(Visibility.Visible, fileCopyButton.Visibility);
+                Assert.Equal(
+                    "复制文件列表，不移动源文件",
+                    System.Windows.Automation.AutomationProperties.GetName(fileCopyButton));
 
                 var bottomBar = Assert.IsType<Border>(window.FindName("BottomBar"));
                 Assert.True(bottomBar.IsVisible);
@@ -968,6 +997,12 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
 
         public Task<ClipboardEntry> UpsertTextAsync(
             ClipboardTextContent content,
+            DateTimeOffset capturedUtc,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<ClipboardEntry> UpsertFileListAsync(
+            ClipboardFileListContent content,
             DateTimeOffset capturedUtc,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();

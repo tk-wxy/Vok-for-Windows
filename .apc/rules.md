@@ -27,6 +27,7 @@
 | R17 | 启动台卡片单元均分完整视口且不限制自由滚动 | 启动台布局 | 否 |
 | R18 | 启动台只保存引用，拖入与启动按代完成且先隐藏后 Shell | 启动台业务 | 是 |
 | R19 | 启动台反馈、排序和外部拖放必须先认领终态再产生副作用 | 启动台交互 | 是 |
+| R20 | 文件剪贴板意图必须按 DROPEFFECT 掩码解析，模糊值不得成为 MOVE | 剪贴板文件 | 是 |
 
 ## 规则
 
@@ -48,9 +49,9 @@
 
 - [ ] R2：WPF UI、热键、剪贴板、Shell/COM、SQLite 和图片任务各有明确所有者；跨边界只投递不可变数据或调用窄接口，禁止同步等待 UI、散落 `Task.Run` 和不明固定延时。
   - 范围：进程内全部后台服务和系统事件。
-  - 证据：Vok 产品要求覆盖失败、取消和重复触发；参考项目的轮询、跨线程等待和全局复位清单导致时序耦合；见 `decisions.md §1`。
-  - 最后验证：2026-08-23。
-  - 状态：active；M0 已实现热键消息线程、UI Dispatcher 边界、代次检查和先占有后副作用，未来服务仍须逐项落实。
+  - 证据：Vok 产品要求覆盖失败、取消和重复触发；参考项目的轮询、跨线程等待和全局复位清单导致时序耦合；见 `decisions.md §1`。M2.2 将启动台与文件剪贴板适配器收敛到 DI 唯一拥有的容量 128 Shell/COM STA executor；取消与执行竞争一次副作用认领，适配器不释放借用 executor，退出以 5 秒 watchdog 避免 Shell 卡死阻塞进程。自动测试覆盖取消前认领、借用所有权、双适配器和 watchdog 超时。
+  - 最后验证：2026-08-28。
+  - 状态：active；WPF、热键、Clipboard STA、共享 Shell/COM STA 与 SQLite 执行器均已有显式所有权和退出边界；图片 worker 待 M2.3 落实。
 
 - [ ] R11：`Application.Deactivated` 是整个 Vok 丢失前台的唯一权威信号；宿主不得暴露或转发无消费者的单窗口失活接口。除同代持有由真实外部 OLE `DragEnter` 建立的窄拖放租约外，当前 generation 在下一 Dispatcher 轮次仍为 `Visible` 时必须以 `ForegroundLost` 被动隐藏；真实前台捕获只用于诊断，HWND 为 0 或捕获失败也不得阻断。拖放租约必须在 Drop、窗口级 DragLeave、隐藏、换代、退出或下一次 DragEnter 时收尾，终态先占有后执行，陈旧/重复终态不得影响新代；已经可见时再次显式热键关闭可抢占租约，只有本次长按从隐藏态呼出的原始松键仍等待拖放终态。普通失活必须完成 Hide、退出 Topmost、状态机和诊断收尾，但不得恢复旧捕获目标；状态明确为 `NotRequested`。
   - 范围：M0 Deactivated、前台切换、隐藏策略、诊断和下一代目标捕获。
@@ -112,9 +113,9 @@
 
 - [ ] R3：隐藏、启动和粘贴不得把 `SetForegroundWindow` 返回前台视为必然成功；必须观察真实前台窗口，失败或 UIPI 权限不匹配时明确降级。
   - 范围：目标窗口恢复、应用启动、剪贴板粘贴。
-  - 证据：https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-setforegroundwindow 明确说明系统限制前台切换且即使满足条件也可能拒绝；2026-08-24 逐代实测将失败归为 B：顶层已恢复，目标线程子焦点为 0。按 `decisions.md §4` 做窄回退后，用户确认快捷键与 Esc 隐藏均返回原文本框。M2.1 粘贴只有 Workspace 同代隐藏成功、恢复结果 `Succeeded`、receipt 仍当前且注入前顶层/子焦点身份再次匹配才发送 Ctrl+V；自动测试覆盖恢复失败、外部覆盖、焦点变化、重复动作和成功顺序。
+  - 证据：https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-setforegroundwindow 明确说明系统限制前台切换且即使满足条件也可能拒绝；2026-08-24 逐代实测将失败归为 B：顶层已恢复，目标线程子焦点为 0。按 `decisions.md §4` 做窄回退后，用户确认快捷键与 Esc 隐藏均返回原文本框。M2.1 粘贴只有 Workspace 同代隐藏成功、恢复结果 `Succeeded`、receipt 仍当前且注入前顶层/子焦点身份再次匹配才发送 Ctrl+V；M2.2 文件主动作复用同一顺序，明确 MOVE 的手动降级风险，Unknown 强制按 COPY，独立 COPY 次动作不隐藏或注入。自动测试覆盖恢复失败、外部覆盖、焦点变化、重复动作、Missing 预检、COPY/MOVE/Unknown 和成功顺序。
   - 最后验证：2026-08-28。
-  - 状态：active；M0 隐藏恢复已通过真实物理回归，M2.1 粘贴门禁已自动验证，且 2026-08-28 用户确认真机文本捕获、历史展示与粘贴测试通过。默认禁止连接输入队列，只有 §4 已证明的 B 类条件允许单次窄回退。
+  - 状态：active；M0 隐藏恢复与 M2.1 文本粘贴已通过真实物理回归；M2.2 文件粘贴门禁已自动验证但 Explorer 真机交互待验收。默认禁止连接输入队列，只有 §4 已证明的 B 类条件允许单次窄回退。
 
 ### 宿主验收
 
@@ -142,17 +143,23 @@
 
 - [ ] R4：所有系统剪贴板读写由单一 STA 服务负责；`WM_CLIPBOARDUPDATE` 只负责唤醒，以 `GetClipboardSequenceNumber` 提交水位并隔离自写回流。
   - 范围：剪贴板监听、捕获、回写和粘贴。
-  - 证据：https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-addclipboardformatlistener 与 https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-getclipboardsequencenumber。M2.0 已实现独立 STA/message-only listener HWND、只比较相等性的 sequence 协调器、一次 `OpenClipboard` 内多格式快照和实际忙占用后的有界退避；M2.1 将 write/verify 作为同一 STA 的可认领命令，marker 绑定 instance/operation/semantic hash，只有匹配当前 receipt 与 sequence 才抑制自写。自动测试覆盖取消认领、重复/回绕/替换、隐私、容量、忙耗尽、外部覆盖和写入失败；独立 Window Station 真实探针覆盖即时/延迟捕获、多表示写回、自写抑制及外部覆盖失效。
+  - 证据：https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-addclipboardformatlistener 与 https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-getclipboardsequencenumber。M2.0 已实现独立 STA/message-only listener HWND、只比较相等性的 sequence 协调器、一次 `OpenClipboard` 内多格式快照和实际忙占用后的有界退避；M2.1 将 write/verify 作为同一 STA 的可认领命令，marker 绑定 instance/operation/semantic hash，只有匹配当前 receipt 与 sequence 才抑制自写。M2.2 继续在同一 STA 写 `CF_HDROP`、精确 COPY/MOVE effect 和实际意图 hash marker；部分多格式写入失败会在仍持有剪贴板时清除半份内容，已转移句柄不被重复释放。独立 Window Station 探针真实覆盖 Unicode MOVE、ANSI COPY、Unknown、畸形拒绝、虚拟文件 Unsupported、文件自写抑制及外部覆盖失效。
   - 最后验证：2026-08-28。
-  - 状态：active；M2.0 与 M2.1 文本平台服务已接入产品组合根并闭环 receipt；文件 COPY/MOVE 与图片多表示仍分别属于 M2.2/M2.3。
+  - 状态：active；文本与文件 COPY/MOVE 平台服务均已接入组合根并闭环 receipt，且已通过用户物理验收；图片多表示仍属于 M2.3。
+
+- [ ] R20：`Preferred DropEffect` 是 `DROPEFFECT` 位集合，读取方必须掩码检查 COPY/MOVE，不能与 1/2 做精确相等比较。仅 COPY 操作位可归一为 Copy，仅 MOVE 操作位可归一为 Move；COPY 与 MOVE 同现、没有两者但值非零或载荷畸形必须拒绝，绝不能把模糊值猜成 Move。
+  - 范围：Explorer 文件/目录剪贴板捕获、文件语义哈希和 MOVE 安全回放。
+  - 证据：2026-08-28 真实 Explorer Ctrl+C 快照的有效 `CF_HDROP` 伴随 `Preferred DropEffect=5 (COPY | LINK)`；旧精确白名单因此拒绝整个文件快照，真实库保持 `clipboard_files=0`。Microsoft DROPEFFECT 文档要求掩码比较。修复后 effect 5 定向回归、COPY/MOVE/附加位/歧义矩阵、304/304 全套测试和隔离探针通过，交互同形语料在真实库生成 FileList/文件行。
+  - 最后验证：2026-08-28。
+  - 状态：active；根因修复已部署，2026-08-28 用户复测 Explorer 物理复制/剪切、文件卡与目标粘贴符合预期。
 
 ### 存储与规模
 
 - [ ] R5：不得在 UI Dispatcher 上执行 Microsoft.Data.Sqlite；数据库写入由显式执行器串行化并使用 WAL。数据库升级必须同时核验版本号与真实表结构，在单事务内迁移并让未知结构原样回滚；`CREATE TABLE IF NOT EXISTS` 只能建新表，不能冒充已有表迁移。大集合必须同时实施 SQL 分页和 WPF 容器虚拟化，不能把 UI 虚拟化当作数据虚拟化。
   - 范围：SQLite、启动台、剪贴板历史、图片与后续大列表。
-  - 证据：https://learn.microsoft.com/dotnet/standard/data/sqlite/async 说明 Async 方法实际同步；https://learn.microsoft.com/dotnet/desktop/wpf/advanced/optimizing-performance-controls 说明 WPF 没有内建数据虚拟化。2026-08-28 真机旧库因已有 `launcher_items` 使 `CREATE TABLE IF NOT EXISTS` 静默跳过，但代码仍写入版本并查询新列，复现 `no such column: target_kind`；schema 2 改为列集合识别和单事务迁移。M2.1 schema 3 在同一容量 64 的单连接 WAL 执行器中增加结构识别的剪贴板表，130 条测试验证 64 条 keyset 页、精确去重回顶、固定保留、重启回放和级联删除；80 卡浅/深真实 WPF 渲染验证 Recycling 列表未全量实例化容器。
+  - 证据：https://learn.microsoft.com/dotnet/standard/data/sqlite/async 说明 Async 方法实际同步；https://learn.microsoft.com/dotnet/desktop/wpf/advanced/optimizing-performance-controls 说明 WPF 没有内建数据虚拟化。2026-08-28 真机旧库因已有 `launcher_items` 使 `CREATE TABLE IF NOT EXISTS` 静默跳过，但代码仍写入版本并查询新列，复现 `no such column: target_kind`；schema 2 改为列集合识别和单事务迁移。M2.1 schema 3 在同一容量 64 的单连接 WAL 执行器中增加结构识别的剪贴板表。M2.2 schema 4 在同一事务增加意图/数量列与级联文件表，并验证三表列集合、外键和关键索引；已知 schema 3 保留文本 replay，损坏外键/索引和半迁移结构原样回滚。64 条 keyset 页与 81 卡真实 WPF Recycling 渲染继续通过。
   - 最后验证：2026-08-28。
-  - 状态：active；设置、启动台与剪贴板共享串行所有权，schema 1→2→3、失败回滚、SQL 分页、WPF 虚拟化、重启持久化、去重/排序和取消一致性均有自动测试；2026-08-28 只读复核运行中新版进程的用户真实库已升 schema 3，且含已写入的剪贴板记录与表示层。
+  - 状态：active；设置、启动台与剪贴板共享串行所有权，schema 1→2→3→4、失败回滚、SQL 分页、WPF 虚拟化、重启持久化、去重/排序和取消一致性均有自动测试；2026-08-28 默认 Release 启动后只读复核真实用户库已升 schema 4，文件子表从修复前 0 行增至同形交互语料捕获后的 1 行。
 
 ### 发布与互操作
 
@@ -190,6 +197,7 @@
 - 点击任务栏或切换应用后 Vok 仍覆盖工作区 → 检查 R11；不要用控件 LostFocus、固定延时或恢复旧目标处理。
 - 粘贴到了错误窗口或静默失败 → 检查 R3、R4。
 - 剪贴板重复、自写回流或漏记录 → 检查 R4。
+- Explorer 文件只出现路径文本、文件卡完全不生成或 COPY 全部漏记 → 检查 R20；先读取真实 `Preferred DropEffect`，不要恢复精确 0/1/2 比较。
 - 条目增加导致 UI/内存线性增长 → 检查 R5。
 - Debug 正常但发布版互操作失败 → 检查 R6。
 - 测试命令成功但显示 0 项测试 → 检查 R7。

@@ -157,7 +157,7 @@ M0 至各模块都记录：
 
 按文本 → 文件列表 → 图片逐类完成监听、去重、保留、分页、固定/删除和向目标窗口粘贴。
 
-状态：业务模型与 M2.0 平台契约已完成；M2.1 文本纵向切片已接入应用组合根，支持 Unicode/ANSI/OEM、HTML/RTF 安全规范化、schema 3 精确去重/分页/固定/删除、虚拟化文本卡、多表示写回及按代安全粘贴。独立 Window Station 探针已验证真实 listener、延迟渲染、隐私门禁、receipt 自写抑制和外部覆盖；2026-08-28 用户确认真机文本捕获、历史展示与粘贴测试通过，真实用户库也已只读确认为 schema 3。下一阶段为 M2.2 文件列表；见 `M2_CLIPBOARD_PLAN.md`。
+状态：业务模型、M2.0 平台契约和 M2.1 文本纵向切片已完成并接入产品；2026-08-28 用户已确认文本真机验收。M2.2 文件列表纵向切片也已完成：有效 `CF_HDROP` 优先路由、严格 Unicode/ANSI `DROPFILES` 与 COPY/MOVE/Unknown 意图、schema 4 文件子表、共享单一 Shell STA、异构文件卡、强制 COPY 次动作及意图化安全粘贴均已接入。首次物理验收发现 Explorer COPY 实际发布 `DROPEFFECT_COPY | DROPEFFECT_LINK`，已由精确值比较改为掩码解析并保留 COPY/MOVE 歧义拒绝；Release 304/304 自动测试、0 警告构建、自包含发布和独立 Window Station 文件探针通过。默认 Release PID 20420 正常运行，真实 schema 4 库已有文件记录；用户复测 Explorer 物理复制/剪切、文件卡与目标窗口粘贴符合预期并同意提交。下一阶段为 M2.3 图片/截图纵向切片；见 `M2_CLIPBOARD_PLAN.md`。
 
 ### M3：基础设置与数据保护
 

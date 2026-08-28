@@ -15,6 +15,10 @@ public enum ClipboardRepresentationKind
     Bitmap = 10,
     TextLocale = 11,
     OemText = 12,
+    FileGroupDescriptor = 13,
+    FileGroupDescriptorW = 14,
+    FileContents = 15,
+    ShellIdList = 16,
 }
 
 public enum ClipboardFormatRole
@@ -24,6 +28,7 @@ public enum ClipboardFormatRole
     Metadata = 2,
     Privacy = 3,
     Internal = 4,
+    VirtualFile = 5,
 }
 
 public enum ClipboardFormatCaptureState

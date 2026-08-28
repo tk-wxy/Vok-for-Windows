@@ -2,6 +2,18 @@
 
 > 归档超过滚动窗口的 `memory.md §0A` 完整会话。默认不读取，仅在取证时搜索；按时间从新到旧排列。
 
+### 会话 2026-08-28 - M2.0 剪贴板平台契约与隔离探针
+
+- Core 新增捕获结果、格式角色/状态、容量/重试选项、只含计数的诊断快照和只比较 sequence 相等性的协调器；不同 sequence 在活动捕获期间只保留最新 pending，完成时以实际观测 sequence 合并，覆盖重复通知与 DWORD 回绕。
+- Infrastructure.Windows 新增独立 Clipboard STA、message-only listener HWND、白名单标准/注册格式目录、一次 `OpenClipboard` 内自有字节快照、隐私/实例 marker、双容量有界读取、实际忙占用后的计时器退避和有界 `IAsyncEnumerable` 结果流；服务未注册到 App，避免未持久化功能提前读取用户剪贴板。
+- 默认隔离 Release 构建 0 警告/错误，Core 48/48 与 Windows/WPF 162/162 共 210/210 测试、自包含 win-x64 发布通过。新增非交互 Window Station 真实探针，不接触用户交互剪贴板，已验证即时 HTML+Unicode、CF_LOCALE/TEXT/OEMTEXT 系统合成、延迟渲染及隐私 marker 跳过；运行中 PID 20584 未替换。
+
+### 会话 2026-08-28 - M2 剪贴板业务模型规划
+
+- 以 Windows “一次逻辑内容可同时包含多个格式”为边界，将 sequence 对应的稳定系统快照建模为一条历史，HTML/RTF/Unicode 或 PNG/DIB 等作为同条记录的表示层；文本剪切不伪判，文件 COPY/MOVE 显式建模，截图无证据时统一归为图片。
+- 规划专属 Clipboard STA、一次 OpenClipboard 内白名单快照、sequence + 自写 marker/receipt 双门禁、有界规范化/图片 worker、SQLite 元数据与内容寻址资产，以及 Materialize→Write→Hide→Restore→Verify→Inject 的按代取用状态机。
+- 新增 `docs/M2_CLIPBOARD_PLAN.md` 并由 `docs/ARCHITECTURE.md` 链接；规划按平台探针、文本、文件、图片和规模故障门禁分阶段，明确虚拟文件与任意私有格式暂不冒充支持。本轮仅文档变更，未实现或运行代码测试。
+
 ### 会话 2026-08-28 - 启动台单击反馈、内部排序与外部拖放终态修复
 
 - 根因复现为同一条 OLE 生命周期故障链：旧 DragOver 在 UI STA 反复同步读取外国 `IDataObject`，窗口 DragLeave 又因指针坐标仍在 HWND 内被忽略；源取消或终态缺失后，拖放租约持续延后失活/热键隐藏，活动蓝框与卡顿同时遗留。

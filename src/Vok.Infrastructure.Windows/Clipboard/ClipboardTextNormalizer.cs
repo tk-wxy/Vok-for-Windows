@@ -7,7 +7,7 @@ using Vok.Core.Clipboard;
 
 namespace Vok.Infrastructure.Windows.Clipboard;
 
-public sealed class ClipboardTextNormalizer : IClipboardCaptureNormalizer
+public sealed class ClipboardTextNormalizer
 {
     private static readonly UnicodeEncoding StrictUtf16 = new(
         bigEndian: false,

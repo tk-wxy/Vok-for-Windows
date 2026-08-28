@@ -2,5 +2,5 @@ namespace Vok.Core.Clipboard;
 
 public interface IClipboardCaptureNormalizer
 {
-    ClipboardTextContent? NormalizeText(ClipboardCaptureResult capture);
+    ClipboardNormalizedContent? Normalize(ClipboardCaptureResult capture);
 }

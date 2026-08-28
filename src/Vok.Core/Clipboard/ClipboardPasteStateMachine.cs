@@ -77,6 +77,7 @@ public sealed class ClipboardPasteStateMachine
     private static bool CanAdvance(ClipboardPasteState current, ClipboardPasteState next) =>
         (current, next) is
             (ClipboardPasteState.Materializing, ClipboardPasteState.WritingClipboard) or
+            (ClipboardPasteState.WritingClipboard, ClipboardPasteState.VerifyingCurrent) or
             (ClipboardPasteState.WritingClipboard, ClipboardPasteState.HidingWorkspace) or
             (ClipboardPasteState.HidingWorkspace, ClipboardPasteState.VerifyingCurrent) or
             (ClipboardPasteState.VerifyingCurrent, ClipboardPasteState.InjectingPaste);

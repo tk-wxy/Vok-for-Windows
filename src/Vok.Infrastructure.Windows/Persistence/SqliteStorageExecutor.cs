@@ -7,7 +7,7 @@ namespace Vok.Infrastructure.Windows.Persistence;
 public sealed class SqliteStorageExecutor : IDisposable
 {
     private const int QueueCapacity = 64;
-    private const int CurrentSchemaVersion = 3;
+    private const int CurrentSchemaVersion = 4;
     private static readonly HashSet<string> CurrentLauncherColumns =
     [
         "id",
@@ -31,7 +31,7 @@ public sealed class SqliteStorageExecutor : IDisposable
         "sort_order",
         "created_utc",
     ];
-    private static readonly HashSet<string> CurrentClipboardEntryColumns =
+    private static readonly HashSet<string> LegacyClipboardEntryColumns =
     [
         "id",
         "kind",
@@ -44,6 +44,12 @@ public sealed class SqliteStorageExecutor : IDisposable
         "is_pinned",
         "revision",
     ];
+    private static readonly HashSet<string> CurrentClipboardEntryColumns =
+    [
+        .. LegacyClipboardEntryColumns,
+        "file_intent",
+        "item_count",
+    ];
     private static readonly HashSet<string> CurrentClipboardRepresentationColumns =
     [
         "entry_id",
@@ -51,6 +57,14 @@ public sealed class SqliteStorageExecutor : IDisposable
         "fidelity_rank",
         "inline_text",
         "byte_length",
+    ];
+    private static readonly HashSet<string> CurrentClipboardFileColumns =
+    [
+        "entry_id",
+        "ordinal",
+        "original_path",
+        "canonical_path",
+        "display_name",
     ];
     private readonly BlockingCollection<IStorageWorkItem> _queue = new(QueueCapacity);
     private readonly TaskCompletionSource _ready =
@@ -373,17 +387,31 @@ public sealed class SqliteStorageExecutor : IDisposable
             connection,
             transaction,
             "clipboard_representations");
-        if (entryColumns.Count == 0 && representationColumns.Count == 0)
+        var fileColumns = ReadTableColumns(
+            connection,
+            transaction,
+            "clipboard_files");
+        if (entryColumns.Count == 0 &&
+            representationColumns.Count == 0 &&
+            fileColumns.Count == 0)
         {
             CreateClipboardTables(connection, transaction);
         }
+        else if (entryColumns.SetEquals(LegacyClipboardEntryColumns) &&
+                 representationColumns.SetEquals(CurrentClipboardRepresentationColumns) &&
+                 fileColumns.Count == 0)
+        {
+            MigrateClipboardSchema3(connection, transaction);
+        }
         else if (!entryColumns.SetEquals(CurrentClipboardEntryColumns) ||
-                 !representationColumns.SetEquals(CurrentClipboardRepresentationColumns))
+                 !representationColumns.SetEquals(CurrentClipboardRepresentationColumns) ||
+                 !fileColumns.SetEquals(CurrentClipboardFileColumns))
         {
             throw new InvalidOperationException(
                 "The clipboard history tables have an unsupported schema. " +
                 $"Entry columns: {string.Join(", ", entryColumns.Order())}; " +
-                $"representation columns: {string.Join(", ", representationColumns.Order())}.");
+                $"representation columns: {string.Join(", ", representationColumns.Order())}; " +
+                $"file columns: {string.Join(", ", fileColumns.Order())}.");
         }
 
         using var indexCommand = connection.CreateCommand();
@@ -396,6 +424,121 @@ public sealed class SqliteStorageExecutor : IDisposable
             ON clipboard_entries(last_capture_order DESC, id DESC);
             """;
         indexCommand.ExecuteNonQuery();
+
+        if (!HasCascadeEntryForeignKey(
+                connection,
+                transaction,
+                "clipboard_representations") ||
+            !HasCascadeEntryForeignKey(
+                connection,
+                transaction,
+                "clipboard_files") ||
+            !HasIndex(
+                connection,
+                transaction,
+                "clipboard_entries",
+                "ux_clipboard_entries_semantic",
+                isUnique: true,
+                ["kind", "semantic_hash"]) ||
+            !HasIndex(
+                connection,
+                transaction,
+                "clipboard_entries",
+                "ix_clipboard_entries_capture_order",
+                isUnique: false,
+                ["last_capture_order", "id"]))
+        {
+            throw new InvalidOperationException(
+                "The clipboard history tables have unsupported foreign keys or indexes.");
+        }
+    }
+
+    private static bool HasCascadeEntryForeignKey(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string tableName)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"PRAGMA foreign_key_list({tableName});";
+        using var reader = command.ExecuteReader();
+        var count = 0;
+        var matches = true;
+        while (reader.Read())
+        {
+            count++;
+            matches &=
+                string.Equals(
+                    reader.GetString(2),
+                    "clipboard_entries",
+                    StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(
+                    reader.GetString(3),
+                    "entry_id",
+                    StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(
+                    reader.GetString(4),
+                    "id",
+                    StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(
+                    reader.GetString(6),
+                    "CASCADE",
+                    StringComparison.OrdinalIgnoreCase);
+        }
+
+        return count == 1 && matches;
+    }
+
+    private static bool HasIndex(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string tableName,
+        string indexName,
+        bool isUnique,
+        IReadOnlyList<string> expectedColumns)
+    {
+        var found = false;
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = $"PRAGMA index_list({tableName});";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                if (!string.Equals(
+                        reader.GetString(1),
+                        indexName,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                found = reader.GetInt32(2) != 0 == isUnique &&
+                    reader.GetInt32(4) == 0;
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            return false;
+        }
+
+        var actualColumns = new List<string>();
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = $"PRAGMA index_info({indexName});";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                actualColumns.Add(reader.GetString(2));
+            }
+        }
+
+        return actualColumns.SequenceEqual(
+            expectedColumns,
+            StringComparer.OrdinalIgnoreCase);
     }
 
     private static void CreateClipboardTables(
@@ -415,7 +558,9 @@ public sealed class SqliteStorageExecutor : IDisposable
                 last_capture_order INTEGER NOT NULL,
                 capture_count INTEGER NOT NULL,
                 is_pinned INTEGER NOT NULL,
-                revision INTEGER NOT NULL
+                revision INTEGER NOT NULL,
+                file_intent INTEGER NULL,
+                item_count INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE clipboard_representations (
@@ -425,6 +570,42 @@ public sealed class SqliteStorageExecutor : IDisposable
                 inline_text TEXT NOT NULL,
                 byte_length INTEGER NOT NULL,
                 PRIMARY KEY (entry_id, representation_kind),
+                FOREIGN KEY (entry_id) REFERENCES clipboard_entries(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE clipboard_files (
+                entry_id TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                original_path TEXT NOT NULL,
+                canonical_path TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                PRIMARY KEY (entry_id, ordinal),
+                FOREIGN KEY (entry_id) REFERENCES clipboard_entries(id) ON DELETE CASCADE
+            );
+            """;
+        command.ExecuteNonQuery();
+    }
+
+    private static void MigrateClipboardSchema3(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            ALTER TABLE clipboard_entries
+            ADD COLUMN file_intent INTEGER NULL;
+
+            ALTER TABLE clipboard_entries
+            ADD COLUMN item_count INTEGER NOT NULL DEFAULT 0;
+
+            CREATE TABLE clipboard_files (
+                entry_id TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                original_path TEXT NOT NULL,
+                canonical_path TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                PRIMARY KEY (entry_id, ordinal),
                 FOREIGN KEY (entry_id) REFERENCES clipboard_entries(id) ON DELETE CASCADE
             );
             """;

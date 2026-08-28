@@ -24,6 +24,10 @@ internal sealed class ClipboardKnownFormats
     internal const string RtfName = "Rich Text Format";
     internal const string PngName = "PNG";
     internal const string PreferredDropEffectName = "Preferred DropEffect";
+    internal const string FileGroupDescriptorName = "FileGroupDescriptor";
+    internal const string FileGroupDescriptorWName = "FileGroupDescriptorW";
+    internal const string FileContentsName = "FileContents";
+    internal const string ShellIdListName = "Shell IDList Array";
     internal const string ExcludeFromMonitorName =
         "ExcludeClipboardContentFromMonitorProcessing";
     internal const string IncludeInHistoryName = "CanIncludeInClipboardHistory";
@@ -110,6 +114,30 @@ internal sealed class ClipboardKnownFormats
                 usesGlobalMemory: true),
             Registered(
                 native,
+                FileGroupDescriptorName,
+                ClipboardRepresentationKind.FileGroupDescriptor,
+                ClipboardFormatRole.VirtualFile,
+                usesGlobalMemory: false),
+            Registered(
+                native,
+                FileGroupDescriptorWName,
+                ClipboardRepresentationKind.FileGroupDescriptorW,
+                ClipboardFormatRole.VirtualFile,
+                usesGlobalMemory: false),
+            Registered(
+                native,
+                FileContentsName,
+                ClipboardRepresentationKind.FileContents,
+                ClipboardFormatRole.VirtualFile,
+                usesGlobalMemory: false),
+            Registered(
+                native,
+                ShellIdListName,
+                ClipboardRepresentationKind.ShellIdList,
+                ClipboardFormatRole.VirtualFile,
+                usesGlobalMemory: false),
+            Registered(
+                native,
                 ExcludeFromMonitorName,
                 ClipboardRepresentationKind.Unknown,
                 ClipboardFormatRole.Privacy,
@@ -134,6 +162,14 @@ internal sealed class ClipboardKnownFormats
         Png = formats.Single(static format => format.Name == PngName);
         PreferredDropEffect = formats.Single(
             static format => format.Name == PreferredDropEffectName);
+        FileGroupDescriptor = formats.Single(
+            static format => format.Name == FileGroupDescriptorName);
+        FileGroupDescriptorW = formats.Single(
+            static format => format.Name == FileGroupDescriptorWName);
+        FileContents = formats.Single(
+            static format => format.Name == FileContentsName);
+        ShellIdList = formats.Single(
+            static format => format.Name == ShellIdListName);
         ExcludeFromMonitor = formats.Single(
             static format => format.Name == ExcludeFromMonitorName);
         IncludeInHistory = formats.Single(
@@ -149,6 +185,14 @@ internal sealed class ClipboardKnownFormats
     public ClipboardKnownFormat Png { get; }
 
     public ClipboardKnownFormat PreferredDropEffect { get; }
+
+    public ClipboardKnownFormat FileGroupDescriptor { get; }
+
+    public ClipboardKnownFormat FileGroupDescriptorW { get; }
+
+    public ClipboardKnownFormat FileContents { get; }
+
+    public ClipboardKnownFormat ShellIdList { get; }
 
     public ClipboardKnownFormat ExcludeFromMonitor { get; }
 

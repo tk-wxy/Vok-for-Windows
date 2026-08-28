@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Text;
 using Vok.Core.Clipboard;
@@ -86,7 +87,79 @@ public sealed class WindowsClipboardWriterTests
         Assert.Throws<InvalidOperationException>(() =>
             writer.Write(0, RichPayload(), Guid.NewGuid()));
         Assert.Equal(1, native.FreedHandleCount);
+        Assert.Empty(native.TransferredFormats);
         Assert.False(native.IsOpen);
+    }
+
+    [Fact]
+    public void CloseFailureDoesNotFreeHandlesAlreadyTransferredToWindows()
+    {
+        using var native = new WriteFakeWindowsClipboardNativeApi(sequence: 75)
+        {
+            FailClose = true,
+        };
+        var known = new ClipboardKnownFormats(native);
+        var writer = new WindowsClipboardWriter(native, known, Guid.NewGuid());
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            writer.Write(0, RichPayload(), Guid.NewGuid()));
+
+        Assert.Contains("CloseClipboard", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(0, native.FreedHandleCount);
+        Assert.Equal(4, native.TransferredFormats.Count);
+        Assert.False(native.IsOpen);
+    }
+
+    [Theory]
+    [InlineData(ClipboardFileTransferIntent.Copy, 1u)]
+    [InlineData(ClipboardFileTransferIntent.Move, 2u)]
+    public void FileWriteTransfersHdropEffectAndReceiptMarker(
+        ClipboardFileTransferIntent intent,
+        uint expectedEffect)
+    {
+        using var native = new WriteFakeWindowsClipboardNativeApi(sequence: 80);
+        var known = new ClipboardKnownFormats(native);
+        var instanceId = Guid.NewGuid();
+        var writer = new WindowsClipboardWriter(native, known, instanceId);
+        var payload = FilePayload(intent);
+
+        var receipt = writer.Write(0, payload, Guid.NewGuid());
+
+        Assert.Equal(
+            [
+                ClipboardKnownFormats.FileDrop,
+                known.PreferredDropEffect.Id,
+                known.InternalWriteMarker.Id,
+            ],
+            native.TransferredFormats);
+        Assert.Equal(
+            expectedEffect,
+            BinaryPrimitives.ReadUInt32LittleEndian(
+                native.ReadBytes(known.PreferredDropEffect.Id)));
+        Assert.True(ClipboardFileDropCodec.TryDecode(
+            native.ReadBytes(ClipboardKnownFormats.FileDrop),
+            new ClipboardFileNormalizationOptions(),
+            out var decoded));
+        Assert.Equal(
+            payload.FileReferences.Select(static file => file.CanonicalPath),
+            decoded.Select(static file => file.CanonicalPath));
+        Assert.True(writer.IsCurrent(0, receipt));
+    }
+
+    [Fact]
+    public void UnknownFileIntentIsRejectedBeforeClipboardOwnershipChanges()
+    {
+        using var native = new WriteFakeWindowsClipboardNativeApi(sequence: 90);
+        var known = new ClipboardKnownFormats(native);
+        var writer = new WindowsClipboardWriter(native, known, Guid.NewGuid());
+
+        Assert.Throws<InvalidOperationException>(() =>
+            writer.Write(
+                0,
+                FilePayload(ClipboardFileTransferIntent.Unknown),
+                Guid.NewGuid()));
+        Assert.False(native.IsOpen);
+        Assert.Empty(native.TransferredFormats);
     }
 
     private static ClipboardReplayPayload RichPayload() => new(
@@ -110,6 +183,22 @@ public sealed class WindowsClipboardWriterTests
                 12),
         ]);
 
+    private static ClipboardReplayPayload FilePayload(
+        ClipboardFileTransferIntent intent)
+    {
+        var files = new[]
+        {
+            new ClipboardFileReference(0, @"C:\A.txt", @"C:\A.txt", "A.txt"),
+            new ClipboardFileReference(1, @"C:\Folder", @"C:\Folder", "Folder"),
+        };
+        return new ClipboardReplayPayload(
+            ClipboardContentKind.FileList,
+            ClipboardFileSemanticIdentity.Compute(intent, files),
+            [],
+            intent,
+            files);
+    }
+
     private sealed class WriteFakeWindowsClipboardNativeApi(uint sequence)
         : IWindowsClipboardNativeApi, IDisposable
     {
@@ -123,6 +212,8 @@ public sealed class WindowsClipboardWriterTests
         public uint Sequence { get; set; } = sequence;
 
         public string? FailFormatName { get; init; }
+
+        public bool FailClose { get; init; }
 
         public bool IsOpen { get; private set; }
 
@@ -160,7 +251,7 @@ public sealed class WindowsClipboardWriterTests
                 _changed = false;
             }
 
-            return true;
+            return !FailClose;
         }
 
         public bool Empty()

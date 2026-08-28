@@ -76,24 +76,90 @@
                       VerticalContentAlignment="Stretch"
                       Background="Transparent"
                       BorderThickness="0"
-                      ToolTip="粘贴到呼出前目标"
+                      ToolTip="{Binding PasteToolTip}"
                       automation:AutomationProperties.Name="{Binding AutomationName}">
                 <Grid>
-                  <Grid.RowDefinitions>
-                    <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
-                  </Grid.RowDefinitions>
-                  <TextBlock Text="{Binding PreviewText}"
-                             FontSize="12"
-                             LineHeight="18"
-                             TextWrapping="Wrap"
-                             TextTrimming="CharacterEllipsis"
-                             MaxHeight="72" />
-                  <TextBlock Grid.Row="1"
-                             Margin="0,6,0,0"
-                             Text="{Binding CapturedAtText}"
-                             FontSize="10"
-                             Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                  <Grid x:Name="TextCardContent">
+                    <Grid.RowDefinitions>
+                      <RowDefinition Height="*" />
+                      <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="{Binding PreviewText}"
+                               FontSize="12"
+                               LineHeight="18"
+                               TextWrapping="Wrap"
+                               TextTrimming="CharacterEllipsis"
+                               MaxHeight="72" />
+                    <TextBlock Grid.Row="1"
+                               Margin="0,6,0,0"
+                               Text="{Binding CapturedAtText}"
+                               FontSize="10"
+                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                    <Grid.Style>
+                      <Style TargetType="Grid">
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding IsFileList}" Value="True">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </Grid.Style>
+                  </Grid>
+
+                  <Grid x:Name="FileCardContent">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="44" />
+                      <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Width="38"
+                            Height="38"
+                            Margin="0,1,6,0"
+                            Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                            CornerRadius="5"
+                            VerticalAlignment="Top">
+                      <Image Width="32"
+                             Height="32"
+                             Source="{Binding Icon}"
+                             Stretch="Uniform" />
+                    </Border>
+                    <StackPanel Grid.Column="1">
+                      <TextBlock Text="{Binding PreviewText}"
+                                 FontSize="12"
+                                 FontWeight="SemiBold"
+                                 TextTrimming="CharacterEllipsis" />
+                      <TextBlock Margin="0,3,0,0"
+                                 Text="{Binding FileDetailsText}"
+                                 FontSize="10"
+                                 Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                 TextTrimming="CharacterEllipsis" />
+                      <StackPanel Margin="0,5,0,0" Orientation="Horizontal">
+                        <Border Padding="5,1"
+                                Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                                CornerRadius="3">
+                          <TextBlock Text="{Binding IntentText}"
+                                     FontSize="9.5" />
+                        </Border>
+                        <TextBlock Margin="6,1,0,0"
+                                   Text="{Binding AvailabilityText}"
+                                   FontSize="9.5"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                      </StackPanel>
+                      <TextBlock Margin="0,4,0,0"
+                                 Text="{Binding CapturedAtText}"
+                                 FontSize="10"
+                                 Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                    </StackPanel>
+                    <Grid.Style>
+                      <Style TargetType="Grid">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding IsFileList}" Value="True">
+                            <Setter Property="Visibility" Value="Visible" />
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </Grid.Style>
+                  </Grid>
                 </Grid>
               </Button>
 
@@ -101,6 +167,29 @@
                           Orientation="Horizontal"
                           HorizontalAlignment="Right"
                           VerticalAlignment="Bottom">
+                <Button Width="28"
+                        Height="26"
+                        Margin="0,0,4,0"
+                        Padding="0"
+                        Command="{Binding DataContext.CopyFileCommand, RelativeSource={RelativeSource AncestorType={x:Type clipboard:ClipboardView}}}"
+                        CommandParameter="{Binding}"
+                        ToolTip="复制文件列表，不移动源文件"
+                        automation:AutomationProperties.Name="复制文件列表，不移动源文件">
+                  <Button.Style>
+                    <Style TargetType="Button"
+                           BasedOn="{StaticResource {x:Type Button}}">
+                      <Setter Property="Visibility" Value="Collapsed" />
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsFileList}" Value="True">
+                          <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </Button.Style>
+                  <TextBlock Text="&#xE8C8;"
+                             FontFamily="Segoe Fluent Icons"
+                             FontSize="12" />
+                </Button>
                 <Button Width="28"
                         Height="26"
                         Margin="0,0,4,0"
@@ -132,7 +221,7 @@
 
     <TextBlock Grid.Row="1"
                Margin="24"
-               Text="复制文本后会自动显示在这里。&#x0a;当前阶段支持纯文本、HTML 和 RTF。"
+               Text="复制文本或文件后会自动显示在这里。&#x0a;支持文本、HTML、RTF 和文件系统路径。"
                FontSize="12"
                LineHeight="20"
                Foreground="{DynamicResource TextFillColorSecondaryBrush}"

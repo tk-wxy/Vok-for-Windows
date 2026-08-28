@@ -122,7 +122,8 @@ internal sealed class WindowsClipboardSnapshotReader
 
             if (!known.UsesGlobalMemory)
             {
-                var state = known.Role is ClipboardFormatRole.Content
+                var state = known.Role is
+                    ClipboardFormatRole.Content or ClipboardFormatRole.VirtualFile
                     ? ClipboardFormatCaptureState.MetadataOnly
                     : ClipboardFormatCaptureState.NotRequested;
                 captured.Add(entry with { CaptureState = state });

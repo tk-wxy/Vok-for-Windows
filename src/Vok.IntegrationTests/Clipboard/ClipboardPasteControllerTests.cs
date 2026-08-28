@@ -127,6 +127,126 @@ public sealed class ClipboardPasteControllerTests
         Assert.Equal(1, log.Count(static value => value == "materialize"));
     }
 
+    [Fact]
+    public async Task ForceCopyRewritesMoveIntentWithoutHidingOrInjecting()
+    {
+        var log = new List<string>();
+        var entry = FileEntry(ClipboardFileTransferIntent.Move);
+        var payload = FilePayload(entry, ClipboardFileTransferIntent.Move);
+        var repository = new FakeRepository(entry, log, payload);
+        var viewModel = new ClipboardViewModel(repository);
+        var platform = new FakePlatform(log);
+        var input = new FakeInput(log, succeeds: true);
+        using var presentation = new FakePresentation(log, ClipboardFileAvailability.Available);
+        using var controller = new ClipboardPasteController(
+            viewModel,
+            repository,
+            platform,
+            new FakeWorkspace(log, CanInjectHide()),
+            input,
+            presentation);
+
+        await viewModel.CopyFileCommand.ExecuteAsync(new ClipboardItemViewModel(entry));
+
+        Assert.Equal(["materialize", "inspect", "write", "verify"], log);
+        Assert.Equal(ClipboardFileTransferIntent.Copy, platform.LastPayload?.FileIntent);
+        Assert.Equal(
+            ClipboardFileSemanticIdentity.Compute(
+                ClipboardFileTransferIntent.Copy,
+                payload.FileReferences),
+            platform.LastPayload?.SemanticHash);
+        Assert.Equal(0, input.CallCount);
+        Assert.Equal("已复制文件列表；不会移动源文件。", viewModel.StatusText);
+    }
+
+    [Fact]
+    public async Task MoveRestoreFailureUsesExplicitCutWarning()
+    {
+        var log = new List<string>();
+        var entry = FileEntry(ClipboardFileTransferIntent.Move);
+        var repository = new FakeRepository(
+            entry,
+            log,
+            FilePayload(entry, ClipboardFileTransferIntent.Move));
+        var viewModel = new ClipboardViewModel(repository);
+        var platform = new FakePlatform(log);
+        using var presentation = new FakePresentation(log, ClipboardFileAvailability.Available);
+        using var controller = new ClipboardPasteController(
+            viewModel,
+            repository,
+            platform,
+            new FakeWorkspace(log, WorkspaceActionHideResult.NotHidden),
+            new FakeInput(log, succeeds: true),
+            presentation);
+
+        await viewModel.PasteCommand.ExecuteAsync(new ClipboardItemViewModel(entry));
+
+        Assert.Equal(["materialize", "inspect", "write", "hide"], log);
+        Assert.Equal(ClipboardFileTransferIntent.Move, platform.LastPayload?.FileIntent);
+        Assert.Contains("已写入剪切", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.Contains("移动源文件", viewModel.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task MissingFileStopsBeforeClipboardWrite()
+    {
+        var log = new List<string>();
+        var entry = FileEntry(ClipboardFileTransferIntent.Copy);
+        var repository = new FakeRepository(
+            entry,
+            log,
+            FilePayload(entry, ClipboardFileTransferIntent.Copy));
+        var viewModel = new ClipboardViewModel(repository);
+        var platform = new FakePlatform(log);
+        using var presentation = new FakePresentation(log, ClipboardFileAvailability.Missing);
+        using var controller = new ClipboardPasteController(
+            viewModel,
+            repository,
+            platform,
+            new FakeWorkspace(log, CanInjectHide()),
+            new FakeInput(log, succeeds: true),
+            presentation);
+
+        await viewModel.PasteCommand.ExecuteAsync(new ClipboardItemViewModel(entry));
+
+        Assert.Equal(["materialize", "inspect"], log);
+        Assert.Equal(0, platform.WriteCount);
+        Assert.Contains("源文件已失效", viewModel.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task UnknownIntentMainActionWritesCopyBeforeSafePasteSequence()
+    {
+        var log = new List<string>();
+        var entry = FileEntry(ClipboardFileTransferIntent.Unknown);
+        var payload = FilePayload(entry, ClipboardFileTransferIntent.Unknown);
+        var repository = new FakeRepository(entry, log, payload);
+        var viewModel = new ClipboardViewModel(repository);
+        var platform = new FakePlatform(log);
+        using var presentation = new FakePresentation(
+            log,
+            ClipboardFileAvailability.Unknown);
+        using var controller = new ClipboardPasteController(
+            viewModel,
+            repository,
+            platform,
+            new FakeWorkspace(log, CanInjectHide()),
+            new FakeInput(log, succeeds: true),
+            presentation);
+
+        await viewModel.PasteCommand.ExecuteAsync(new ClipboardItemViewModel(entry));
+
+        Assert.Equal(
+            ["materialize", "inspect", "write", "hide", "verify", "inject"],
+            log);
+        Assert.Equal(ClipboardFileTransferIntent.Copy, platform.LastPayload?.FileIntent);
+        Assert.Equal(
+            ClipboardFileSemanticIdentity.Compute(
+                ClipboardFileTransferIntent.Copy,
+                payload.FileReferences),
+            platform.LastPayload?.SemanticHash);
+    }
+
     private static ClipboardEntry Entry() => new(
         Guid.NewGuid(),
         ClipboardContentKind.Text,
@@ -139,6 +259,24 @@ public sealed class ClipboardPasteControllerTests
         false,
         1);
 
+    private static ClipboardEntry FileEntry(ClipboardFileTransferIntent intent)
+    {
+        var files = FileReferences();
+        return new ClipboardEntry(
+            Guid.NewGuid(),
+            ClipboardContentKind.FileList,
+            ClipboardFileSemanticIdentity.Compute(intent, files),
+            "A.txt",
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            1,
+            1,
+            false,
+            1,
+            intent,
+            files.Count);
+    }
+
     private static ClipboardReplayPayload Payload(ClipboardEntry entry) => new(
         ClipboardContentKind.Text,
         entry.SemanticHash,
@@ -147,6 +285,22 @@ public sealed class ClipboardPasteControllerTests
             100,
             entry.PlainPreview,
             12)]);
+
+    private static ClipboardReplayPayload FilePayload(
+        ClipboardEntry entry,
+        ClipboardFileTransferIntent intent)
+    {
+        var files = FileReferences();
+        return new ClipboardReplayPayload(
+            ClipboardContentKind.FileList,
+            ClipboardFileSemanticIdentity.Compute(intent, files),
+            [],
+            intent,
+            files);
+    }
+
+    private static IReadOnlyList<ClipboardFileReference> FileReferences() =>
+        [new ClipboardFileReference(0, @"C:\A.txt", @"C:\A.txt", "A.txt")];
 
     private static WorkspaceActionHideResult CanInjectHide()
     {
@@ -160,7 +314,10 @@ public sealed class ClipboardPasteControllerTests
                 target.FocusedWindowHandle));
     }
 
-    private sealed class FakeRepository(ClipboardEntry entry, List<string> log)
+    private sealed class FakeRepository(
+        ClipboardEntry entry,
+        List<string> log,
+        ClipboardReplayPayload? replayPayload = null)
         : IClipboardHistoryRepository
     {
         public Task<ClipboardPage> LoadPageAsync(
@@ -174,12 +331,17 @@ public sealed class ClipboardPasteControllerTests
             DateTimeOffset capturedUtc,
             CancellationToken cancellationToken = default) => Task.FromResult(entry);
 
+        public Task<ClipboardEntry> UpsertFileListAsync(
+            ClipboardFileListContent content,
+            DateTimeOffset capturedUtc,
+            CancellationToken cancellationToken = default) => Task.FromResult(entry);
+
         public Task<ClipboardReplayPayload?> GetReplayPayloadAsync(
             Guid entryId,
             CancellationToken cancellationToken = default)
         {
             log.Add("materialize");
-            return Task.FromResult<ClipboardReplayPayload?>(Payload(entry));
+            return Task.FromResult<ClipboardReplayPayload?>(replayPayload ?? Payload(entry));
         }
 
         public Task<ClipboardEntry?> SetPinnedAsync(
@@ -200,6 +362,8 @@ public sealed class ClipboardPasteControllerTests
         public bool HoldWrite { get; init; }
 
         public int WriteCount { get; private set; }
+
+        public ClipboardReplayPayload? LastPayload { get; private set; }
 
         public TaskCompletionSource WriteStarted { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -224,6 +388,7 @@ public sealed class ClipboardPasteControllerTests
         {
             log.Add("write");
             WriteCount++;
+            LastPayload = payload;
             WriteStarted.TrySetResult();
             if (HoldWrite)
             {
@@ -308,6 +473,26 @@ public sealed class ClipboardPasteControllerTests
             log.Add("inject");
             CallCount++;
             return Task.FromResult(succeeds);
+        }
+    }
+
+    private sealed class FakePresentation(
+        List<string> log,
+        ClipboardFileAvailability availability) : IClipboardFilePresentationService
+    {
+        public Task<ClipboardFilePresentation> InspectAsync(
+            IReadOnlyList<ClipboardFileReference> files,
+            int pixelSize,
+            CancellationToken cancellationToken = default)
+        {
+            _ = files;
+            _ = pixelSize;
+            log.Add("inspect");
+            return Task.FromResult(new ClipboardFilePresentation(null, availability));
+        }
+
+        public void Dispose()
+        {
         }
     }
 }

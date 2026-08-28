@@ -112,9 +112,12 @@ public partial class App : Application
         services.AddSingleton<IClipboardHistoryRepository>(provider =>
             new SqliteClipboardHistoryRepository(provider.GetRequiredService<SqliteStorageExecutor>()));
         services.AddSingleton<IClipboardPlatformService, WindowsClipboardPlatformService>();
-        services.AddSingleton<IClipboardCaptureNormalizer, ClipboardTextNormalizer>();
+        services.AddSingleton<IClipboardCaptureNormalizer, ClipboardContentNormalizer>();
         services.AddSingleton<IPasteInputService, Win32PasteInputService>();
+        services.AddSingleton<WindowsShellStaExecutor>();
         services.AddSingleton<ILauncherShellService, WindowsLauncherShellService>();
+        services.AddSingleton<IClipboardFilePresentationService,
+            WindowsClipboardFilePresentationService>();
         services.AddSingleton<IAppThemeApplier>(_ => new WpfAppThemeApplier(Current));
         services.AddSingleton<AppearanceController>();
         services.AddSingleton<HotkeyController>();

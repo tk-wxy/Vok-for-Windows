@@ -104,7 +104,7 @@ sequence 去重和内容去重是两层不同门禁：前者过滤重复通知�
 
 选择规则如下：
 
-1. 有有效 `CF_HDROP` 且存在明确 Shell 传输语义时，选择 `FileList`；
+1. 有有效 `CF_HDROP` 时选择 `FileList`；`Preferred DropEffect` 缺失只令意图成为 Unknown，不能让同快照的文本或图片反向抢占文件列表；
 2. 有显式 PNG/DIB/Bitmap 且不存在更强文件传输语义时，选择 `Image`；
 3. 其余有 HTML/RTF/Unicode/ANSI 文本时，选择 `Text`；
 4. 多个候选仍冲突时，以来源程序提供的原生枚举顺序作为决胜条件；Windows 合成出的降级格式不能反过来抢占更高保真原始格式；
@@ -165,14 +165,14 @@ clipboard_representations
 
 clipboard_files
   entry_id, ordinal, original_path, canonical_path,
-  display_name, existed_at_capture
+  display_name
 
 content_assets
   hash, relative_path, media_type, byte_length,
   pixel_width, pixel_height, ref_count, state, created_utc
 ```
 
-- `clipboard_entries(kind, semantic_hash, file_intent)` 提供内容幂等，`last_capture_order, id` 提供稳定 keyset 分页；
+- `clipboard_entries(kind, semantic_hash)` 提供内容幂等，文件语义哈希已经包含 `file_intent`；`last_capture_order, id` 提供稳定 keyset 分页；
 - 文件只保存引用，不复制、移动、删除用户源文件。显示时可异步刷新“已失效”状态，但不能因暂时不可访问自动删历史；
 - 资产先写同卷临时文件并校验，再原子提交到内容寻址路径；数据库事务只引用已就绪资产；
 - 删除、自动清理和去重替换只调整引用与 tombstone，事务提交后再回收零引用资产；失败时保留可诊断 tombstone，不留下数据库指向不存在文件；
@@ -307,6 +307,137 @@ pwsh -NoProfile -File tools/Probe-M2Clipboard.ps1
 - 完成 COPY/MOVE 写回、显式取用和“删除历史不删源文件”验证；
 - 虚拟文件只输出明确不支持诊断，不在本阶段物化附件。
 
+状态：已完成并通过验收。首次物理验收揭示 Explorer COPY 的 `Preferred DropEffect=5 (COPY | LINK)` 被旧实现按精确值白名单拒绝，因此有效 `CF_HDROP` 没有进入仓储，真实库当时只有一条路径文本记录。实现现按 `DROPEFFECT` 掩码区分 COPY/MOVE，COPY 与 MOVE 同时出现仍整条拒绝，避免模糊值被猜成移动。Release 58/58 Core 与 246/246 Windows/WPF 共 304/304 测试、0 警告构建、win-x64 自包含发布、PowerShell AST 和隔离 Window Station 探针通过；探针 COPY 语料已改为真实观测值 5。默认 Release PID 20420 运行且响应正常，交互同形语料已令真实用户库生成首条 `FileList` 与 `clipboard_files` 路径行；2026-08-28 用户复测 Explorer 文件复制/剪切、文件卡展示及实际粘贴均符合预期，同意提交。重启 replay、混合 DPI 和离线/权限路径保留为后续专项回归，不阻塞 M2.2 收口。
+
+#### M2.2.1 实施前基线与交付边界
+
+实施前，M2.1 已经在同一个 Clipboard STA 快照中复制 `CF_HDROP` 与 `Preferred DropEffect` 的 HGLOBAL 字节，但业务规范化器会在出现文件格式时安全跳过文本；schema 3、回放载荷、writer 和卡片仍是纯文本形态。本轮 M2.2 已按这些边界增量扩展，没有更换 listener、sequence coordinator、自写 marker/receipt、SQLite 执行器或 Workspace 粘贴门禁。
+
+本阶段交付：
+
+- 识别一个有效 `CF_HDROP` 中按来源顺序排列的文件与目录绝对路径；支持 Unicode，兼容严格可解码的 ANSI `DROPFILES`；
+- 读取 4 字节 `Preferred DropEffect` 并按 `DROPEFFECT` 位掩码解析：仅有 COPY 操作位时记为复制，仅有 MOVE 操作位时记为剪切；允许 Explorer 附带 LINK、SCROLL 或未来扩展位，COPY 与 MOVE 同时出现、仅 LINK/未知位或畸形载荷则报告不支持；缺失时记为 Unknown，任何模糊值都不得猜测为 MOVE；
+- 有效 `CF_HDROP` 优先于同一快照附带的文本、HTML、位图或文件名降级格式，避免把图片文件显示成图片或路径文本；
+- 路径引用、意图、顺序、数量和文件卡持久化；源文件内容不复制进 Vok，不解析 `.lnk`，不跟随符号链接或重解析点；
+- 文件卡、首项 Shell 图标、COPY/MOVE 标记、可确认的缺失/暂不可访问状态、固定、删除、主粘贴动作和强制 COPY 次动作；
+- 用 `CF_HDROP` + `Preferred DropEffect` 写回，继续使用 M2.1 receipt 防止自写回流与外部覆盖竞态。
+
+本阶段不支持 `FileGroupDescriptorW/FileContents`、Shell namespace PIDL、云盘按需物化、Outlook 附件等虚拟文件。平台只编目这些格式并发布不含文件名/正文的 `UnsupportedVirtualFiles` 诊断；不能把描述符名称冒充本地路径，也不能主动请求任意 `IStream`。
+
+#### M2.2.2 Core 业务模型
+
+将当前文本专用规范化入口提升为按快照只选择一种主业务内容的 router。文本和文件各自由窄 normalizer 负责，App Controller 只对 router 的结果做类型分派，不自行重复格式优先级判断：
+
+```text
+ClipboardNormalizedContent
+├─ ClipboardTextContent
+└─ ClipboardFileListContent
+   ├─ SemanticHash
+   ├─ CapturedIntent: Unknown | Copy | Move
+   └─ Files[]
+      ├─ Ordinal
+      ├─ OriginalPath
+      ├─ CanonicalPath
+      └─ DisplayName
+
+ClipboardEntry
+├─ Kind
+├─ FileIntent?             # 文本为 null
+├─ ItemCount               # 文本为 0
+└─ 既有排序、固定、计数与 revision 字段
+
+ClipboardReplayPayload
+├─ Representations[]       # 文本
+├─ FileIntent?             # 文件回写的实际意图
+└─ Files[]                 # 文件回写
+```
+
+`Unknown` 是捕获事实，不是 MOVE。主动作与“复制”次动作对 Unknown 都生成 COPY replay payload；只有存储值明确为 Move 且用户触发卡片主动作，实际回写意图才是 MOVE。强制 COPY 会按实际 COPY 意图重新计算 replay semantic hash，使 marker/receipt 描述真实写回内容，而不是沿用剪切记录的哈希。
+
+文件语义哈希使用带版本前缀和长度字段的二进制输入，包含意图、项目数及每个项目按顺序排列的 Windows 大小写不敏感规范路径；不能用分隔符拼接造成歧义。顺序、重复项目和 COPY/MOVE 都是用户可观察语义；仅路径大小写差异不制造新卡。
+
+#### M2.2.3 `DROPFILES` 解码与路径规则
+
+文件 normalizer 在系统剪贴板已关闭后解析自有字节，绝不保留 HDROP/HGLOBAL：
+
+1. payload 至少包含 20 字节 `DROPFILES`；按 little-endian 读取 `pFiles` 和 `fWide`，要求偏移不小于结构大小且落在 payload 内，Unicode 数据偏移必须为 2 字节对齐；
+2. 从 `pFiles` 起读取以额外 NUL 结束的字符串序列；每项必须非空，整个序列必须存在双 NUL 终止，终止后的 padding 不参与语义；
+3. Unicode 使用严格 UTF-16LE；ANSI 使用系统 ANSI code page 与异常 fallback，无法无损解码时整条文件记录失败，不提交半条历史；
+4. 每项必须是无内嵌 NUL、可由 `Path.GetFullPath` 处理的 Windows fully-qualified 路径；统一目录分隔符并仅去除非根路径的尾部分隔符，保留 UNC/长路径和来源显示文本；
+5. canonical path 只用于相等性与写回校验，不解析快捷方式、不访问文件内容、不改变实际大小写，也不把网络不可访问误判为文件不存在；
+6. 任一项目畸形、超限或不完整时拒绝整个 `CF_HDROP`，同快照附带文本也不降级成文本卡，避免把损坏文件传输误分类。
+
+新增集中配置 `ClipboardFileNormalizationOptions`，初始命名门槛为最多 4096 项、单路径最多 32,767 字符、所有路径合计最多 1,048,576 字符；原始 HGLOBAL 仍同时受 `ClipboardCaptureOptions` 的单格式与整快照字节预算约束。门槛只在真实大批量 Explorer 语料后调整，不散落固定数值。
+
+文件可用性不是捕获提交的同步前置条件。卡片展示服务在非 UI、非 Clipboard STA 上异步检查：明确 `ERROR_FILE_NOT_FOUND/ERROR_PATH_NOT_FOUND` 才标记 Missing；权限、离线网络、未知重解析或其他 I/O 失败标记 Unavailable，不冒充 Missing。回放前重新校验路径结构并拒绝已明确 Missing 的本地引用；远程/暂不可访问引用保留 Unknown/Unavailable 事实，由用户决定是否写回，不能为等待网络阻塞 UI 或应用退出。
+
+#### M2.2.4 schema 4 与仓储事务
+
+schema 4 在既有单连接 WAL 执行器中扩展，不新建数据库线程：
+
+```text
+clipboard_entries
+  + file_intent INTEGER NULL
+  + item_count INTEGER NOT NULL DEFAULT 0
+
+clipboard_files
+  entry_id TEXT NOT NULL
+  ordinal INTEGER NOT NULL
+  original_path TEXT NOT NULL
+  canonical_path TEXT NOT NULL
+  display_name TEXT NOT NULL
+  PRIMARY KEY (entry_id, ordinal)
+  FOREIGN KEY (entry_id) REFERENCES clipboard_entries(id) ON DELETE CASCADE
+```
+
+- 启动时同时核验 `user_version`、三张剪贴板表的真实列集合、外键和关键索引；只接受无剪贴板表、已知 schema 3 或完整 schema 4，未知/半迁移结构原样回滚并让存储明确失败；
+- schema 3→4 在单事务中增加两列、创建 `clipboard_files`，既有文本记录原样保留为 `file_intent=NULL,item_count=0`，提交成功后才写 `PRAGMA user_version=4`；
+- `clipboard_entries(kind, semantic_hash)` 继续作为内容幂等键，因为文件 hash 已包含意图；不再把 `file_intent` 重复加入唯一键；
+- `UpsertFileListAsync` 与 entry/files 的插入、重复捕获回顶、capture count/revision 更新和旧文件行替换在同一事务；分页仍只查 entry 轻量投影，文件明细只在卡片呈现或 replay materialize 时按 entry 加载；
+- `RemoveAsync` 只依靠外键级联删除 Vok 元数据。自动测试以真实临时文件断言固定、重复、删除、迁移、失败回滚和仓储 Dispose 都不会调用文件删除/移动 API，也不会改变源文件内容；
+- `GetReplayPayloadAsync` 对文本仍要求表示层，对文件则要求至少一条连续 ordinal 的文件行；缺行、空列表、kind/intent 不一致视为局部损坏并返回不可回放，不拼出部分列表。
+
+#### M2.2.5 Shell 展示与文件卡
+
+现有 `WindowsLauncherShellService` 的 STA、取消认领与 256 项图标缓存可复用实现机制，但 `ILauncherShellService` 接口绑定启动台模型。实施时提取由 DI 唯一拥有的有界 `WindowsShellStaExecutor`，启动台适配器与新增 `IClipboardFilePresentationService` 都只向它投递窄命令；适配器不得分别创建或释放第二条 Shell/COM STA。
+
+剪贴板展示服务只为每条文件卡的首项请求 32–48 px Shell 图标与可用性状态，返回 PNG 字节和非敏感状态；App 在 UI Dispatcher 上解码并 Freeze `BitmapImage`。请求按当前 64 条数据页排队、受有界缓存和 lifetime cancellation 控制；回收容器不持有 COM/HBITMAP，条目离开集合或应用退出后迟到结果不得写回新 ViewModel。
+
+文件卡沿用当前 Recycling ListBox，不创建第二列表：
+
+- 首行显示首项文件名，随后显示“另外 N 项”；次行显示所在路径摘要与捕获时间；
+- Copy 显示“复制”，Move 显示高辨识度“剪切”，Unknown 显示“意图未知 · 将复制”；Missing 显示“源文件已失效”，Unavailable 显示“暂不可访问”，两者不能混用；
+- 主按钮沿用“粘贴到呼出前目标”；Move 的 tooltip 和 AutomationName 必须明确“粘贴可能移动源文件”；
+- 文件卡增加独立“复制”次动作，只把文件列表以 COPY 写到系统剪贴板并保持工作台可见，不注入 Ctrl+V；固定和卡内二次确认删除继续复用现有行为；
+- 删除成功文案明确“只删除 Vok 历史，不删除源文件”；空状态更新为当前真实能力“复制文本或文件后会自动显示”。筛选按钮仍不提前启用。
+
+#### M2.2.6 COPY/MOVE 回写与粘贴门禁
+
+`WindowsClipboardWriter` 按 payload kind 分支，文件分支一次性构造并写入：
+
+1. `CF_HDROP`：20 字节 `DROPFILES`，`pFiles=20`、`fWide=TRUE`，其后为每个 fully-qualified UTF-16LE 路径及最终额外 NUL；禁止空列表、相对路径、内嵌 NUL和总大小溢出；
+2. `Preferred DropEffect`：4 字节 little-endian DWORD，只允许 `DROPEFFECT_COPY=1` 或 `DROPEFFECT_MOVE=2`；
+3. `Vok.Internal.ClipboardWrite`：继续绑定 instance、operation 和这次实际 replay semantic hash。
+
+三种格式与 `EmptyClipboard` 仍由一个可认领的 Clipboard STA write command 拥有。任一 `GlobalAlloc/GlobalLock/SetClipboardData/CloseClipboard` 失败必须释放尚未转移的句柄并使动作失败；已转移给系统的句柄不得再次释放。receipt、sequence 核验、外部覆盖失效和 SelfWrite disposition 不增加第二套状态。
+
+文件主动作继续走 `Materialize→Write→Hide/Restore→Verify→Inject`。状态文案按实际意图区分：COPY 失败后可提示“已复制，可手动粘贴”，MOVE 则必须提示“已写入剪切；手动粘贴将移动源文件”，不能用“已复制”掩盖剪切。已知 Missing 在 Write 前失败并保持工作台可见；恢复失败、UIPI 降级、焦点变化或注入失败都不向未确认窗口发送输入。强制 COPY 次动作只执行 Materialize→Write→Verify，不隐藏、不恢复、不注入。
+
+#### M2.2.7 实施顺序与自动门禁
+
+按下列顺序一次只打开一条新风险链；在最后一步前不把半成品文件卡接入应用组合根：
+
+1. **真实格式语料**：扩展隔离 Window Station producer，生成 Unicode/ANSI、多项目、COPY/MOVE/无意图、畸形 header/offset/终止符和虚拟文件目录；先锁定 raw snapshot 与格式优先级；
+2. **Core + normalizer**：加入文件模型、router、严格 `DROPFILES` parser、意图解析、路径规范化和版本化哈希；覆盖顺序、大小写、根路径、UNC、长路径、重复项目、所有门槛与整条拒绝；
+3. **schema 4**：完成已知 schema 3 单事务迁移、文件 upsert/replay/cascade 与结构失败回滚；以 M2.1 文本测试证明旧路径无回归；
+4. **Shell + UI**：抽取单一 Shell STA executor，增加文件展示适配器、异步图标/状态与异构卡片；真实浅/深、80 卡、100%/150%/200% 渲染检查容器回收、裁切和可访问名称；
+5. **writer + actions**：加入 HDROP/effect 写回、实际意图 hash、强制 COPY 与意图化状态文案；覆盖取消认领、部分句柄转移、Close 失败、双击、旧代、外部覆盖、恢复/焦点失败及成功顺序；
+6. **产品接入与发布**：组合根一次启用完整文件纵向切片；Release 全量测试、0 警告构建、win-x64 自包含发布、PowerShell AST、句柄/线程退出和独立探针全部通过后再做真机验收。
+
+隔离探针最低断言：一次 Explorer 等价 COPY 与一次 MOVE 各只形成一条 FileList；项目顺序和 Unicode 路径往返不变；Vok 写回包含有效 HDROP/effect/marker；监听结果为 SelfWrite；外部覆盖后旧 receipt 失效。自动测试不得读写交互桌面的真实剪贴板。
+
+真机验收只使用临时测试目录中的可丢弃文件：Explorer 复制/剪切单文件、多文件、目录和混合列表，确认卡片名称/数量/意图/图标；重启后历史仍可 replay；COPY 不改变源，MOVE 只在明确剪切主动作后由 Explorer 移动；删除历史不触碰源；失效、离线网络、权限不足和错误目标均明确降级且不误注入。验收后只读确认用户库 schema 4 与文件行存在，再宣布 M2.2 完成。
+
 ### M2.3：图片纵向切片
 
 - 完成 PNG/DIBV5/DIB/Bitmap 的白名单读取、Alpha 正确的无损规范化、像素级去重、原图/缩略图资产事务和图片卡；
@@ -371,3 +502,6 @@ pwsh -NoProfile -File tools/Probe-M2Clipboard.ps1
 - [Using the Clipboard](https://learn.microsoft.com/windows/win32/dataxchg/using-the-clipboard)
 - [HTML Clipboard Format](https://learn.microsoft.com/windows/win32/dataxchg/html-clipboard-format)
 - [Shell Clipboard Formats](https://learn.microsoft.com/windows/win32/shell/clipboard)
+- [DROPEFFECT Constants](https://learn.microsoft.com/windows/win32/com/dropeffect-constants)
+- [DROPFILES structure](https://learn.microsoft.com/windows/win32/api/shlobj_core/ns-shlobj_core-dropfiles)
+- [DragQueryFileW](https://learn.microsoft.com/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew)

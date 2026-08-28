@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Text;
 using Vok.Core.Clipboard;
@@ -40,15 +41,7 @@ internal sealed class WindowsClipboardWriter
     {
         ArgumentNullException.ThrowIfNull(payload);
         ArgumentOutOfRangeException.ThrowIfEqual(operationId, Guid.Empty);
-        if (payload.Kind is not ClipboardContentKind.Text)
-        {
-            throw new NotSupportedException(
-                $"Clipboard replay kind '{payload.Kind}' is not implemented in M2.1.");
-        }
-
-        var plainText = payload.PlainText ?? throw new InvalidOperationException(
-            "A text clipboard replay payload must contain Unicode text.");
-        var formats = CreateFormats(payload, plainText, operationId);
+        var formats = CreateFormats(payload, operationId);
         if (!_native.Open(ownerWindow))
         {
             throw new InvalidOperationException(
@@ -56,6 +49,7 @@ internal sealed class WindowsClipboardWriter
         }
 
         Exception? failure = null;
+        var clipboardEmptied = false;
         try
         {
             if (!_native.Empty())
@@ -63,6 +57,8 @@ internal sealed class WindowsClipboardWriter
                 throw new InvalidOperationException(
                     $"EmptyClipboard failed with Win32 error {_native.GetLastError()}.");
             }
+
+            clipboardEmptied = true;
 
             foreach (var format in formats)
             {
@@ -72,6 +68,14 @@ internal sealed class WindowsClipboardWriter
         catch (Exception exception)
         {
             failure = exception;
+            if (clipboardEmptied && !_native.Empty())
+            {
+                failure = new AggregateException(
+                    failure,
+                    new InvalidOperationException(
+                        "Unable to clear a partial clipboard write; " +
+                        $"Win32 error {_native.GetLastError()}."));
+            }
         }
 
         if (!_native.Close())
@@ -136,6 +140,23 @@ internal sealed class WindowsClipboardWriter
 
     private IReadOnlyList<WriteFormat> CreateFormats(
         ClipboardReplayPayload payload,
+        Guid operationId)
+    {
+        return payload.Kind switch
+        {
+            ClipboardContentKind.Text => CreateTextFormats(
+                payload,
+                payload.PlainText ?? throw new InvalidOperationException(
+                    "A text clipboard replay payload must contain Unicode text."),
+                operationId),
+            ClipboardContentKind.FileList => CreateFileFormats(payload, operationId),
+            _ => throw new NotSupportedException(
+                $"Clipboard replay kind '{payload.Kind}' is not implemented."),
+        };
+    }
+
+    private IReadOnlyList<WriteFormat> CreateTextFormats(
+        ClipboardReplayPayload payload,
         string plainText,
         Guid operationId)
     {
@@ -168,6 +189,47 @@ internal sealed class WindowsClipboardWriter
                 operationId,
                 payload.SemanticHash).Encode()));
         return formats;
+    }
+
+    private IReadOnlyList<WriteFormat> CreateFileFormats(
+        ClipboardReplayPayload payload,
+        Guid operationId)
+    {
+        if (payload.FileIntent is not (
+                ClipboardFileTransferIntent.Copy or
+                ClipboardFileTransferIntent.Move) ||
+            payload.FileReferences.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "A file replay payload requires an explicit COPY or MOVE intent and at least one path.");
+        }
+
+        var actualHash = ClipboardFileSemanticIdentity.Compute(
+            payload.FileIntent.Value,
+            payload.FileReferences);
+        if (!string.Equals(actualHash, payload.SemanticHash, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The file replay semantic hash does not match its paths and intent.");
+        }
+
+        var effect = new byte[sizeof(uint)];
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            effect,
+            payload.FileIntent is ClipboardFileTransferIntent.Copy ? 1u : 2u);
+        return
+        [
+            new WriteFormat(
+                ClipboardKnownFormats.FileDrop,
+                ClipboardFileDropCodec.Encode(payload.FileReferences)),
+            new WriteFormat(_knownFormats.PreferredDropEffect.Id, effect),
+            new WriteFormat(
+                _knownFormats.InternalWriteMarker.Id,
+                new ClipboardInternalWriteMarker(
+                    _instanceId,
+                    operationId,
+                    payload.SemanticHash).Encode()),
+        ];
     }
 
     private void Transfer(uint format, byte[] bytes)

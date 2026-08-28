@@ -92,15 +92,27 @@ public sealed class ClipboardController : IDisposable
                     continue;
                 }
 
-                var content = _normalizer.NormalizeText(capture);
+                var content = _normalizer.Normalize(capture);
                 if (content is null)
                 {
                     continue;
                 }
 
-                var entry = await _repository
-                    .UpsertTextAsync(content, capture.CapturedUtc, _lifetime.Token)
-                    .ConfigureAwait(false);
+                var entry = content switch
+                {
+                    ClipboardTextContent text => await _repository
+                        .UpsertTextAsync(text, capture.CapturedUtc, _lifetime.Token)
+                        .ConfigureAwait(false),
+                    ClipboardFileListContent files => await _repository
+                        .UpsertFileListAsync(files, capture.CapturedUtc, _lifetime.Token)
+                        .ConfigureAwait(false),
+                    _ => null,
+                };
+                if (entry is null)
+                {
+                    continue;
+                }
+
                 _workspaceWindow.PostNormal(() => _viewModel.ApplyCaptured(entry));
             }
         }

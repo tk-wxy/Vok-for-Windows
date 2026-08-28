@@ -1,6 +1,9 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using System.Windows.Media.Imaging;
 using Vok.Core.Clipboard;
 
 namespace Vok.Features.Clipboard;
@@ -9,11 +12,14 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
 {
     private const int PageSize = 64;
     private readonly IClipboardHistoryRepository _repository;
+    private readonly IClipboardFilePresentationService? _filePresentation;
     private readonly CancellationTokenSource _lifetime = new();
+    private readonly Queue<ClipboardItemViewModel> _pendingFilePresentations = new();
     private ClipboardPageCursor? _nextCursor;
     private bool _initialized;
     private bool _disposed;
     private Guid? _pendingDeleteId;
+    private bool _filePresentationPumpRunning;
 
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private bool _isListenerReady;
@@ -22,8 +28,16 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
     [ObservableProperty] private int _totalCount;
 
     public ClipboardViewModel(IClipboardHistoryRepository repository)
+        : this(repository, filePresentation: null)
+    {
+    }
+
+    public ClipboardViewModel(
+        IClipboardHistoryRepository repository,
+        IClipboardFilePresentationService? filePresentation)
     {
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
+        _filePresentation = filePresentation;
     }
 
     public ObservableCollection<ClipboardItemViewModel> Items { get; } = [];
@@ -33,6 +47,8 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
     public bool IsEmpty => _initialized && !IsLoading && !HasError && Items.Count == 0;
 
     internal Func<ClipboardItemViewModel, Task>? PasteActionAsync { get; set; }
+
+    internal Func<ClipboardItemViewModel, Task>? CopyFileActionAsync { get; set; }
 
     public async Task InitializeAsync()
     {
@@ -71,7 +87,9 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
         }
         else
         {
-            Items.Insert(0, new ClipboardItemViewModel(entry));
+            var item = new ClipboardItemViewModel(entry);
+            Items.Insert(0, item);
+            QueueFilePresentation(item);
             if (entry.CaptureCount == 1)
             {
                 TotalCount++;
@@ -88,7 +106,7 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
         IsListenerReady = true;
         HasError = false;
         StatusText = Items.Count == 0
-            ? "复制文本后会自动显示在这里。"
+            ? "复制文本或文件后会自动显示在这里。"
             : "剪贴板监听已就绪。";
         OnPropertyChanged(nameof(IsEmpty));
     }
@@ -165,6 +183,8 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
 
         _disposed = true;
         _lifetime.Cancel();
+        PasteActionAsync = null;
+        CopyFileActionAsync = null;
         _lifetime.Dispose();
     }
 
@@ -178,6 +198,18 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
 
         ClearPendingDelete();
         await PasteActionAsync(item).ConfigureAwait(true);
+    }
+
+    [RelayCommand]
+    private async Task CopyFileAsync(ClipboardItemViewModel? item)
+    {
+        if (item is null || !item.IsFileList || CopyFileActionAsync is null)
+        {
+            return;
+        }
+
+        ClearPendingDelete();
+        await CopyFileActionAsync(item).ConfigureAwait(true);
     }
 
     [RelayCommand]
@@ -227,7 +259,9 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
             {
                 if (Items.All(item => item.Id != entry.Id))
                 {
-                    Items.Add(new ClipboardItemViewModel(entry));
+                    var item = new ClipboardItemViewModel(entry);
+                    Items.Add(item);
+                    QueueFilePresentation(item);
                 }
             }
 
@@ -235,8 +269,8 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
             TotalCount = page.TotalCount;
             HasError = false;
             StatusText = Items.Count == 0
-                ? "复制文本后会自动显示在这里。"
-                : $"已加载 {Items.Count} 条文本历史。";
+                ? "复制文本或文件后会自动显示在这里。"
+                : $"已加载 {Items.Count} 条剪贴板历史。";
             OnPropertyChanged(nameof(HasMore));
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
@@ -269,5 +303,93 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
             Items.FirstOrDefault(item => item.Id == pendingId)?.SetDeleteArmed(false);
             _pendingDeleteId = null;
         }
+    }
+
+    private void QueueFilePresentation(ClipboardItemViewModel item)
+    {
+        if (!item.IsFileList || _filePresentation is null)
+        {
+            return;
+        }
+
+        _pendingFilePresentations.Enqueue(item);
+        if (_filePresentationPumpRunning)
+        {
+            return;
+        }
+
+        _filePresentationPumpRunning = true;
+        _ = PumpFilePresentationsAsync();
+    }
+
+    private async Task PumpFilePresentationsAsync()
+    {
+        try
+        {
+            while (!_disposed && _pendingFilePresentations.TryDequeue(out var item))
+            {
+                try
+                {
+                    var payload = await _repository
+                        .GetReplayPayloadAsync(item.Id, _lifetime.Token)
+                        .ConfigureAwait(true);
+                    if (payload is null || payload.Kind is not ClipboardContentKind.FileList ||
+                        payload.FileReferences.Count == 0)
+                    {
+                        item.MarkFilePresentationUnavailable();
+                        continue;
+                    }
+
+                    var presentation = await _filePresentation!
+                        .InspectAsync(payload.FileReferences, 48, _lifetime.Token)
+                        .ConfigureAwait(true);
+                    if (!_disposed && Items.Contains(item))
+                    {
+                        item.ApplyFilePresentation(
+                            payload,
+                            presentation,
+                            presentation.IconPngBytes is null
+                                ? null
+                                : DecodeIcon(presentation.IconPngBytes));
+                    }
+                }
+                catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception exception)
+                {
+                    if (!_disposed && Items.Contains(item))
+                    {
+                        item.MarkFilePresentationUnavailable();
+                    }
+
+                    Trace.TraceWarning(
+                        "Clipboard file presentation failed with {0}.",
+                        exception.GetType().Name);
+                }
+            }
+        }
+        finally
+        {
+            _filePresentationPumpRunning = false;
+            if (!_disposed && _pendingFilePresentations.Count != 0)
+            {
+                _filePresentationPumpRunning = true;
+                _ = PumpFilePresentationsAsync();
+            }
+        }
+    }
+
+    private static BitmapImage DecodeIcon(byte[] pngBytes)
+    {
+        using var stream = new MemoryStream(pngBytes, writable: false);
+        var image = new BitmapImage();
+        image.BeginInit();
+        image.CacheOption = BitmapCacheOption.OnLoad;
+        image.StreamSource = stream;
+        image.EndInit();
+        image.Freeze();
+        return image;
     }
 }

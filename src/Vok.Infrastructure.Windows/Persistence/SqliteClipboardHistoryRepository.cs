@@ -1,12 +1,15 @@
 using System.Globalization;
+using System.IO;
 using Microsoft.Data.Sqlite;
 using Vok.Core.Clipboard;
+using Vok.Infrastructure.Windows.Clipboard;
 
 namespace Vok.Infrastructure.Windows.Persistence;
 
 public sealed class SqliteClipboardHistoryRepository : IClipboardHistoryRepository, IDisposable
 {
     private const int MaximumPageSize = 256;
+    private static readonly ClipboardFileNormalizationOptions FileOptions = new();
     private readonly SqliteStorageExecutor _executor;
     private readonly bool _ownsExecutor;
 
@@ -48,6 +51,17 @@ public sealed class SqliteClipboardHistoryRepository : IClipboardHistoryReposito
         ValidateTextContent(content);
         return _executor.ExecuteAsync(
             connection => UpsertText(connection, content, capturedUtc),
+            cancellationToken);
+    }
+
+    public Task<ClipboardEntry> UpsertFileListAsync(
+        ClipboardFileListContent content,
+        DateTimeOffset capturedUtc,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateFileListContent(content);
+        return _executor.ExecuteAsync(
+            connection => UpsertFileList(connection, content, capturedUtc),
             cancellationToken);
     }
 
@@ -105,7 +119,8 @@ public sealed class SqliteClipboardHistoryRepository : IClipboardHistoryReposito
         command.CommandText = """
             SELECT id, kind, semantic_hash, plain_preview,
                    first_captured_utc, last_captured_utc,
-                   last_capture_order, capture_count, is_pinned, revision
+                   last_capture_order, capture_count, is_pinned, revision,
+                   file_intent, item_count
             FROM clipboard_entries
             WHERE $afterOrder IS NULL
                OR last_capture_order < $afterOrder
@@ -181,16 +196,69 @@ public sealed class SqliteClipboardHistoryRepository : IClipboardHistoryReposito
         return entry;
     }
 
+    private static ClipboardEntry UpsertFileList(
+        SqliteConnection connection,
+        ClipboardFileListContent content,
+        DateTimeOffset capturedUtc)
+    {
+        using var transaction = connection.BeginTransaction();
+        var existing = FindBySemanticHash(
+            connection,
+            transaction,
+            ClipboardContentKind.FileList,
+            content.SemanticHash);
+        var nextOrder = ReadNextCaptureOrder(connection, transaction);
+        ClipboardEntry entry;
+        if (existing is null)
+        {
+            entry = new ClipboardEntry(
+                Guid.NewGuid(),
+                ClipboardContentKind.FileList,
+                content.SemanticHash,
+                content.PlainPreview,
+                capturedUtc,
+                capturedUtc,
+                nextOrder,
+                CaptureCount: 1,
+                IsPinned: false,
+                Revision: 1,
+                FileIntent: content.Intent,
+                ItemCount: content.Files.Count);
+            InsertEntry(connection, transaction, entry);
+        }
+        else
+        {
+            entry = existing with
+            {
+                PlainPreview = content.PlainPreview,
+                LastCapturedUtc = capturedUtc,
+                LastCaptureOrder = nextOrder,
+                CaptureCount = checked(existing.CaptureCount + 1),
+                Revision = checked(existing.Revision + 1),
+                FileIntent = content.Intent,
+                ItemCount = content.Files.Count,
+            };
+            UpdateCapturedEntry(connection, transaction, entry);
+            DeleteFiles(connection, transaction, entry.Id);
+        }
+
+        InsertFiles(connection, transaction, entry.Id, content.Files);
+        transaction.Commit();
+        return entry;
+    }
+
     private static ClipboardReplayPayload? LoadReplayPayload(
         SqliteConnection connection,
         Guid entryId)
     {
         ClipboardContentKind kind;
         string semanticHash;
+        ClipboardFileTransferIntent? fileIntent;
+        int itemCount;
         using (var command = connection.CreateCommand())
         {
             command.CommandText = """
-                SELECT kind, semantic_hash
+                SELECT kind, semantic_hash, file_intent, item_count
                 FROM clipboard_entries
                 WHERE id = $id
                 LIMIT 1;
@@ -204,6 +272,25 @@ public sealed class SqliteClipboardHistoryRepository : IClipboardHistoryReposito
 
             kind = (ClipboardContentKind)reader.GetInt32(0);
             semanticHash = reader.GetString(1);
+            fileIntent = reader.IsDBNull(2)
+                ? null
+                : (ClipboardFileTransferIntent)reader.GetInt32(2);
+            itemCount = reader.GetInt32(3);
+        }
+
+        if (kind is ClipboardContentKind.FileList)
+        {
+            return LoadFileReplayPayload(
+                connection,
+                entryId,
+                semanticHash,
+                fileIntent,
+                itemCount);
+        }
+
+        if (kind is not ClipboardContentKind.Text || fileIntent is not null || itemCount != 0)
+        {
+            return null;
         }
 
         using var representationsCommand = connection.CreateCommand();
@@ -228,6 +315,59 @@ public sealed class SqliteClipboardHistoryRepository : IClipboardHistoryReposito
         return representations.Count == 0
             ? null
             : new ClipboardReplayPayload(kind, semanticHash, representations.AsReadOnly());
+    }
+
+    private static ClipboardReplayPayload? LoadFileReplayPayload(
+        SqliteConnection connection,
+        Guid entryId,
+        string semanticHash,
+        ClipboardFileTransferIntent? fileIntent,
+        int itemCount)
+    {
+        if (fileIntent is null ||
+            !Enum.IsDefined(fileIntent.Value) ||
+            itemCount is <= 0 or >
+                ClipboardFileNormalizationOptions.DefaultMaximumFileCount)
+        {
+            return null;
+        }
+
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT ordinal, original_path, canonical_path, display_name
+            FROM clipboard_files
+            WHERE entry_id = $id
+            ORDER BY ordinal;
+            """;
+        command.Parameters.AddWithValue("$id", entryId.ToString("D"));
+        var files = new List<ClipboardFileReference>(itemCount);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            files.Add(new ClipboardFileReference(
+                reader.GetInt32(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3)));
+        }
+
+        if (files.Count != itemCount ||
+            files.Where((file, index) => file.Ordinal != index).Any() ||
+            !AreValidFileReferences(files) ||
+            !string.Equals(
+                ClipboardFileSemanticIdentity.Compute(fileIntent.Value, files),
+                semanticHash,
+                StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        return new ClipboardReplayPayload(
+            ClipboardContentKind.FileList,
+            semanticHash,
+            [],
+            fileIntent,
+            files.AsReadOnly());
     }
 
     private static ClipboardEntry? SetPinned(
@@ -310,11 +450,13 @@ public sealed class SqliteClipboardHistoryRepository : IClipboardHistoryReposito
             INSERT INTO clipboard_entries (
                 id, kind, semantic_hash, plain_preview,
                 first_captured_utc, last_captured_utc,
-                last_capture_order, capture_count, is_pinned, revision)
+                last_capture_order, capture_count, is_pinned, revision,
+                file_intent, item_count)
             VALUES (
                 $id, $kind, $hash, $preview,
                 $firstUtc, $lastUtc,
-                $captureOrder, $captureCount, $isPinned, $revision);
+                $captureOrder, $captureCount, $isPinned, $revision,
+                $fileIntent, $itemCount);
             """;
         AddEntryParameters(command, entry);
         command.ExecuteNonQuery();
@@ -333,7 +475,9 @@ public sealed class SqliteClipboardHistoryRepository : IClipboardHistoryReposito
                 last_captured_utc = $lastUtc,
                 last_capture_order = $captureOrder,
                 capture_count = $captureCount,
-                revision = $revision
+                revision = $revision,
+                file_intent = $fileIntent,
+                item_count = $itemCount
             WHERE id = $id;
             """;
         AddEntryParameters(command, entry);
@@ -355,6 +499,10 @@ public sealed class SqliteClipboardHistoryRepository : IClipboardHistoryReposito
         command.Parameters.AddWithValue("$captureCount", entry.CaptureCount);
         command.Parameters.AddWithValue("$isPinned", entry.IsPinned ? 1 : 0);
         command.Parameters.AddWithValue("$revision", entry.Revision);
+        command.Parameters.AddWithValue(
+            "$fileIntent",
+            entry.FileIntent is null ? DBNull.Value : (int)entry.FileIntent.Value);
+        command.Parameters.AddWithValue("$itemCount", entry.ItemCount);
     }
 
     private static void DeleteRepresentations(
@@ -394,6 +542,42 @@ public sealed class SqliteClipboardHistoryRepository : IClipboardHistoryReposito
         }
     }
 
+    private static void DeleteFiles(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid entryId)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "DELETE FROM clipboard_files WHERE entry_id = $id;";
+        command.Parameters.AddWithValue("$id", entryId.ToString("D"));
+        command.ExecuteNonQuery();
+    }
+
+    private static void InsertFiles(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid entryId,
+        IEnumerable<ClipboardFileReference> files)
+    {
+        foreach (var file in files)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO clipboard_files (
+                    entry_id, ordinal, original_path, canonical_path, display_name)
+                VALUES ($id, $ordinal, $original, $canonical, $displayName);
+                """;
+            command.Parameters.AddWithValue("$id", entryId.ToString("D"));
+            command.Parameters.AddWithValue("$ordinal", file.Ordinal);
+            command.Parameters.AddWithValue("$original", file.OriginalPath);
+            command.Parameters.AddWithValue("$canonical", file.CanonicalPath);
+            command.Parameters.AddWithValue("$displayName", file.DisplayName);
+            command.ExecuteNonQuery();
+        }
+    }
+
     private static ClipboardEntry ReadEntry(SqliteDataReader reader) => new(
         Guid.Parse(reader.GetString(0)),
         (ClipboardContentKind)reader.GetInt32(1),
@@ -404,7 +588,11 @@ public sealed class SqliteClipboardHistoryRepository : IClipboardHistoryReposito
         reader.GetInt64(6),
         reader.GetInt32(7),
         reader.GetInt32(8) != 0,
-        reader.GetInt64(9));
+        reader.GetInt64(9),
+        reader.IsDBNull(10)
+            ? null
+            : (ClipboardFileTransferIntent)reader.GetInt32(10),
+        reader.GetInt32(11));
 
     private static void ValidateTextContent(ClipboardTextContent content)
     {
@@ -460,13 +648,104 @@ public sealed class SqliteClipboardHistoryRepository : IClipboardHistoryReposito
         }
     }
 
+    private static void ValidateFileListContent(ClipboardFileListContent content)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        ValidateSemanticHash(content.SemanticHash, nameof(content));
+        ArgumentNullException.ThrowIfNull(content.PlainPreview);
+        ArgumentNullException.ThrowIfNull(content.Files);
+        if (!Enum.IsDefined(content.Intent) ||
+            !AreValidFileReferences(content.Files))
+        {
+            throw new ArgumentException(
+                "File-list content requires a supported intent and valid file references.",
+                nameof(content));
+        }
+
+        if (!string.Equals(
+                ClipboardFileSemanticIdentity.Compute(content.Intent, content.Files),
+                content.SemanticHash,
+                StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                "The file-list semantic hash does not match its paths and intent.",
+                nameof(content));
+        }
+    }
+
+    private static bool AreValidFileReferences(
+        IReadOnlyList<ClipboardFileReference> files)
+    {
+        if (files.Count is <= 0 or > ClipboardFileNormalizationOptions.DefaultMaximumFileCount)
+        {
+            return false;
+        }
+
+        long aggregateCharacters = 0;
+        for (var index = 0; index < files.Count; index++)
+        {
+            var file = files[index];
+            if (file is null ||
+                file.Ordinal != index ||
+                string.IsNullOrWhiteSpace(file.OriginalPath) ||
+                string.IsNullOrWhiteSpace(file.CanonicalPath) ||
+                string.IsNullOrWhiteSpace(file.DisplayName) ||
+                file.OriginalPath.Contains('\0', StringComparison.Ordinal) ||
+                file.CanonicalPath.Contains('\0', StringComparison.Ordinal) ||
+                file.DisplayName.Contains('\0', StringComparison.Ordinal) ||
+                file.OriginalPath.Length >
+                    ClipboardFileNormalizationOptions.DefaultMaximumPathCharacters ||
+                file.CanonicalPath.Length >
+                    ClipboardFileNormalizationOptions.DefaultMaximumPathCharacters ||
+                !Path.IsPathFullyQualified(file.OriginalPath) ||
+                !Path.IsPathFullyQualified(file.CanonicalPath))
+            {
+                return false;
+            }
+
+            if (!ClipboardFileDropCodec.TryNormalizePath(
+                    file.CanonicalPath,
+                    FileOptions,
+                    out var normalized) ||
+                !string.Equals(
+                    normalized,
+                    file.CanonicalPath,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            aggregateCharacters += file.CanonicalPath.Length;
+            if (aggregateCharacters >
+                ClipboardFileNormalizationOptions.DefaultMaximumAggregatePathCharacters)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static void ValidateSemanticHash(string semanticHash, string parameterName)
+    {
+        if (semanticHash.Length != 64 ||
+            !semanticHash.All(static character =>
+                character is >= '0' and <= '9' or >= 'a' and <= 'f'))
+        {
+            throw new ArgumentException(
+                "The semantic hash must be a lowercase SHA-256 hexadecimal value.",
+                parameterName);
+        }
+    }
+
     private static string FormatUtc(DateTimeOffset value) =>
         value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
 
     private const string SelectEntrySql = """
         SELECT id, kind, semantic_hash, plain_preview,
                first_captured_utc, last_captured_utc,
-               last_capture_order, capture_count, is_pinned, revision
+               last_capture_order, capture_count, is_pinned, revision,
+               file_intent, item_count
         FROM clipboard_entries
         """;
 }

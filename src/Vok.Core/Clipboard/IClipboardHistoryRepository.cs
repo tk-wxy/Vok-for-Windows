@@ -12,6 +12,11 @@ public interface IClipboardHistoryRepository
         DateTimeOffset capturedUtc,
         CancellationToken cancellationToken = default);
 
+    Task<ClipboardEntry> UpsertFileListAsync(
+        ClipboardFileListContent content,
+        DateTimeOffset capturedUtc,
+        CancellationToken cancellationToken = default);
+
     Task<ClipboardReplayPayload?> GetReplayPayloadAsync(
         Guid entryId,
         CancellationToken cancellationToken = default);

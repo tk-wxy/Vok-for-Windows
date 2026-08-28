@@ -202,6 +202,31 @@ public sealed class WindowsClipboardSnapshotReaderTests
     }
 
     [Fact]
+    public void VirtualFileFormatsAreCataloguedWithoutRequestingArbitraryStreams()
+    {
+        using var native = new FakeWindowsClipboardNativeApi { Sequence = 631 };
+        var reader = CreateReader(native);
+        native.SetFormats(
+            (reader.KnownFormats.FileGroupDescriptorW.Id, null),
+            (reader.KnownFormats.FileContents.Id, null));
+
+        var result = reader.Read(0);
+
+        Assert.Equal(ClipboardCaptureDisposition.Unsupported, result.Disposition);
+        Assert.All(
+            result.Formats,
+            static format =>
+            {
+                Assert.Equal(ClipboardFormatRole.VirtualFile, format.Role);
+                Assert.Equal(
+                    ClipboardFormatCaptureState.MetadataOnly,
+                    format.CaptureState);
+            });
+        Assert.Empty(native.DataReads);
+        Assert.Null(new ClipboardContentNormalizer().Normalize(result));
+    }
+
+    [Fact]
     public void EnumerationFailureClosesClipboardAndReturnsFailedSnapshot()
     {
         using var native = new FakeWindowsClipboardNativeApi
