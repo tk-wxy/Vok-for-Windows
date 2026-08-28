@@ -5,6 +5,7 @@ DestroyMenu
 DwmFlush
 DwmGetWindowAttribute
 DwmSetWindowAttribute
+EnumDisplayMonitors
 GetCurrentThreadId
 GetAsyncKeyState
 GetCursorPos
@@ -12,6 +13,7 @@ GetForegroundWindow
 GetGUIThreadInfo
 GetMessage
 GetMonitorInfo
+GetDpiForMonitor
 GetWindowLong
 GetWindowThreadProcessId
 IsIconic

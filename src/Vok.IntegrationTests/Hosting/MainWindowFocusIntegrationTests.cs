@@ -39,7 +39,8 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
             hotkeys.InitializeAsync().GetAwaiter().GetResult();
             var viewModel = new MainWindowViewModel(
                 new SettingsViewModel(appearance, hotkeys));
-            var window = new MainWindow(viewModel)
+            var launcherLayouts = CreateLauncherLayouts(620, 900);
+            var window = new MainWindow(viewModel, launcherLayouts)
             {
                 Width = 1440,
                 Height = 900,
@@ -65,6 +66,7 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                     column => Assert.Equal(new GridLength(2, GridUnitType.Star), column.Width),
                     column => Assert.Equal(new GridLength(1, GridUnitType.Star), column.Width));
                 AssertFlexibleWorkspaceHeight(window, workspace, 620);
+                CaptureWindowIfRequested(window, "workbench-layout-620-light.png");
                 AssertFlexibleWorkspaceHeight(window, workspace, 900);
 
                 var search = Assert.IsType<Border>(window.FindName("HeaderSearchPlaceholder"));
@@ -78,10 +80,12 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                     launcher.FindName("LauncherPlaceholderGrid"));
                 Assert.Equal(4, launcherGrid.Columns);
                 Assert.Equal(8, launcherGrid.Children.Count);
-                Assert.False(launcherGrid.IsHitTestVisible);
+                Assert.True(launcherGrid.IsHitTestVisible);
                 Assert.All(
-                    launcherGrid.Children.OfType<Border>(),
+                    launcherGrid.Children.OfType<ContentControl>(),
                     tile => Assert.Null(tile.ContextMenu));
+                AssertLauncherCardsFillFourColumnLayout(launcher, launcherGrid);
+                Assert.Equal(2, launcherLayouts.CalculationCount);
 
                 var stage = Assert.IsType<Border>(window.FindName("StageRegion"));
                 var clipboard = Assert.IsType<Border>(window.FindName("ClipboardRegion"));
@@ -92,10 +96,27 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                 Assert.True(bottomBar.IsVisible);
 
                 CaptureWindowIfRequested(window, "workbench-layout-light.png");
+                CaptureLauncherHoverIfRequested(
+                    window,
+                    launcherGrid,
+                    "workbench-launcher-hover-light.png");
                 appearance.ChangeThemeAsync(AppThemeMode.Dark).GetAwaiter().GetResult();
                 window.UpdateLayout();
                 window.Dispatcher.Invoke(DispatcherPriority.Render, static () => { });
                 CaptureWindowIfRequested(window, "workbench-layout-dark.png");
+                CaptureLauncherHoverIfRequested(
+                    window,
+                    launcherGrid,
+                    "workbench-launcher-hover-dark.png");
+
+                AssertLauncherScrollPreservesArbitraryOffset(launcher, launcherGrid);
+                for (var iteration = 0; iteration < 10; iteration++)
+                {
+                    window.Hide();
+                    window.Show();
+                    window.UpdateLayout();
+                }
+                Assert.Equal(2, launcherLayouts.CalculationCount);
             }
             finally
             {
@@ -120,7 +141,9 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
             hotkeys.InitializeAsync().GetAwaiter().GetResult();
             var viewModel = new MainWindowViewModel(
                 new SettingsViewModel(appearance, hotkeys));
-            var window = new MainWindow(viewModel);
+            var window = new MainWindow(
+                viewModel,
+                CreateLauncherLayouts(SystemParameters.WorkArea.Height));
             try
             {
                 window.Show();
@@ -288,6 +311,100 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
         Assert.Empty(body.Children);
     }
 
+    private static void AssertLauncherCardsFillFourColumnLayout(
+        LauncherView launcher,
+        UniformGrid launcherGrid)
+    {
+        var viewport = Assert.IsType<Grid>(launcher.FindName("LauncherItemsViewport"));
+        var scrollViewer = Assert.IsType<ScrollViewer>(
+            launcher.FindName("LauncherScrollViewer"));
+        Assert.False(scrollViewer.CanContentScroll);
+        Assert.Equal(ScrollBarVisibility.Hidden, scrollViewer.VerticalScrollBarVisibility);
+        Assert.Equal(
+            viewport.ActualHeight,
+            launcher.VisibleRowCount * launcher.CardUnitHeight,
+            precision: 8);
+
+        var tiles = launcherGrid.Children.OfType<ContentControl>().ToArray();
+        Assert.Equal(8, tiles.Length);
+        Assert.All(
+            tiles,
+            tile =>
+            {
+                Assert.Equal(launcher.CardSurfaceHeight, tile.ActualHeight, precision: 8);
+                Assert.Equal(5, tile.Margin.Left);
+                Assert.Equal(5, tile.Margin.Right);
+                Assert.Equal(3, tile.Margin.Top);
+                Assert.Equal(3, tile.Margin.Bottom);
+                Assert.False(tile.Focusable);
+                Assert.NotNull(tile.ToolTip);
+            });
+
+        var first = tiles[0];
+        Assert.Equal(
+            launcherGrid.ActualWidth / 4,
+            first.ActualWidth + first.Margin.Left + first.Margin.Right,
+            precision: 3);
+        _ = first.ApplyTemplate();
+        var surface = Assert.IsType<Border>(first.Template.FindName("CardSurface", first));
+        var hover = Assert.IsType<Border>(first.Template.FindName("HoverOverlay", first));
+        Assert.Equal(10, surface.CornerRadius.TopLeft);
+        Assert.Equal(Brushes.Transparent, surface.Background);
+        Assert.Equal(0, hover.Opacity);
+        Assert.NotNull(hover.Background);
+        Assert.NotNull(hover.BorderBrush);
+
+        var hoverTrigger = Assert.Single(
+            first.Template.Triggers.OfType<Trigger>(),
+            trigger => trigger.Property == UIElement.IsMouseOverProperty);
+        Assert.NotEmpty(hoverTrigger.EnterActions);
+        Assert.NotEmpty(hoverTrigger.ExitActions);
+
+        var content = Assert.IsType<Grid>(first.Content);
+        var icon = Assert.IsType<Border>(content.Children[0]);
+        var name = Assert.IsType<TextBlock>(content.Children[1]);
+        Assert.Equal(46, icon.Width);
+        Assert.Equal(46, icon.Height);
+        Assert.Equal("文件资源管理器", name.Text);
+        Assert.Equal(27, name.MaxHeight);
+        Assert.Equal(TextWrapping.Wrap, name.TextWrapping);
+        Assert.Equal(TextTrimming.CharacterEllipsis, name.TextTrimming);
+    }
+
+    private static void AssertLauncherScrollPreservesArbitraryOffset(
+        LauncherView launcher,
+        UniformGrid launcherGrid)
+    {
+        var scrollViewer = Assert.IsType<ScrollViewer>(
+            launcher.FindName("LauncherScrollViewer"));
+        while (launcherGrid.Children.Count < 40)
+        {
+            launcherGrid.Children.Add(new Border
+            {
+                Height = launcher.CardSurfaceHeight,
+                Margin = new Thickness(5, 3, 5, 3),
+            });
+        }
+
+        launcher.UpdateLayout();
+        Assert.True(scrollViewer.ScrollableHeight > 37.5);
+        scrollViewer.ScrollToVerticalOffset(37.5);
+        launcher.UpdateLayout();
+        Assert.Equal(37.5, scrollViewer.VerticalOffset, precision: 3);
+    }
+
+    private static LauncherLayoutProfileCache CreateLauncherLayouts(
+        params double[] workAreaHeights)
+    {
+        var cache = new LauncherLayoutProfileCache();
+        cache.Prewarm(workAreaHeights.Select(height => new DisplayWorkArea(
+            1920,
+            Math.Max(1, (int)Math.Round(height)),
+            96,
+            96)));
+        return cache;
+    }
+
     private static void AssertPanelUsesCompactFixedHeaderAndFlexibleBody(Grid layout) =>
         Assert.Collection(
             layout.RowDefinitions,
@@ -338,6 +455,38 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using var stream = File.Create(Path.Combine(captureDirectory, fileName));
         encoder.Save(stream);
+    }
+
+    private static void CaptureLauncherHoverIfRequested(
+        Window window,
+        UniformGrid launcherGrid,
+        string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(
+                Environment.GetEnvironmentVariable("VOK_CAPTURE_DIR")) ||
+            launcherGrid.Children[0] is not ContentControl tile)
+        {
+            return;
+        }
+
+        _ = tile.ApplyTemplate();
+        var hover = Assert.IsType<Border>(tile.Template.FindName("HoverOverlay", tile));
+        var scale = Assert.IsType<ScaleTransform>(tile.Template.FindName("CardScale", tile));
+        hover.Opacity = 1;
+        scale.ScaleX = 1.025;
+        scale.ScaleY = 1.025;
+        try
+        {
+            window.UpdateLayout();
+            window.Dispatcher.Invoke(DispatcherPriority.Render, static () => { });
+            CaptureWindowIfRequested(window, fileName);
+        }
+        finally
+        {
+            hover.ClearValue(UIElement.OpacityProperty);
+            scale.ClearValue(ScaleTransform.ScaleXProperty);
+            scale.ClearValue(ScaleTransform.ScaleYProperty);
+        }
     }
 
     private sealed class InMemorySettingsStore : IAppSettingsStore

@@ -7,6 +7,25 @@ namespace Vok.IntegrationTests.Windowing;
 
 public sealed class Win32WindowPlacementServiceTests
 {
+    [Fact]
+    public void DisplayCatalogReturnsUsableWorkAreasAndDpi()
+    {
+        var workAreas = new Win32DisplayWorkAreaProvider().GetWorkAreas();
+
+        Assert.NotEmpty(workAreas);
+        Assert.All(
+            workAreas,
+            workArea =>
+            {
+                Assert.True(workArea.WidthPixels > 0);
+                Assert.True(workArea.HeightPixels > 0);
+                Assert.True(workArea.DpiX > 0);
+                Assert.True(workArea.DpiY > 0);
+                Assert.True(workArea.WidthDip > 0);
+                Assert.True(workArea.HeightDip > 0);
+            });
+    }
+
     [Theory]
     [InlineData(0, 0, 1920, 1080, 0, 0, 1920, 1040)]
     [InlineData(0, 0, 1920, 1080, 0, 40, 1920, 1080)]

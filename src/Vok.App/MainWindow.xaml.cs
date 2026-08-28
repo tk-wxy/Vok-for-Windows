@@ -4,6 +4,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Threading;
 using Vok.Core.Workspace;
+using Vok.Features.Launcher;
 using Vok.Hosting;
 using Vok.Presentation;
 
@@ -14,11 +15,14 @@ public partial class MainWindow : Window, IWorkspaceWindow
     private Application? _application;
     private readonly MainWindowViewModel _viewModel;
 
-    public MainWindow(MainWindowViewModel viewModel)
+    public MainWindow(
+        MainWindowViewModel viewModel,
+        LauncherLayoutProfileCache launcherLayoutProfiles)
     {
         InitializeComponent();
         _viewModel = viewModel;
         DataContext = viewModel;
+        LauncherPanel.UseLayoutProfiles(launcherLayoutProfiles);
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
     }
 

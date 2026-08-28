@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,6 +16,7 @@ using Vok.Infrastructure.Windows.Windowing;
 using Vok.Features.Tray;
 using Vok.Presentation;
 using Vok.Features.Settings;
+using Vok.Features.Launcher;
 using Vok.Hotkeys;
 
 namespace Vok;
@@ -41,6 +43,7 @@ public partial class App : Application
         }
 
         _services = BuildServices();
+        InitializeLauncherLayouts(_services);
         var appearance = _services.GetRequiredService<AppearanceController>();
         await appearance.InitializeAsync();
         var hotkeys = _services.GetRequiredService<HotkeyController>();
@@ -77,6 +80,7 @@ public partial class App : Application
         services.AddSingleton<WorkspaceSessionStateMachine>();
         services.AddSingleton<IForegroundWindowService, Win32ForegroundWindowService>();
         services.AddSingleton<IWindowPlacementService, Win32WindowPlacementService>();
+        services.AddSingleton<IDisplayWorkAreaProvider, Win32DisplayWorkAreaProvider>();
         services.AddSingleton<GlobalHotkeyService>();
         services.AddSingleton<IGlobalHotkeyService>(provider =>
             provider.GetRequiredService<GlobalHotkeyService>());
@@ -92,6 +96,7 @@ public partial class App : Application
         services.AddSingleton<AppearanceController>();
         services.AddSingleton<HotkeyController>();
         services.AddSingleton<SettingsViewModel>();
+        services.AddSingleton<LauncherLayoutProfileCache>();
         services.AddSingleton<MainWindowViewModel>();
         services.AddSingleton<MainWindow>();
         services.AddSingleton<IWorkspaceWindow>(provider => provider.GetRequiredService<MainWindow>());
@@ -107,6 +112,23 @@ public partial class App : Application
             ValidateOnBuild = true,
             ValidateScopes = true,
         });
+    }
+
+    private static void InitializeLauncherLayouts(ServiceProvider services)
+    {
+        var layouts = services.GetRequiredService<LauncherLayoutProfileCache>();
+        try
+        {
+            layouts.Prewarm(
+                services.GetRequiredService<IDisplayWorkAreaProvider>().GetWorkAreas());
+        }
+        catch (Exception exception)
+        {
+            Trace.TraceWarning(
+                "Unable to prewarm launcher layouts from display work areas: {0}",
+                exception);
+            _ = layouts.GetOrCreateForWorkArea(SystemParameters.WorkArea.Height);
+        }
     }
 
     private static IAppSettingsStore CreateSettingsStore()
