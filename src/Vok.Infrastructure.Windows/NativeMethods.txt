@@ -6,6 +6,7 @@ DwmFlush
 DwmGetWindowAttribute
 DwmSetWindowAttribute
 GetCurrentThreadId
+GetAsyncKeyState
 GetCursorPos
 GetForegroundWindow
 GetGUIThreadInfo
@@ -17,6 +18,7 @@ IsIconic
 IsChild
 IsWindow
 IsWindowVisible
+KillTimer
 MonitorFromPoint
 MonitorFromWindow
 PeekMessage
@@ -25,6 +27,7 @@ PostThreadMessage
 RegisterHotKey
 SetForegroundWindow
 SetFocus
+SetTimer
 SetMenuDefaultItem
 SetWindowPos
 ShowWindow
@@ -32,5 +35,6 @@ TrackPopupMenuEx
 TRACK_POPUP_MENU_FLAGS
 UnregisterHotKey
 WM_HOTKEY
+WM_TIMER
 WM_NULL
 WM_QUIT

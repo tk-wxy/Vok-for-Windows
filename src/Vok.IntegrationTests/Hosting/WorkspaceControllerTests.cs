@@ -15,6 +15,136 @@ namespace Vok.IntegrationTests.Hosting;
 public sealed class WorkspaceControllerTests
 {
     [Fact]
+    public async Task ShortPressFromHiddenShowsAndRemainsVisibleAfterRelease()
+    {
+        using var rig = await TestRig.CreateAsync();
+        rig.Placement.OsGatesReady = true;
+        rig.Window.FocusSucceeds = true;
+
+        var pressGeneration = rig.Hotkey.RaiseStarted(ExternalTarget);
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.DoesNotContain("window.hide", rig.Log);
+
+        rig.Hotkey.RaiseReleased(
+            pressGeneration,
+            HotkeyPressSemantics.TapMaxDuration);
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.DoesNotContain("window.hide", rig.Log);
+        Assert.Equal(0, rig.Foreground.RestoreCallCount);
+    }
+
+    [Fact]
+    public async Task LongPressFromHiddenShowsUntilReleaseThenHidesAndRestores()
+    {
+        using var rig = await TestRig.CreateAsync();
+        rig.Placement.OsGatesReady = true;
+        rig.Window.FocusSucceeds = true;
+
+        var pressGeneration = rig.Hotkey.RaiseStarted(ExternalTarget);
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.DoesNotContain("window.hide", rig.Log);
+
+        rig.Hotkey.RaiseReleased(
+            pressGeneration,
+            HotkeyPressSemantics.TapMaxDuration + TimeSpan.FromMilliseconds(1));
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.Equal(1, rig.Log.Count(entry => entry == "window.hide"));
+        Assert.Equal(1, rig.Foreground.RestoreCallCount);
+        Assert.Equal(WorkspaceHideReason.Hotkey, rig.Publisher.Last.Restore.HideReason);
+    }
+
+    [Fact]
+    public async Task PressFromVisibleWaitsForReleaseBeforeHiding()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+
+        var pressGeneration = rig.Hotkey.RaiseStarted(ExternalTarget);
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.DoesNotContain("window.hide", rig.Log);
+
+        rig.Hotkey.RaiseReleased(pressGeneration, TimeSpan.FromMilliseconds(50));
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.Equal(1, rig.Foreground.RestoreCallCount);
+    }
+
+    [Fact]
+    public async Task ReleaseFromEndedPressCannotHideNewWorkspaceGeneration()
+    {
+        using var rig = await TestRig.CreateAsync();
+        rig.Placement.OsGatesReady = true;
+        rig.Window.FocusSucceeds = true;
+        var pressGeneration = rig.Hotkey.RaiseStarted(ExternalTarget);
+        var firstWorkspaceGeneration = rig.StateMachine.Current!.Generation;
+        rig.Foreground.CaptureResult = SelectedExternalTarget;
+
+        rig.Window.RaiseApplicationDeactivated();
+        rig.Controller.EnsureVisible(
+            NewSessionTarget,
+            Stopwatch.GetTimestamp());
+        var secondWorkspaceGeneration = rig.StateMachine.Current!.Generation;
+
+        rig.Hotkey.RaiseReleased(
+            pressGeneration,
+            TimeSpan.FromSeconds(1));
+
+        Assert.NotEqual(firstWorkspaceGeneration, secondWorkspaceGeneration);
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.Equal(secondWorkspaceGeneration, rig.StateMachine.Current!.Generation);
+        Assert.Equal(NewSessionTarget, rig.StateMachine.Current.Target);
+    }
+
+    [Fact]
+    public async Task CanceledPressFromVisibleDoesNotHideWorkspace()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        var pressGeneration = rig.Hotkey.RaiseStarted(ExternalTarget);
+
+        rig.Hotkey.RaiseCanceled(pressGeneration);
+        rig.Hotkey.RaiseReleased(pressGeneration, TimeSpan.FromSeconds(1));
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.DoesNotContain("window.hide", rig.Log);
+    }
+
+    [Fact]
+    public async Task StaleReleaseCannotClearOrCompleteNewerActivePress()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        var firstPress = rig.Hotkey.RaiseStarted(ExternalTarget);
+        var secondPress = rig.Hotkey.RaiseStarted(ExternalTarget);
+
+        rig.Hotkey.RaiseReleased(firstPress, TimeSpan.FromSeconds(1));
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.DoesNotContain("window.hide", rig.Log);
+
+        rig.Hotkey.RaiseReleased(secondPress, TimeSpan.FromMilliseconds(25));
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.Equal(1, rig.Log.Count(entry => entry == "window.hide"));
+    }
+
+    [Fact]
+    public async Task DuplicateReleaseCannotExecuteHideTwice()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        var pressGeneration = rig.Hotkey.RaiseStarted(ExternalTarget);
+
+        rig.Hotkey.RaiseReleased(pressGeneration, TimeSpan.FromMilliseconds(25));
+        rig.Hotkey.RaiseReleased(pressGeneration, TimeSpan.FromMilliseconds(25));
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.Equal(1, rig.Log.Count(entry => entry == "window.hide"));
+        Assert.Equal(1, rig.Foreground.RestoreCallCount);
+    }
+
+    [Fact]
     public async Task AppliesFullScreenAndTopmostBeforeShowingWindow()
     {
         using var rig = await TestRig.CreateAsync();
@@ -1130,7 +1260,9 @@ public sealed class WorkspaceControllerTests
 
     private sealed class FakeHotkey : IConfigurableGlobalHotkeyService
     {
-        public event EventHandler<HotkeyInvocation>? Pressed;
+        private long _nextPressGeneration;
+
+        public event EventHandler<HotkeyPressEvent>? PressChanged;
         public event EventHandler<Exception>? Faulted;
         public GlobalHotkeyGesture CurrentGesture { get; private set; } =
             GlobalHotkeyGesture.Default;
@@ -1147,8 +1279,29 @@ public sealed class WorkspaceControllerTests
             CurrentGesture = gesture;
             return Task.CompletedTask;
         }
-        public void Raise(ForegroundTarget target) =>
-            Pressed?.Invoke(this, new HotkeyInvocation(target, Stopwatch.GetTimestamp()));
+        public void Raise(ForegroundTarget target)
+        {
+            var generation = RaiseStarted(target);
+            RaiseReleased(generation, TimeSpan.FromMilliseconds(100));
+        }
+        public long RaiseStarted(ForegroundTarget target)
+        {
+            var generation = checked(++_nextPressGeneration);
+            PressChanged?.Invoke(this, new HotkeyPressStarted(
+                generation,
+                target,
+                Stopwatch.GetTimestamp()));
+            return generation;
+        }
+        public void RaiseReleased(long generation, TimeSpan heldDuration) =>
+            PressChanged?.Invoke(this, new HotkeyPressReleased(
+                generation,
+                heldDuration,
+                Stopwatch.GetTimestamp()));
+        public void RaiseCanceled(long generation) =>
+            PressChanged?.Invoke(this, new HotkeyPressCanceled(
+                generation,
+                Stopwatch.GetTimestamp()));
         public void Dispose() { }
         public void RaiseFault(Exception exception) => Faulted?.Invoke(this, exception);
     }

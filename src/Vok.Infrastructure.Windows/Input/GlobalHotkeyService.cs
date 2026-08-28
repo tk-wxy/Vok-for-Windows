@@ -7,6 +7,7 @@ namespace Vok.Infrastructure.Windows.Input;
 public sealed class GlobalHotkeyService : IConfigurableGlobalHotkeyService
 {
     internal const uint CommandMessage = 0x8000 + 0x56;
+    internal const uint ReleasePollIntervalMilliseconds = 10;
     private const int HotkeyId = 0x564F;
     private static readonly TimeSpan ShutdownWatchdog = TimeSpan.FromSeconds(5);
 
@@ -21,8 +22,11 @@ public sealed class GlobalHotkeyService : IConfigurableGlobalHotkeyService
     private readonly object _lifecycleGate = new();
     private GlobalHotkeyGesture _gesture;
     private long _nextCommandId;
+    private long _nextPressGeneration;
     private int _lifecycle;
     private uint _messageThreadId;
+    private nuint _releaseTimerId;
+    private ActiveHotkeyPress? _activePress;
     private bool _registrationDesired = true;
     private bool _registered;
 
@@ -48,7 +52,7 @@ public sealed class GlobalHotkeyService : IConfigurableGlobalHotkeyService
         };
     }
 
-    public event EventHandler<HotkeyInvocation>? Pressed;
+    public event EventHandler<HotkeyPressEvent>? PressChanged;
 
     public event EventHandler<Exception>? Faulted;
 
@@ -233,9 +237,13 @@ public sealed class GlobalHotkeyService : IConfigurableGlobalHotkeyService
                          message.WParam == HotkeyId &&
                          _registered)
                 {
-                    PublishPressed(new HotkeyInvocation(
-                        _foregroundWindowService.Capture(),
-                        Stopwatch.GetTimestamp()));
+                    BeginHotkeyPress();
+                }
+                else if (message.Message == _nativeMethods.TimerMessage &&
+                         message.WParam == _releaseTimerId &&
+                         _activePress is not null)
+                {
+                    ObserveActivePress();
                 }
             }
         }
@@ -247,6 +255,7 @@ public sealed class GlobalHotkeyService : IConfigurableGlobalHotkeyService
         }
         finally
         {
+            CancelActivePress();
             if (_registered)
             {
                 try
@@ -283,6 +292,7 @@ public sealed class GlobalHotkeyService : IConfigurableGlobalHotkeyService
             switch (command.Kind)
             {
                 case HotkeyCommandKind.Suspend:
+                    CancelActivePress();
                     _registrationDesired = false;
                     if (_registered)
                     {
@@ -297,6 +307,7 @@ public sealed class GlobalHotkeyService : IConfigurableGlobalHotkeyService
                     }
                     break;
                 case HotkeyCommandKind.ChangeGesture:
+                    CancelActivePress();
                     ChangeGesture(command.Gesture!);
                     break;
                 default:
@@ -376,19 +387,144 @@ public sealed class GlobalHotkeyService : IConfigurableGlobalHotkeyService
         _registered = false;
     }
 
-    private void PublishPressed(HotkeyInvocation invocation)
+    private void BeginHotkeyPress()
     {
-        var handlers = Pressed?.GetInvocationList();
+        CancelActivePress();
+
+        var detectedTimestamp = Stopwatch.GetTimestamp();
+        var press = new ActiveHotkeyPress(
+            checked(++_nextPressGeneration),
+            CurrentGesture,
+            detectedTimestamp);
+        _activePress = press;
+
+        try
+        {
+            _releaseTimerId = _nativeMethods.StartReleaseTimer(
+                ReleasePollIntervalMilliseconds);
+            if (_releaseTimerId == 0)
+            {
+                throw new InvalidOperationException(
+                    "Unable to start the global hotkey release detector.");
+            }
+        }
+        catch (Exception exception)
+        {
+            PublishPressChanged(new HotkeyPressStarted(
+                press.Generation,
+                _foregroundWindowService.Capture(),
+                detectedTimestamp));
+            CompleteActivePress(Stopwatch.GetTimestamp());
+            PublishFault(exception);
+            return;
+        }
+
+        PublishPressChanged(new HotkeyPressStarted(
+            press.Generation,
+            _foregroundWindowService.Capture(),
+            detectedTimestamp));
+        ObserveActivePress();
+    }
+
+    private void ObserveActivePress()
+    {
+        var press = _activePress;
+        if (press is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (IsGestureDown(press.Gesture))
+            {
+                return;
+            }
+
+            CompleteActivePress(Stopwatch.GetTimestamp());
+        }
+        catch (Exception exception)
+        {
+            CompleteActivePress(Stopwatch.GetTimestamp());
+            PublishFault(exception);
+        }
+    }
+
+    private bool IsGestureDown(GlobalHotkeyGesture gesture)
+    {
+        if (!_nativeMethods.IsKeyDown(gesture.VirtualKey))
+        {
+            return false;
+        }
+
+        var modifiers = gesture.Modifiers;
+        return (!modifiers.HasFlag(GlobalHotkeyModifiers.Alt) ||
+                _nativeMethods.IsKeyDown(0x12)) &&
+               (!modifiers.HasFlag(GlobalHotkeyModifiers.Control) ||
+                _nativeMethods.IsKeyDown(0x11)) &&
+               (!modifiers.HasFlag(GlobalHotkeyModifiers.Shift) ||
+                _nativeMethods.IsKeyDown(0x10)) &&
+               (!modifiers.HasFlag(GlobalHotkeyModifiers.Windows) ||
+                _nativeMethods.IsKeyDown(0x5B) ||
+                _nativeMethods.IsKeyDown(0x5C));
+    }
+
+    private void CompleteActivePress(long releasedTimestamp)
+    {
+        var press = _activePress;
+        if (press is null)
+        {
+            return;
+        }
+
+        _activePress = null;
+        StopReleaseTimer();
+        PublishPressChanged(new HotkeyPressReleased(
+            press.Generation,
+            Stopwatch.GetElapsedTime(press.PressedTimestamp, releasedTimestamp),
+            releasedTimestamp));
+    }
+
+    private void CancelActivePress()
+    {
+        var press = _activePress;
+        if (press is null)
+        {
+            StopReleaseTimer();
+            return;
+        }
+
+        _activePress = null;
+        StopReleaseTimer();
+        PublishPressChanged(new HotkeyPressCanceled(
+            press.Generation,
+            Stopwatch.GetTimestamp()));
+    }
+
+    private void StopReleaseTimer()
+    {
+        var timerId = _releaseTimerId;
+        _releaseTimerId = 0;
+        if (timerId != 0 && !_nativeMethods.StopReleaseTimer(timerId))
+        {
+            PublishFault(new InvalidOperationException(
+                "Unable to stop the global hotkey release detector."));
+        }
+    }
+
+    private void PublishPressChanged(HotkeyPressEvent pressEvent)
+    {
+        var handlers = PressChanged?.GetInvocationList();
         if (handlers is null)
         {
             return;
         }
 
-        foreach (var handler in handlers.Cast<EventHandler<HotkeyInvocation>>())
+        foreach (var handler in handlers.Cast<EventHandler<HotkeyPressEvent>>())
         {
             try
             {
-                handler(this, invocation);
+                handler(this, pressEvent);
             }
             catch (Exception exception)
             {
@@ -425,6 +561,11 @@ public sealed class GlobalHotkeyService : IConfigurableGlobalHotkeyService
         Resume,
         ChangeGesture,
     }
+
+    private sealed record ActiveHotkeyPress(
+        long Generation,
+        GlobalHotkeyGesture Gesture,
+        long PressedTimestamp);
 
     private sealed class HotkeyCommand(
         HotkeyCommandKind kind,

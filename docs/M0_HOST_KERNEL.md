@@ -1,6 +1,6 @@
 # M0 生产级宿主内核：参照、契约与验证
 
-> 状态：2026-08-27。M0 核心宿主、系统工作区、被动关闭和 generation 级内容呈现门禁已完成自动及真实像素验证。正式搜索编辑器、完整 IME 语义和 ETW/PresentMon 级测量不属于该结论。
+> 状态：2026-08-28。M0 核心宿主、系统工作区、被动关闭和 generation 级内容呈现门禁已完成自动及真实像素验证；快捷键短/长按自动门禁已通过，物理手感待验收。正式搜索编辑器、完整 IME 语义和 ETW/PresentMon 级测量不属于该结论。
 
 ## 1. 产品行为参照 / 旧实现机制 / Vok 目标契约
 
@@ -8,7 +8,7 @@
 |---|---|---|---|
 | 工作台形态 | 顶部搜索入口，Launcher / Stage / Clipboard 等成熟工作区 | 顶部搜索与 1:2:1 工作区已部分实现 | 占满目标显示器的系统工作区并保留任务栏可见、可点击；保留 1:2:1 宿主结构，M0 不伪装已实现业务模块 |
 | 后台常驻 | 启动隐藏，WebView2/Tauri 多进程 | 启动隐藏，WPF 单进程 | 单进程后台常驻；长期存活的普通不透明 WPF HWND |
-| 快捷键 | `Ctrl+Space`，轮询参与短按/长按语义 | `Ctrl+Space`，低级键盘 Hook 与复杂短/长按状态 | 专用消息线程拥有 `RegisterHotKey`；手势是可替换契约，M0 诊断值为 `Ctrl+Alt+Space` |
+| 快捷键 | `Ctrl+Space`，常驻轮询参与短按/长按语义 | `Ctrl+Space`，低级键盘 Hook 与复杂短/长按状态 | 专用消息线程拥有 `RegisterHotKey`；仅在一次按压期间采样释放，短按切换、长按松开隐藏；手势是可替换契约 |
 | 显示层级 | 全局置顶样式，透明 WebView surface | 永久 `Topmost`、`AllowsTransparency=True` layered window | 每次会话进入 Topmost，隐藏后退出；Topmost、可见、前台和焦点分别观察 |
 | 前台与输入 | 固定 50 ms 后聚焦，另有轮询式 dismiss | 固定 50 ms 焦点轮询、25 ms guardian、watchdog | 无固定延时/轮询；以 `GetForegroundWindow`、`GetGUIThreadInfo` 与 WPF 键盘焦点共同门控 |
 | 输入锚点 | 真正产品搜索框 | 真正/部分搜索 UI | 可聚焦且接收 `TextInput` 的键盘测试锚点，明确标注“非搜索功能” |
@@ -16,7 +16,7 @@
 | 重复触发 | 已有成熟体验，但实现含轮询和跨层状态 | generation、watchdog 与 hook 状态交织 | 单一 session generation 约束显示、隐藏、回调和清理；捕获到自身 HWND 时在下一次显示副作用前重取外部目标 |
 | 渲染 | 透明 WebView surface；历史记录显示 native visible 与 surface 就绪分离 | 全屏 layered WPF，含 DWM cloak/首帧 watchdog | 普通不透明 HWND；每代呼出只在 `Revealing` 临时 cloak，渲染返回后的 `DwmFlush` 成功才解除 cloak |
 
-必须保留的是外部形态、交互流程和体验结果。明确不继承：Tauri/WebView2、多进程 surface、全屏透明 layered window、永久 Topmost、低级键盘 Hook、按键轮询、固定焦点延时、无限重试、默认或常驻 `AttachThreadInput` 和旧项目代码。M0 只为实证 B 类失败保留一次性、严格校验并必定尝试脱离的窄回退，见 `decisions.md §4`。
+必须保留的是外部形态、交互流程和体验结果。明确不继承：Tauri/WebView2、多进程 surface、全屏透明 layered window、永久 Topmost、低级键盘 Hook、常驻按键轮询、固定焦点延时、无限重试、默认或常驻 `AttachThreadInput` 和旧项目代码。短长按只允许 `decisions.md §16` 的单次按压期有界释放采样；M0 只为实证 B 类失败保留一次性、严格校验并必定尝试脱离的窄回退，见 `decisions.md §4`。
 
 ## 2. 当前宿主机制
 

@@ -36,6 +36,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
     private long _lastHideRequestedTimestamp;
     private long _lastHiddenCompletedTimestamp;
     private long _lastRestoreCompletedTimestamp;
+    private ActiveHotkeyPress? _activeHotkeyPress;
     private ForegroundRestoreStatus _lastRestoreStatus = ForegroundRestoreStatus.InvalidTarget;
     private WorkspaceRestoreDiagnosticSnapshot _restoreDiagnostic = WorkspaceRestoreDiagnosticSnapshot.None;
     private WorkspacePresentationObservation _lastObservation;
@@ -73,7 +74,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
             _options.RevealWatchdogTimeout,
             TimeSpan.Zero);
 
-        _hotkeyService.Pressed += OnHotkeyPressed;
+        _hotkeyService.PressChanged += OnHotkeyPressChanged;
         _hotkeyService.Faulted += OnHotkeyFaulted;
         _window.HideRequested += OnHideRequested;
         _window.ApplicationDeactivated += OnApplicationDeactivated;
@@ -152,7 +153,8 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         DetachPendingActivation();
         DetachPendingInputFocus();
         _pendingFenceGeneration = 0;
-        _hotkeyService.Pressed -= OnHotkeyPressed;
+        _activeHotkeyPress = null;
+        _hotkeyService.PressChanged -= OnHotkeyPressChanged;
         _hotkeyService.Faulted -= OnHotkeyFaulted;
         _window.HideRequested -= OnHideRequested;
         _window.ApplicationDeactivated -= OnApplicationDeactivated;
@@ -160,11 +162,11 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         TryClearDiagnostic();
     }
 
-    private void OnHotkeyPressed(object? sender, HotkeyInvocation invocation)
+    private void OnHotkeyPressChanged(object? sender, HotkeyPressEvent pressEvent)
     {
         if (!_disposed && Volatile.Read(ref _exitRequested) == 0)
         {
-            _window.PostInput(() => Toggle(invocation));
+            _window.PostInput(() => HandleHotkeyPressEvent(pressEvent));
         }
     }
 
@@ -199,25 +201,89 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         _window.PostNormal(() => TryHideAfterApplicationDeactivation(generation));
     }
 
-    private void Toggle(HotkeyInvocation invocation)
+    private void HandleHotkeyPressEvent(HotkeyPressEvent pressEvent)
+    {
+        switch (pressEvent)
+        {
+            case HotkeyPressStarted started:
+                BeginHotkeyPress(started);
+                break;
+            case HotkeyPressReleased released:
+                CompleteHotkeyPress(released);
+                break;
+            case HotkeyPressCanceled canceled:
+                CancelHotkeyPress(canceled.PressGeneration);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(pressEvent));
+        }
+    }
+
+    private void BeginHotkeyPress(HotkeyPressStarted started)
     {
         if (Volatile.Read(ref _exitRequested) != 0)
         {
             return;
         }
 
+        _activeHotkeyPress = null;
+        var workspaceWasOpenAtPress = _stateMachine.State is
+            WorkspaceState.Revealing or WorkspaceState.Visible;
+
         if (_stateMachine.State is WorkspaceState.Hidden)
         {
-            if (invocation.NativeTimestamp <= _lastHiddenCompletedTimestamp)
+            if (started.NativeTimestamp <= _lastHiddenCompletedTimestamp)
             {
                 return;
             }
 
-            Show(invocation);
+            Show(new HotkeyInvocation(
+                started.ForegroundTarget,
+                started.NativeTimestamp));
+        }
+        else if (!workspaceWasOpenAtPress)
+        {
             return;
         }
 
-        Hide(WorkspaceHidePolicy.For(WorkspaceHideReason.Hotkey));
+        if (_stateMachine.Current is { Generation: var workspaceGeneration })
+        {
+            _activeHotkeyPress = new ActiveHotkeyPress(
+                started.PressGeneration,
+                workspaceGeneration,
+                workspaceWasOpenAtPress);
+        }
+    }
+
+    private void CompleteHotkeyPress(HotkeyPressReleased released)
+    {
+        var active = _activeHotkeyPress;
+        if (active is null || active.PressGeneration != released.PressGeneration)
+        {
+            return;
+        }
+
+        _activeHotkeyPress = null;
+        if (_stateMachine.Current?.Generation != active.WorkspaceGeneration ||
+            _stateMachine.State is not (WorkspaceState.Revealing or WorkspaceState.Visible))
+        {
+            return;
+        }
+
+        if (HotkeyPressSemantics.GetReleaseAction(
+                released.HeldDuration,
+                active.WorkspaceWasOpenAtPress) is HotkeyReleaseAction.Hide)
+        {
+            Hide(WorkspaceHidePolicy.For(WorkspaceHideReason.Hotkey));
+        }
+    }
+
+    private void CancelHotkeyPress(long pressGeneration)
+    {
+        if (_activeHotkeyPress?.PressGeneration == pressGeneration)
+        {
+            _activeHotkeyPress = null;
+        }
     }
 
     private void EnsureVisibleCore(
@@ -629,6 +695,11 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         _lastRestoreCompletedTimestamp = 0;
         return result;
     }
+
+    private sealed record ActiveHotkeyPress(
+        long PressGeneration,
+        long WorkspaceGeneration,
+        bool WorkspaceWasOpenAtPress);
 
     private void AttachFirstFrame(long generation)
     {

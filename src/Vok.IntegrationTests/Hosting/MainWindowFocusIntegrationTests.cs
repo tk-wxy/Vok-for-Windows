@@ -356,7 +356,7 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
 
     private sealed class FakeConfigurableHotkey : IConfigurableGlobalHotkeyService
     {
-        public event EventHandler<HotkeyInvocation>? Pressed;
+        public event EventHandler<HotkeyPressEvent>? PressChanged;
         public event EventHandler<Exception>? Faulted;
         public GlobalHotkeyGesture CurrentGesture { get; private set; } =
             GlobalHotkeyGesture.Default;
@@ -376,7 +376,7 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
         }
         public void Dispose()
         {
-            _ = Pressed;
+            _ = PressChanged;
             _ = Faulted;
         }
     }

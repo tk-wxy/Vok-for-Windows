@@ -11,6 +11,8 @@ internal sealed class Win32GlobalHotkeyNativeMethods : IGlobalHotkeyNativeMethod
 {
     public uint HotkeyMessage => PInvoke.WM_HOTKEY;
 
+    public uint TimerMessage => PInvoke.WM_TIMER;
+
     public uint GetCurrentThreadId() => PInvoke.GetCurrentThreadId();
 
     public void EnsureMessageQueue() =>
@@ -29,6 +31,15 @@ internal sealed class Win32GlobalHotkeyNativeMethods : IGlobalHotkeyNativeMethod
             gesture.VirtualKey);
 
     public bool UnregisterHotkey(int id) => PInvoke.UnregisterHotKey(HWND.Null, id);
+
+    public nuint StartReleaseTimer(uint intervalMilliseconds) =>
+        PInvoke.SetTimer(HWND.Null, 0, intervalMilliseconds, null);
+
+    public bool StopReleaseTimer(nuint timerId) =>
+        PInvoke.KillTimer(HWND.Null, timerId);
+
+    public bool IsKeyDown(uint virtualKey) =>
+        (PInvoke.GetAsyncKeyState((int)virtualKey) & 0x8000) != 0;
 
     public HotkeyThreadMessage GetMessage()
     {

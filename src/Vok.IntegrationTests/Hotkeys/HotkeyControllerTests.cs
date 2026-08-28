@@ -162,7 +162,7 @@ public sealed class HotkeyControllerTests
 
     private sealed class FakeHotkeyService : IConfigurableGlobalHotkeyService
     {
-        public event EventHandler<HotkeyInvocation>? Pressed;
+        public event EventHandler<HotkeyPressEvent>? PressChanged;
         public event EventHandler<Exception>? Faulted;
 
         public GlobalHotkeyGesture CurrentGesture { get; private set; } =
@@ -219,7 +219,7 @@ public sealed class HotkeyControllerTests
 
         public void Dispose()
         {
-            _ = Pressed;
+            _ = PressChanged;
             _ = Faulted;
         }
     }

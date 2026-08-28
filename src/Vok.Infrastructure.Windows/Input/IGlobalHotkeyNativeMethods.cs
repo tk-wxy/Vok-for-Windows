@@ -11,6 +11,8 @@ internal interface IGlobalHotkeyNativeMethods
 {
     uint HotkeyMessage { get; }
 
+    uint TimerMessage { get; }
+
     uint GetCurrentThreadId();
 
     void EnsureMessageQueue();
@@ -18,6 +20,12 @@ internal interface IGlobalHotkeyNativeMethods
     bool RegisterHotkey(int id, GlobalHotkeyGesture gesture);
 
     bool UnregisterHotkey(int id);
+
+    nuint StartReleaseTimer(uint intervalMilliseconds);
+
+    bool StopReleaseTimer(nuint timerId);
+
+    bool IsKeyDown(uint virtualKey);
 
     HotkeyThreadMessage GetMessage();
 
