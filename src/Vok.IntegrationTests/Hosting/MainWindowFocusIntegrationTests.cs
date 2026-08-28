@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -24,6 +25,122 @@ namespace Vok.IntegrationTests.Hosting;
 [Collection(WpfApplicationCollection.Name)]
 public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
 {
+    [Fact]
+    public void ExternalFileDragReadsForeignDataOnlyOnceAtDropAndAlwaysClaimsItsTerminal()
+    {
+        wpf.Invoke(() =>
+        {
+            var appearance = new AppearanceController(
+                new InMemorySettingsStore(),
+                new WpfAppThemeApplier(wpf.Application));
+            appearance.InitializeAsync().GetAwaiter().GetResult();
+            var hotkeys = new HotkeyController(
+                new InMemorySettingsStore(),
+                new FakeConfigurableHotkey());
+            hotkeys.InitializeAsync().GetAwaiter().GetResult();
+            var viewModel = new MainWindowViewModel(
+                new SettingsViewModel(appearance, hotkeys));
+            using var launcherViewModel = CreateLauncherViewModel(itemCount: 1);
+            var window = new MainWindow(
+                viewModel,
+                CreateLauncherLayouts(900),
+                launcherViewModel);
+            var ended = new List<WorkspaceExternalDragEndedEventArgs>();
+            window.ExternalDragEnded += (_, eventArgs) => ended.Add(eventArgs);
+
+            var data = new CountingFileDropDataObject([@"C:\Apps\Alpha.exe"]);
+            Assert.True(window.BeginExternalFileDrag(data, canDrop: true));
+            var overlay = Assert.IsType<Border>(
+                window.LauncherPanel.FindName("DropOverlay"));
+            var launcherItems = Assert.IsType<ListBox>(
+                window.LauncherPanel.FindName("LauncherItemsList"));
+            Assert.Equal(Visibility.Visible, overlay.Visibility);
+            Assert.False(launcherItems.IsHitTestVisible);
+            for (var index = 0; index < 100; index++)
+            {
+                window.UpdateExternalFileDrag(canDrop: index % 2 == 0);
+            }
+
+            Assert.Equal(1, data.GetDataPresentCallCount);
+            Assert.Equal(0, data.GetDataCallCount);
+
+            var accepted = window.CompleteExternalFileDrop(data, canDrop: true);
+
+            Assert.True(accepted.Accepted);
+            Assert.Equal(@"C:\Apps\Alpha.exe", Assert.Single(accepted.Paths));
+            Assert.Equal(1, data.GetDataCallCount);
+            Assert.True(Assert.Single(ended).DropAccepted);
+            Assert.Equal(Visibility.Collapsed, overlay.Visibility);
+            Assert.True(launcherItems.IsHitTestVisible);
+
+            var withdrawingData = new CountingFileDropDataObject(
+                [@"C:\Apps\Withdrawn.exe"],
+                throwWhenReading: true);
+            Assert.True(window.BeginExternalFileDrag(withdrawingData, canDrop: true));
+
+            var rejected = window.CompleteExternalFileDrop(
+                withdrawingData,
+                canDrop: true);
+            window.UpdateExternalFileDrag(canDrop: true);
+
+            Assert.False(rejected.Accepted);
+            Assert.Equal(1, withdrawingData.GetDataCallCount);
+            Assert.False(ended[^1].DropAccepted);
+            Assert.Equal(Visibility.Collapsed, overlay.Visibility);
+            Assert.True(launcherItems.IsHitTestVisible);
+
+            var canceledInsideWindow = new CountingFileDropDataObject(
+                [@"C:\Apps\Canceled.exe"]);
+            Assert.True(window.BeginExternalFileDrag(canceledInsideWindow, canDrop: true));
+            var dragLeave = Assert.IsType<DragEventArgs>(Activator.CreateInstance(
+                typeof(DragEventArgs),
+                System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic,
+                binder: null,
+                [
+                    canceledInsideWindow,
+                    DragDropKeyStates.LeftMouseButton,
+                    DragDropEffects.Copy,
+                    window,
+                    new Point(10, 10),
+                ],
+                culture: null));
+            dragLeave.RoutedEvent = DragDrop.PreviewDragLeaveEvent;
+            window.RaiseEvent(dragLeave);
+            Assert.False(ended[^1].DropAccepted);
+            Assert.Equal(Visibility.Collapsed, overlay.Visibility);
+            Assert.True(launcherItems.IsHitTestVisible);
+
+            window.Show();
+            try
+            {
+                var replacedData = new CountingFileDropDataObject(
+                    [@"C:\Apps\Replaced.exe"]);
+                Assert.True(window.BeginExternalFileDrag(replacedData, canDrop: true));
+                EventHandler<WorkspaceExternalDragEndedEventArgs> hideOnEnd =
+                    (_, _) => window.Hide();
+                window.ExternalDragEnded += hideOnEnd;
+                try
+                {
+                    Assert.False(window.BeginExternalFileDrag(
+                        new CountingFileDropDataObject([@"C:\Apps\Next.exe"]),
+                        canDrop: true));
+                }
+                finally
+                {
+                    window.ExternalDragEnded -= hideOnEnd;
+                }
+
+                Assert.Equal(Visibility.Collapsed, overlay.Visibility);
+                Assert.True(launcherItems.IsHitTestVisible);
+            }
+            finally
+            {
+                window.Hide();
+            }
+        });
+    }
+
     [Fact]
     public void WorkbenchShellRendersStaticOneTwoOneLayoutInLightAndDarkThemes()
     {
@@ -87,6 +204,51 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                     launcherList,
                     launcherViewModel);
                 Assert.Equal(2, launcherLayouts.CalculationCount);
+                var dropOverlay = Assert.IsType<Border>(launcher.FindName("DropOverlay"));
+                Assert.Equal(2, Grid.GetRowSpan(dropOverlay));
+                Assert.Equal(20, Panel.GetZIndex(dropOverlay));
+                Assert.Equal(default, dropOverlay.Margin);
+                Assert.Equal(default, dropOverlay.CornerRadius);
+                Assert.Equal(new Thickness(2), dropOverlay.BorderThickness);
+                Assert.Null(dropOverlay.Background);
+                Assert.Null(dropOverlay.Child);
+                launcher.SetExternalDragActive(isActive: true, canDrop: true);
+                window.UpdateLayout();
+                Assert.Equal(Visibility.Visible, dropOverlay.Visibility);
+                Assert.Equal(launcher.ActualWidth, dropOverlay.ActualWidth, precision: 3);
+                Assert.Equal(launcher.ActualHeight, dropOverlay.ActualHeight, precision: 3);
+                Assert.False(launcherList.IsHitTestVisible);
+                CaptureWindowIfRequested(window, "workbench-launcher-drop-light.png");
+                launcher.SetExternalDragActive(isActive: false, canDrop: false);
+                Assert.True(launcherList.IsHitTestVisible);
+
+                var launchTile = FindVisualDescendants<Button>(launcherList)
+                    .First(button => button.DataContext is LauncherItemViewModel);
+                var launchItem = Assert.IsType<LauncherItemViewModel>(launchTile.DataContext);
+                var launchCount = 0;
+                launcherViewModel.OpenActionAsync = _ =>
+                {
+                    launchCount++;
+                    return Task.CompletedTask;
+                };
+                launcher.BeginLaunchFeedback(launchTile, launchItem);
+                if (SystemParameters.ClientAreaAnimation)
+                {
+                    Assert.Equal(0, launchCount);
+                }
+                Assert.True(PumpDispatcherUntil(
+                    window.Dispatcher,
+                    () => launchCount == 1,
+                    TimeSpan.FromSeconds(1)));
+                Assert.Equal(1, launchCount);
+
+                if (SystemParameters.ClientAreaAnimation)
+                {
+                    launcher.BeginLaunchFeedback(launchTile, launchItem);
+                    launcher.CancelAllInteractions();
+                    PumpDispatcherFor(window.Dispatcher, TimeSpan.FromMilliseconds(550));
+                    Assert.Equal(1, launchCount);
+                }
 
                 var stage = Assert.IsType<Border>(window.FindName("StageRegion"));
                 var clipboard = Assert.IsType<Border>(window.FindName("ClipboardRegion"));
@@ -105,6 +267,10 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                 window.UpdateLayout();
                 window.Dispatcher.Invoke(DispatcherPriority.Render, static () => { });
                 CaptureWindowIfRequested(window, "workbench-layout-dark.png");
+                launcher.SetExternalDragActive(isActive: true, canDrop: true);
+                window.UpdateLayout();
+                CaptureWindowIfRequested(window, "workbench-launcher-drop-dark.png");
+                launcher.SetExternalDragActive(isActive: false, canDrop: false);
                 CaptureLauncherHoverIfRequested(
                     window,
                     launcherList,
@@ -489,6 +655,48 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
         encoder.Save(stream);
     }
 
+    private static bool PumpDispatcherUntil(
+        Dispatcher dispatcher,
+        Func<bool> predicate,
+        TimeSpan timeout)
+    {
+        if (predicate())
+        {
+            return true;
+        }
+
+        var deadline = Stopwatch.StartNew();
+        var frame = new DispatcherFrame();
+        var timer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(10),
+        };
+        timer.Tick += (_, _) =>
+        {
+            if (predicate() || deadline.Elapsed >= timeout)
+            {
+                frame.Continue = false;
+            }
+        };
+        timer.Start();
+        Dispatcher.PushFrame(frame);
+        timer.Stop();
+        return predicate();
+    }
+
+    private static void PumpDispatcherFor(Dispatcher dispatcher, TimeSpan duration)
+    {
+        var frame = new DispatcherFrame();
+        var timer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
+        {
+            Interval = duration,
+        };
+        timer.Tick += (_, _) => frame.Continue = false;
+        timer.Start();
+        Dispatcher.PushFrame(frame);
+        timer.Stop();
+    }
+
     private static void CaptureLauncherHoverIfRequested(
         Window window,
         ListBox launcherList,
@@ -618,6 +826,57 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
         public void Dispose()
         {
         }
+    }
+
+    private sealed class CountingFileDropDataObject(
+        string[] paths,
+        bool throwWhenReading = false) : IDataObject
+    {
+        public int GetDataPresentCallCount { get; private set; }
+
+        public int GetDataCallCount { get; private set; }
+
+        public object GetData(string format, bool autoConvert)
+        {
+            GetDataCallCount++;
+            if (throwWhenReading)
+            {
+                throw new System.Runtime.InteropServices.COMException("The source withdrew FileDrop.");
+            }
+
+            return format == DataFormats.FileDrop ? paths : null!;
+        }
+
+        public object GetData(string format) => GetData(format, autoConvert: true);
+
+        public object GetData(Type format) => GetData(format.FullName ?? format.Name);
+
+        public bool GetDataPresent(string format, bool autoConvert)
+        {
+            GetDataPresentCallCount++;
+            return format == DataFormats.FileDrop;
+        }
+
+        public bool GetDataPresent(string format) =>
+            GetDataPresent(format, autoConvert: true);
+
+        public bool GetDataPresent(Type format) =>
+            GetDataPresent(format.FullName ?? format.Name);
+
+        public string[] GetFormats(bool autoConvert) => [DataFormats.FileDrop];
+
+        public string[] GetFormats() => GetFormats(autoConvert: true);
+
+        public void SetData(string format, object data, bool autoConvert) =>
+            throw new NotSupportedException();
+
+        public void SetData(string format, object data) =>
+            throw new NotSupportedException();
+
+        public void SetData(Type format, object data) =>
+            throw new NotSupportedException();
+
+        public void SetData(object data) => throw new NotSupportedException();
     }
 
     private sealed class InMemorySettingsStore : IAppSettingsStore

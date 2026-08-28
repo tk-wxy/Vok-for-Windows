@@ -398,7 +398,7 @@ public sealed class WorkspaceControllerTests
     }
 
     [Fact]
-    public async Task DeferredHotkeyHideWinsOnceWhenExternalDragTerminates()
+    public async Task ExplicitHotkeyClosePreemptsExternalDragLeaseWithoutWaitingForATerminal()
     {
         using var rig = await TestRig.CreateVisibleAsync();
         rig.Window.RaiseExternalDragStarted(43);
@@ -406,11 +406,34 @@ public sealed class WorkspaceControllerTests
 
         rig.Hotkey.RaiseReleased(pressGeneration, TimeSpan.FromMilliseconds(25));
 
-        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
-        Assert.DoesNotContain("window.hide", rig.Log);
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.Equal(1, rig.Log.Count(entry => entry == "window.hide"));
+        Assert.Equal(WorkspaceHideReason.Hotkey, rig.Publisher.Last.Restore.HideReason);
 
         rig.Window.RaiseExternalDragEnded(43, dropAccepted: true);
         rig.Window.RaiseExternalDragEnded(43, dropAccepted: true);
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.Equal(1, rig.Log.Count(entry => entry == "window.hide"));
+    }
+
+    [Fact]
+    public async Task OpeningLongPressStillDefersHideUntilExternalDragTerminates()
+    {
+        using var rig = await TestRig.CreateAsync();
+        rig.Placement.OsGatesReady = true;
+        rig.Window.FocusSucceeds = true;
+        var pressGeneration = rig.Hotkey.RaiseStarted(ExternalTarget);
+        rig.Window.RaiseExternalDragStarted(45);
+
+        rig.Hotkey.RaiseReleased(
+            pressGeneration,
+            HotkeyPressSemantics.TapMaxDuration + TimeSpan.FromMilliseconds(1));
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.DoesNotContain("window.hide", rig.Log);
+
+        rig.Window.RaiseExternalDragEnded(45, dropAccepted: false);
 
         Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
         Assert.Equal(1, rig.Log.Count(entry => entry == "window.hide"));

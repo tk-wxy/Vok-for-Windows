@@ -7,6 +7,49 @@ namespace Vok.IntegrationTests.Launcher;
 public sealed class LauncherLayoutTests
 {
     [Theory]
+    [InlineData(0, 0, 0, 0)]
+    [InlineData(399, 0, 0, 3)]
+    [InlineData(0, 100, 0, 4)]
+    [InlineData(250, 25, 100, 6)]
+    [InlineData(399, 500, 0, 9)]
+    public void ReorderGeometryMapsPointerToFourColumnSlots(
+        double x,
+        double y,
+        double verticalOffset,
+        int expected)
+    {
+        Assert.Equal(
+            expected,
+            LauncherReorderGeometry.GetTargetIndex(
+                x,
+                y,
+                usableWidth: 400,
+                verticalOffset,
+                cardUnitHeight: 100,
+                itemCount: 10));
+    }
+
+    [Theory]
+    [InlineData(-10, -720)]
+    [InlineData(18, -360)]
+    [InlineData(100, 0)]
+    [InlineData(482, 360)]
+    [InlineData(510, 720)]
+    public void ReorderAutoScrollUsesDistanceFromTheViewportEdge(
+        double y,
+        double expected)
+    {
+        Assert.Equal(
+            expected,
+            LauncherReorderGeometry.GetAutoScrollVelocity(
+                y,
+                viewportHeight: 500,
+                edgeZone: 36,
+                maximumSpeed: 720),
+            precision: 3);
+    }
+
+    [Theory]
     [InlineData(620, 490, 5, 98)]
     [InlineData(900, 770, 8, 96.25)]
     [InlineData(1040, 910, 9, 101.11111111111111)]

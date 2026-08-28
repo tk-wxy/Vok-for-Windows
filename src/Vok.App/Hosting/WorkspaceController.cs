@@ -413,8 +413,11 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         {
             if (OwnsExternalDragLease(active.WorkspaceGeneration))
             {
-                _pendingDragHotkeyHideGeneration = active.WorkspaceGeneration;
-                return;
+                if (!active.WorkspaceWasOpenAtPress)
+                {
+                    _pendingDragHotkeyHideGeneration = active.WorkspaceGeneration;
+                    return;
+                }
             }
 
             Hide(WorkspaceHidePolicy.For(WorkspaceHideReason.Hotkey));

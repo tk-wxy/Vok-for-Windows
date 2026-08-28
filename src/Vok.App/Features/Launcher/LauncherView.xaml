@@ -5,6 +5,10 @@
              xmlns:launcher="clr-namespace:Vok.Features.Launcher"
              UseLayoutRounding="False"
              SnapsToDevicePixels="True"
+             PreviewMouseMove="OnPreviewMouseMove"
+             PreviewMouseLeftButtonUp="OnPreviewMouseLeftButtonUp"
+             PreviewMouseWheel="OnPreviewMouseWheel"
+             LostMouseCapture="OnLostMouseCapture"
              automation:AutomationProperties.Name="启动台">
   <UserControl.Resources>
     <Style x:Key="LauncherTileStyle" TargetType="Button">
@@ -186,16 +190,20 @@
                 <DataTemplate DataType="{x:Type launcher:LauncherItemViewModel}">
                   <Button Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType={x:Type launcher:LauncherView}}}"
                           Command="{Binding DataContext.OpenCommand, RelativeSource={RelativeSource AncestorType={x:Type launcher:LauncherView}}}"
-                          CommandParameter="{Binding}"
-                          ToolTip="{Binding TargetValue}"
-                          automation:AutomationProperties.Name="{Binding DisplayName}">
+                           CommandParameter="{Binding}"
+                           ToolTip="{Binding TargetValue}"
+                           PreviewMouseLeftButtonDown="OnTilePreviewMouseLeftButtonDown"
+                           automation:AutomationProperties.Name="{Binding DisplayName}">
                     <Button.Style>
                       <Style TargetType="Button" BasedOn="{StaticResource LauncherTileStyle}">
                         <Style.Triggers>
-                          <DataTrigger Binding="{Binding IsBusy}" Value="True">
-                            <Setter Property="IsEnabled" Value="False" />
-                          </DataTrigger>
-                        </Style.Triggers>
+                           <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                             <Setter Property="IsEnabled" Value="False" />
+                           </DataTrigger>
+                           <DataTrigger Binding="{Binding IsDragging}" Value="True">
+                             <Setter Property="Opacity" Value="0.28" />
+                           </DataTrigger>
+                         </Style.Triggers>
                       </Style>
                     </Button.Style>
                     <Button.ContextMenu>
@@ -278,30 +286,65 @@
       </TextBlock>
     </Grid>
 
+    <Canvas x:Name="InternalDragLayer"
+            Grid.RowSpan="2"
+            Panel.ZIndex="15"
+            IsHitTestVisible="False">
+      <Border x:Name="InternalDragGhost"
+              Padding="8,7"
+              Background="{DynamicResource LayerFillColorDefaultBrush}"
+              BorderBrush="{DynamicResource AccentFillColorDefaultBrush}"
+              BorderThickness="2"
+              CornerRadius="10"
+              Opacity="0.94"
+              Visibility="Collapsed">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+          <Grid Width="50" Height="50"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center">
+            <Border Width="46" Height="46"
+                    Background="{DynamicResource AccentFillColorSecondaryBrush}"
+                    CornerRadius="10">
+              <Border.Style>
+                <Style TargetType="Border">
+                  <Setter Property="Visibility" Value="Collapsed" />
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding Icon}" Value="{x:Null}">
+                      <Setter Property="Visibility" Value="Visible" />
+                    </DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </Border.Style>
+              <TextBlock Text="&#xE8A5;"
+                         FontFamily="Segoe Fluent Icons"
+                         FontSize="22"
+                         Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}"
+                         HorizontalAlignment="Center"
+                         VerticalAlignment="Center" />
+            </Border>
+            <Image Width="48" Height="48"
+                   Source="{Binding Icon}"
+                   Stretch="Uniform"
+                   RenderOptions.BitmapScalingMode="HighQuality" />
+          </Grid>
+          <TextBlock Grid.Row="1"
+                     Text="{Binding DisplayName}"
+                     Style="{StaticResource LauncherItemNameStyle}" />
+        </Grid>
+      </Border>
+    </Canvas>
+
     <Border x:Name="DropOverlay"
             Grid.RowSpan="2"
-            Margin="6"
-            Background="{DynamicResource LayerFillColorDefaultBrush}"
             BorderBrush="{DynamicResource AccentFillColorDefaultBrush}"
             BorderThickness="2"
-            CornerRadius="12"
-            Opacity="0.96"
+            CornerRadius="0"
             Panel.ZIndex="20"
             IsHitTestVisible="False"
-            Visibility="Collapsed">
-      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-        <TextBlock Text="&#xE74D;"
-                   FontFamily="Segoe Fluent Icons"
-                   FontSize="28"
-                   Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}"
-                   HorizontalAlignment="Center" />
-        <TextBlock x:Name="DropOverlayText"
-                   Margin="0,10,0,0"
-                   Text="松手添加到启动台"
-                   FontSize="12"
-                   FontWeight="SemiBold"
-                   HorizontalAlignment="Center" />
-      </StackPanel>
-    </Border>
+            Visibility="Collapsed" />
   </Grid>
 </UserControl>

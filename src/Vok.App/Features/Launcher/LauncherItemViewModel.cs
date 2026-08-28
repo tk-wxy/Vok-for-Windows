@@ -12,7 +12,10 @@ public sealed partial class LauncherItemViewModel(LauncherItem item) : Observabl
     [ObservableProperty]
     private bool _isBusy;
 
-    public LauncherItem Item { get; } =
+    [ObservableProperty]
+    private bool _isDragging;
+
+    public LauncherItem Item { get; private set; } =
         item ?? throw new ArgumentNullException(nameof(item));
 
     public string DisplayName => Item.DisplayName;
@@ -20,4 +23,14 @@ public sealed partial class LauncherItemViewModel(LauncherItem item) : Observabl
     public string TargetValue => Item.TargetValue;
 
     public bool CanRevealInExplorer => Item.CanRevealInExplorer;
+
+    internal void UpdatePersistedOrder(long sortOrder, DateTimeOffset updatedUtc)
+    {
+        Item = Item with
+        {
+            SortOrder = sortOrder,
+            Revision = checked(Item.Revision + 1),
+            UpdatedUtc = updatedUtc,
+        };
+    }
 }

@@ -23,6 +23,8 @@ public sealed partial class LauncherViewModel : ObservableObject, IDisposable
     private bool _disposed;
     private long? _nextSortOrder;
     private int _totalCount;
+    private long _nextReorderGeneration;
+    private LauncherReorderSession? _activeReorder;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasStatus))]
@@ -30,6 +32,9 @@ public sealed partial class LauncherViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     private bool _isCatalogBusy;
+
+    [ObservableProperty]
+    private bool _isReordering;
 
     public LauncherViewModel(
         ILauncherRepository repository,
@@ -111,7 +116,7 @@ public sealed partial class LauncherViewModel : ObservableObject, IDisposable
         await _catalogGate.WaitAsync(operationToken).ConfigureAwait(true);
         try
         {
-            if (!_initialized || _nextSortOrder is null)
+            if (!_initialized || _nextSortOrder is null || IsReordering)
             {
                 return;
             }
@@ -161,9 +166,11 @@ public sealed partial class LauncherViewModel : ObservableObject, IDisposable
             return;
         }
 
-        await _catalogGate.WaitAsync(operationToken).ConfigureAwait(true);
+        var gateAcquired = false;
         try
         {
+            await _catalogGate.WaitAsync(operationToken).ConfigureAwait(true);
+            gateAcquired = true;
             IsCatalogBusy = true;
             StatusText = $"正在添加 {snapshot.Length} 个目标…";
             var resolutions = await _shell
@@ -208,7 +215,10 @@ public sealed partial class LauncherViewModel : ObservableObject, IDisposable
         finally
         {
             IsCatalogBusy = false;
-            _catalogGate.Release();
+            if (gateAcquired)
+            {
+                _catalogGate.Release();
+            }
         }
     }
 
@@ -219,6 +229,139 @@ public sealed partial class LauncherViewModel : ObservableObject, IDisposable
         StatusText = $"{operation}：{exception.Message}";
     }
 
+    internal LauncherReorderSession? BeginReorder(LauncherItemViewModel item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        ThrowIfDisposed();
+        if (IsCatalogBusy || IsReordering || item.IsBusy || Items.Count < 2)
+        {
+            return null;
+        }
+
+        var sourceIndex = Items.IndexOf(item);
+        if (sourceIndex < 0)
+        {
+            return null;
+        }
+
+        var session = new LauncherReorderSession(
+            Interlocked.Increment(ref _nextReorderGeneration),
+            item,
+            sourceIndex,
+            Items.ToArray());
+        _activeReorder = session;
+        IsReordering = true;
+        item.IsDragging = true;
+        return session;
+    }
+
+    internal bool PreviewReorder(LauncherReorderSession session, int targetIndex)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        if (!ReferenceEquals(_activeReorder, session) ||
+            session.State is not LauncherReorderSessionState.Previewing ||
+            Items.Count == 0)
+        {
+            return false;
+        }
+
+        var boundedIndex = Math.Clamp(targetIndex, 0, Items.Count - 1);
+        var currentIndex = Items.IndexOf(session.Item);
+        if (currentIndex < 0 || currentIndex == boundedIndex)
+        {
+            return false;
+        }
+
+        Items.Move(currentIndex, boundedIndex);
+        session.CurrentIndex = boundedIndex;
+        RebuildRows();
+        return true;
+    }
+
+    internal bool CancelReorder(LauncherReorderSession session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        if (!ReferenceEquals(_activeReorder, session) || !session.TryCancel())
+        {
+            return false;
+        }
+
+        RestoreReorderSnapshot(session);
+        EndReorder(session);
+        StatusText = "已取消启动台排序。";
+        return true;
+    }
+
+    internal async Task<bool> CommitReorderAsync(
+        LauncherReorderSession session,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        ThrowIfDisposed();
+        if (!ReferenceEquals(_activeReorder, session) || !session.TryBeginCommit())
+        {
+            return false;
+        }
+
+        if (session.CurrentIndex == session.OriginalIndex)
+        {
+            EndReorder(session);
+            return true;
+        }
+
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _lifetime.Token);
+        var operationToken = linkedCancellation.Token;
+        var gateAcquired = false;
+        try
+        {
+            await _catalogGate.WaitAsync(operationToken).ConfigureAwait(true);
+            gateAcquired = true;
+            IsCatalogBusy = true;
+            var insertionSlot = session.OriginalIndex < session.CurrentIndex
+                ? session.CurrentIndex + 1
+                : session.CurrentIndex;
+            if (!await _repository
+                    .MoveToSlotAsync(session.Item.Item.Id, insertionSlot, operationToken)
+                    .ConfigureAwait(true))
+            {
+                throw new InvalidOperationException("排序目标已变化，未能保存新顺序。");
+            }
+
+            var updatedUtc = DateTimeOffset.UtcNow;
+            for (var index = 0; index < Items.Count; index++)
+            {
+                Items[index].UpdatePersistedOrder(index, updatedUtc);
+            }
+
+            StatusText = $"已将“{session.Item.DisplayName}”移动到第 {session.CurrentIndex + 1} 位。";
+            EndReorder(session);
+            return true;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            RestoreReorderSnapshot(session);
+            EndReorder(session);
+            RecordError("保存启动台顺序失败", exception);
+            return false;
+        }
+        catch (OperationCanceledException)
+        {
+            RestoreReorderSnapshot(session);
+            EndReorder(session);
+            throw;
+        }
+        finally
+        {
+            IsCatalogBusy = false;
+            if (gateAcquired)
+            {
+                _catalogGate.Release();
+            }
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -227,6 +370,11 @@ public sealed partial class LauncherViewModel : ObservableObject, IDisposable
         }
 
         _disposed = true;
+        if (_activeReorder is { } reorder && reorder.TryCancel())
+        {
+            RestoreReorderSnapshot(reorder);
+            EndReorder(reorder);
+        }
         OpenActionAsync = null;
         RevealActionAsync = null;
         _lifetime.Cancel();
@@ -235,7 +383,7 @@ public sealed partial class LauncherViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private async Task OpenAsync(LauncherItemViewModel? item)
     {
-        if (item is null || item.IsBusy || OpenActionAsync is null)
+        if (item is null || item.IsBusy || IsReordering || OpenActionAsync is null)
         {
             return;
         }
@@ -246,7 +394,8 @@ public sealed partial class LauncherViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private async Task RevealAsync(LauncherItemViewModel? item)
     {
-        if (item is null || item.IsBusy || !item.CanRevealInExplorer || RevealActionAsync is null)
+        if (item is null || item.IsBusy || IsReordering ||
+            !item.CanRevealInExplorer || RevealActionAsync is null)
         {
             return;
         }
@@ -257,7 +406,7 @@ public sealed partial class LauncherViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private async Task RemoveAsync(LauncherItemViewModel? item)
     {
-        if (item is null || item.IsBusy)
+        if (item is null || item.IsBusy || IsReordering)
         {
             return;
         }
@@ -317,6 +466,28 @@ public sealed partial class LauncherViewModel : ObservableObject, IDisposable
 
         OnPropertyChanged(nameof(Count));
         OnPropertyChanged(nameof(IsEmpty));
+    }
+
+    private void RestoreReorderSnapshot(LauncherReorderSession session)
+    {
+        Items.Clear();
+        foreach (var item in session.OriginalOrder)
+        {
+            Items.Add(item);
+        }
+
+        RebuildRows();
+    }
+
+    private void EndReorder(LauncherReorderSession session)
+    {
+        session.Item.IsDragging = false;
+        session.End();
+        if (ReferenceEquals(_activeReorder, session))
+        {
+            _activeReorder = null;
+            IsReordering = false;
+        }
     }
 
     private void QueueMissingIcons()
