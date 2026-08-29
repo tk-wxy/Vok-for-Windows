@@ -232,12 +232,36 @@ internal static class Program
                 await ReadNextAsync(snapshots, timeout.Token));
 
             await producer.WriteImmediateAsync(
+                [
+                    new ProducerFormat(DibV5, ControlledImagePayloads.CreateDibV5()),
+                    new ProducerFormat(Dib, ControlledImagePayloads.CreateDib24()),
+                ],
+                timeout.Token);
+            var controlledDibCapture = captures.Track(
+                await ReadNextAsync(snapshots, timeout.Token));
+
+            await producer.WriteImmediateAsync(
                 [new ProducerFormat(Dib, [1, 2, 3, 4])],
                 timeout.Token);
             var malformedImageCapture = captures.Track(
                 await ReadNextAsync(snapshots, timeout.Token));
             var malformedImageContent = new ClipboardContentNormalizer()
                 .Normalize(malformedImageCapture);
+
+            using var imageExecutor = new WindowsClipboardImageExecutor();
+            using var normalizedPng = await imageExecutor.NormalizeAsync(
+                multiImageCapture,
+                timeout.Token);
+            using var normalizedDib = await imageExecutor.NormalizeAsync(
+                controlledDibCapture,
+                timeout.Token);
+            using var normalizedBitmap = await imageExecutor.NormalizeAsync(
+                bitmapOnlyCapture,
+                timeout.Token);
+            var controlledPixelsEquivalent = string.Equals(
+                normalizedPng.SemanticHash,
+                normalizedDib.SemanticHash,
+                StringComparison.Ordinal);
 
             var success =
                 immediate.Disposition is ClipboardCaptureDisposition.Captured &&
@@ -295,6 +319,14 @@ internal static class Program
                         ClipboardRepresentationKind.DibV5 or
                         ClipboardRepresentationKind.Dib &&
                     format.CaptureState is ClipboardFormatCaptureState.Captured) &&
+                controlledDibCapture.Disposition is ClipboardCaptureDisposition.Captured &&
+                HasCapturedFormat(
+                    controlledDibCapture,
+                    ClipboardRepresentationKind.DibV5) &&
+                normalizedPng.HasAlpha &&
+                normalizedDib.HasAlpha &&
+                !normalizedBitmap.HasAlpha &&
+                controlledPixelsEquivalent &&
                 malformedImageCapture.Disposition is ClipboardCaptureDisposition.Unsupported &&
                 malformedImageCapture.Formats.Any(format =>
                     format.RepresentationKind is
@@ -305,7 +337,7 @@ internal static class Program
             var report = new
             {
                 schema = 4,
-                reportVersion = 3,
+                reportVersion = 4,
                 isolatedWindowStation = true,
                 immediate = Summarize(immediate),
                 delayed = Summarize(delayed),
@@ -358,6 +390,20 @@ internal static class Program
                             ClipboardRepresentationKind.DibV5 or
                             ClipboardRepresentationKind.Dib &&
                         format.CaptureState is ClipboardFormatCaptureState.Captured),
+                    decoder = new
+                    {
+                        pngDecoded = normalizedPng.PixelWidth == ControlledImagePayloads.Width &&
+                            normalizedPng.PixelHeight == ControlledImagePayloads.Height,
+                        dibV5Decoded = normalizedDib.PixelWidth == ControlledImagePayloads.Width &&
+                            normalizedDib.PixelHeight == ControlledImagePayloads.Height,
+                        bitmapSynthesisDecoded = normalizedBitmap.PixelWidth ==
+                            ControlledImagePayloads.Width &&
+                            normalizedBitmap.PixelHeight == ControlledImagePayloads.Height,
+                        controlledPixelsEquivalent,
+                        pngHasAlpha = normalizedPng.HasAlpha,
+                        dibV5HasAlpha = normalizedDib.HasAlpha,
+                        bitmapSynthesisHasAlpha = normalizedBitmap.HasAlpha,
+                    },
                     malformedDib = Summarize(malformedImageCapture),
                     malformedRouterRejected = malformedImageContent is null,
                 },

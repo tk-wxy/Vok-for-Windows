@@ -2,6 +2,12 @@
 
 > 归档超过滚动窗口的 `memory.md §0A` 完整会话。默认不读取，仅在取证时搜索；按时间从新到旧排列。
 
+### 会话 2026-08-28 - M2.3 Gate 0 记录器与隔离图片探针
+
+- 新增独立交互记录器及 PowerShell 入口，只序列化图片格式目录、顺序、载荷长度和 PNG/DIB header 字段；不写图片载荷、像素、哈希、来源窗口/进程或路径。记录器 build/self-test/超时收尾通过，并明确 header 合法不等于 codec 解码成功。
+- 扩展非交互 Window Station producer：有效 PNG+DIBV5+DIB 多表示、真实 GDI `CF_BITMAP` 和畸形 DIB 均进入既有 Clipboard STA。纯 Bitmap 实测由 Windows 合成可复制 DIB/DIBV5，验证不跨 `CloseClipboard` 持有 HBITMAP 的边界；现有 router 仍不提交图片，未提前接入产品。
+- 隔离 Release solution build 0 警告/错误，Core 58/58 与 Integration 246/246 共 304/304、记录器 self-test、PowerShell 包装与 clipboard probe `reportVersion=2, success=true` 通过。默认构建只因运行中 PID 20420 锁住 bin 失败，未停止或替换用户进程；下一步需要用户完成真实语料。
+
 ### 会话 2026-08-28 - M2.3 图片纵向切片详细规划
 
 - 复核现有源码与 Windows 官方剪贴板/位图/WIC 契约，确认图片格式虽已枚举，但 router、schema 4、replay、writer 和 UI 尚未闭环；CF_BITMAP 不能按 HGLOBAL 读取，优先通过系统合成 DIB/DIBV5 脱离 HBITMAP 所有权。

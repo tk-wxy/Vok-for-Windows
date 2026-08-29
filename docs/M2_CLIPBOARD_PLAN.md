@@ -444,7 +444,7 @@ clipboard_files
 - 完成 PNG + 兼容位图多表示写回；
 - 以 Snipping Tool、Print Screen、浏览器图片、聊天软件和透明 PNG 完成真机往返。
 
-状态：详细实施规划、M2.3.0 格式/所有权/容量门禁与 M2.3.1 单候选 `Inline | LeasedBlob` 所有权均已完成。产品已按完整目录把图片置于 FileList/Text 之前，只取得 PNG→DIBV5→DIB 的一份自有载荷，并闭环队列丢弃、取消、关闭失败和退出清理；尚未把图片提交历史。下一步是 M2.3.2 严格 decoder、规范像素和 pixel identity，不能因轻量 header preflight 通过而宣称图片规范化已验证。
+状态：详细实施规划与 M2.3.0–M2.3.3 已完成。产品 reader 已按完整目录把图片置于 FileList/Text 之前并只取得 PNG→DIBV5→DIB 一份自有载荷；隔离图片 worker 已完成严格 decoder、sRGB straight-alpha BGRA8、分带 pixel identity 和临时 canonical/thumbnail 输出，但尚未注册到产品组合根或提交图片历史。下一步是 M2.3.4 内容寻址资产与 schema 5，不能在资产事务完成前提前接 UI/replay。
 
 #### M2.3.0 实施前基线、语料与交付边界
 
@@ -516,7 +516,7 @@ M2.3.0 最终锁定：
 
 图片门槛从通用 HGLOBAL 门槛拆出，并集中在单一不可变 options 对象，使用 M2.3.0 表中的精确默认值。job 预留量以 checked arithmetic 计算 `source byte length + width × height × 4`；队列同时按 4 jobs 和 384 MiB 已预留字节拒绝。过载只产生计数和明确状态，不阻塞 Clipboard STA、不无限排队，也不留下 lease；所有上限必须有边界值、加一拒绝和取消/退出归零测试。
 
-实现状态（2026-08-29）：M2.3.1 已完成。Core 只暴露只读流、长度、`Inline | LeasedBlob`、图片尺寸和幂等释放语义；Clipboard STA 在同次打开内做轻量 PNG IHDR/DIB 尺寸门禁、checked 预留，并以 1 MiB 缓冲复制大 HGLOBAL 到 `%LOCALAPPDATA%\Vok\assets\clipboard\.staging`。启动只清理 `capture-*.blob`，结果正常消费、router 拒绝、容量拒绝、Close 失败、队列满丢弃和服务退出均有归零测试。隔离探针 `reportVersion=3` 实测多表示只捕获 PNG、纯 Bitmap 只捕获系统合成 DIBV5、畸形图片为 Unsupported；完整 Release 为 62/62 + 255/255，共 317/317。严格 codec、像素身份、worker 消费和历史提交仍属于 M2.3.2。
+实现状态（2026-08-29）：M2.3.1 已完成。Core 只暴露只读流、长度、`Inline | LeasedBlob`、图片尺寸和幂等释放语义；Clipboard STA 在同次打开内做轻量 PNG IHDR/DIB 尺寸门禁、checked 预留，并以 1 MiB 缓冲复制大 HGLOBAL 到 `%LOCALAPPDATA%\Vok\assets\clipboard\.staging`。启动只清理 `capture-*.blob`，结果正常消费、router 拒绝、容量拒绝、Close 失败、队列满丢弃和服务退出均有归零测试。隔离探针 `reportVersion=3` 实测多表示只捕获 PNG、纯 Bitmap 只捕获系统合成 DIBV5、畸形图片为 Unsupported；本步完成时 Release 为 317/317，后续严格 codec 与 worker 已由 M2.3.2–3 收口。
 
 #### M2.3.2 严格解码、规范像素与语义哈希
 
@@ -533,13 +533,17 @@ M2.3.0 最终锁定：
 
 规范输出只生成两份无 metadata PNG：原尺寸 canonical PNG 和不放大的等比 thumbnail PNG。缩略图最大边是命名选项，使用 WIC scaler 一次生成；哈希、缩放和 PNG 编码都从同一个规范 source 拉取分带像素，禁止为哈希、主图和缩略图各保留一份完整 BGRA 数组。
 
+实现状态（2026-08-29）：M2.3.2 已完成。严格 inspector 流式校验 PNG chunk 顺序/CRC 并拒绝 APNG，packed DIB 用 checked arithmetic 覆盖 1/4/8/16/24/32 bpp、上下行、palette、masks、stride、profile 与总长；linked profile、RLE、内嵌 JPEG/PNG、重叠 mask 和截断明确拒绝。WIC/WPF Imaging 只产生 frozen sRGB straight-alpha BGRA8 source；`BI_RGB` 孤立 Alpha mask 归一为不透明，显式 bitfields Alpha 保留。`Vok.Image.Pixel.v1` 以固定二进制前缀/尺寸/BGRA8 tag 分带 SHA-256，已锁定测试向量；canonical/thumbnail 编码后再流式剥离 `pHYs/iCCP/text/EXIF` 等非像素 chunk，不复制完整像素数组。系统合成 DIBV5 的额外 12-byte masks 只在与 header RGB masks 精确相等时兼容，任意尾随仍拒绝。
+
 #### M2.3.3 有界图片 worker 与失败隔离
 
-新增由 DI 唯一拥有的 `WindowsClipboardImageExecutor`：一条专用后台线程、单消费者、有界 channel 和字节预留，不使用散落 `Task.Run`，不复用 Clipboard STA、Shell/COM STA、SQLite 执行器或 WPF UI Dispatcher。WIC/WPF Imaging 对象只在线程内使用；需要跨到 UI 的对象只能是已从 thumbnail asset 解码并 `Freeze()` 的小型 `BitmapImage`。
+新增最终由 DI 唯一拥有的 `WindowsClipboardImageExecutor`：一条专用后台线程、单消费者有界队列和字节预留，不使用散落 `Task.Run`，不复用 Clipboard STA、Shell/COM STA、SQLite 执行器或 WPF UI Dispatcher。WIC/WPF Imaging 对象只在线程内使用；需要跨到 UI 的对象只能是已从 thumbnail asset 解码并 `Freeze()` 的小型 `BitmapImage`。
 
 每个 job 在入队前凭 header 尺寸预留最大规范字节；无法安全读取尺寸、超像素/字节预算或队列预留失败时不开始解码。job 只有 `Queued→Claimed→Completed|Failed|Cancelled` 一次终态，取消与 worker 认领竞争同一所有权；旧 job、迟到 codec 回调和退出 watchdog 不能提交新记录。失败只隔离当前图片：文本/文件监听继续工作，UI 显示最近一次图片捕获失败/过载的非敏感状态，不能把 listener 整体标死。
 
 退出顺序固定为：停止接收新 clipboard update → 完成/取消 active capture → 关闭结果流 → 取消并收尾图片 job → 删除未提交 staging → 释放图片线程 → 释放 Clipboard STA/asset store/SQLite。自动门禁直接观察 outstanding job、reserved bytes、lease、staging 文件、线程和 GDI/USER handle 都回到零或命名缓存上限；不得用 `GC.Collect` 或固定 sleep 制造回落。
+
+实现状态（2026-08-29）：M2.3.3 已完成为独立但尚未在组合根注册的 `WindowsClipboardImageExecutor`。单 MTA/单消费者最多同时拥有 4 jobs，只接受 `ReservedByteLength == input + canonical` 的 capture；成功发布前释放输入 lease/reservation，结果仅拥有两份临时 PNG。取消前认领、排队取消、active 协作取消、容量/已退出拒绝、codec 失败、同轮 shutdown/drain 竞态和 5 秒 watchdog 后延迟释放均有一次终态测试；最终 Release 62/62 + 286/286 共 348/348，隔离 Window Station 探针 `reportVersion=4, success=true` 验证 PNG/DIBV5 同像素身份、纯 Bitmap 合成 DIBV5 解码及不可信 Alpha 归零，结束后 staging 为 0。
 
 #### M2.3.4 内容寻址资产与 schema 5
 
@@ -615,7 +619,7 @@ Windows 已定义 DIBV5→DIB/Bitmap 的按需转换，因此基线不额外发�
 
 1. **真实语料与阈值（已完成）**：实现非敏感格式记录器并扩展独立 producer，完成 M2.3.0；用结果锁定候选优先级、DPI 语义和所有命名容量值；
 2. **载荷所有权（已完成）**：加入 Inline/LeasedBlob、分块 HGLOBAL copy、候选裁剪、队列字节预留和所有 drop/cancel/exit 清理；文本/文件全量回归先通过；
-3. **decoder + pixel identity**：严格 PNG/DIB preflight、WIC sRGB/BGRA8 规范化、方向/Alpha、分带 hash、canonical/thumbnail PNG 和有界 worker；先只输出临时结果，不写数据库；
+3. **decoder + pixel identity（已完成）**：严格 PNG/DIB preflight、WIC sRGB/BGRA8 规范化、方向/Alpha、分带 hash、canonical/thumbnail PNG 和有界 worker；当前只输出临时结果，不写数据库；
 4. **asset + schema 5**：完成内容寻址 store、4→5 单事务迁移、图片 upsert/replay descriptor、重复回顶、固定、删除/tombstone、损坏隔离和重启恢复；
 5. **thumbnail + UI**：增加异构图片卡、可见性驱动加载、字节缓存、迟到结果门禁、空状态与可访问名称；通过真实 WPF Recycling/DPI 渲染；
 6. **writer + paste**：加入 image replay materializer、PNG/DIBV5/marker 写回、receipt 与既有粘贴门禁；覆盖部分句柄转移、外部覆盖、取消、双击、旧代和退出；
