@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using Vok.Core.Clipboard;
@@ -159,6 +161,8 @@ public sealed class WindowsClipboardSnapshotReaderTests
                 Assert.Equal(ClipboardFormatCaptureState.Captured, format.CaptureState);
                 Assert.Equal([65, 0], format.Payload.ToArray());
             });
+        Assert.Equal(5, result.Formats[0].SourceByteLength);
+        Assert.Equal(2, result.Formats[1].SourceByteLength);
     }
 
     [Fact]
@@ -183,6 +187,8 @@ public sealed class WindowsClipboardSnapshotReaderTests
         Assert.Equal(
             ClipboardFormatCaptureState.Oversize,
             result.Formats[1].CaptureState);
+        Assert.Equal(4, result.Formats[0].SourceByteLength);
+        Assert.Equal(4, result.Formats[1].SourceByteLength);
     }
 
     [Fact]
@@ -194,11 +200,234 @@ public sealed class WindowsClipboardSnapshotReaderTests
 
         var result = reader.Read(0);
 
-        Assert.Equal(ClipboardCaptureDisposition.Captured, result.Disposition);
+        Assert.Equal(ClipboardCaptureDisposition.Unsupported, result.Disposition);
         var bitmap = Assert.Single(result.Formats);
         Assert.Equal(ClipboardRepresentationKind.Bitmap, bitmap.RepresentationKind);
         Assert.Equal(ClipboardFormatCaptureState.MetadataOnly, bitmap.CaptureState);
-        Assert.Empty(native.DataReads);
+        Assert.Equal([ClipboardKnownFormats.DibV5], native.DataReads);
+    }
+
+    [Fact]
+    public void ImageDirectoryOutranksFileAndTextAndCopiesOnlyPng()
+    {
+        using var native = new FakeWindowsClipboardNativeApi { Sequence = 632 };
+        var reader = CreateReader(native);
+        native.SetFormats(
+            (ClipboardKnownFormats.FileDrop, [1, 2, 3, 4]),
+            (ClipboardKnownFormats.UnicodeText, Encoding.Unicode.GetBytes("fallback\0")),
+            (reader.KnownFormats.Png.Id, CreatePng(64)),
+            (ClipboardKnownFormats.DibV5, CreateDibV5()),
+            (ClipboardKnownFormats.Dib, CreateDib()));
+
+        using var result = reader.Read(0);
+
+        Assert.Equal(ClipboardCaptureDisposition.Captured, result.Disposition);
+        Assert.Equal([reader.KnownFormats.Png.Id], native.DataReads);
+        var png = Assert.Single(result.Formats, static format =>
+            format.CaptureState is ClipboardFormatCaptureState.Captured);
+        Assert.Equal(ClipboardRepresentationKind.Png, png.RepresentationKind);
+        Assert.Equal(ClipboardPayloadStorageKind.Inline, png.PayloadStorageKind);
+        Assert.Equal(2, png.ImageHeader?.PixelWidth);
+        Assert.All(
+            result.Formats.Where(static format => format.RepresentationKind is
+                ClipboardRepresentationKind.FileDrop or
+                ClipboardRepresentationKind.UnicodeText or
+                ClipboardRepresentationKind.DibV5 or
+                ClipboardRepresentationKind.Dib),
+            static format => Assert.Equal(
+                ClipboardFormatCaptureState.NotRequested,
+                format.CaptureState));
+        Assert.Null(new ClipboardContentNormalizer().Normalize(result));
+    }
+
+    [Fact]
+    public void InvalidPngFallsBackToOneDibV5CandidateWithoutReadingDib()
+    {
+        using var native = new FakeWindowsClipboardNativeApi { Sequence = 633 };
+        var reader = CreateReader(native);
+        native.SetFormats(
+            (reader.KnownFormats.Png.Id, new byte[64]),
+            (ClipboardKnownFormats.DibV5, CreateDibV5()),
+            (ClipboardKnownFormats.Dib, CreateDib()));
+
+        using var result = reader.Read(0);
+
+        Assert.Equal(ClipboardCaptureDisposition.Captured, result.Disposition);
+        Assert.Equal(
+            [reader.KnownFormats.Png.Id, ClipboardKnownFormats.DibV5],
+            native.DataReads);
+        Assert.Equal(ClipboardFormatCaptureState.Failed, result.Formats[0].CaptureState);
+        Assert.Equal(ClipboardFormatCaptureState.Captured, result.Formats[1].CaptureState);
+        Assert.Equal(ClipboardFormatCaptureState.NotRequested, result.Formats[2].CaptureState);
+    }
+
+    [Fact]
+    public void LargeImageUsesStagingLeaseAndDisposeReleasesFileAndReservation()
+    {
+        var stagingPath = Path.Combine(
+            Path.GetTempPath(),
+            "Vok.ClipboardSnapshotReaderTests",
+            Guid.NewGuid().ToString("N"));
+        var imageOptions = CreateImageOptions(inlinePayloadBytes: 32);
+        var options = new ClipboardCaptureOptions(image: imageOptions);
+        using var store = new ClipboardStagingStore(stagingPath);
+        using var budget = new ClipboardImageReservationBudget(imageOptions);
+        using var native = new FakeWindowsClipboardNativeApi { Sequence = 634 };
+        var reader = new WindowsClipboardSnapshotReader(
+            native,
+            options,
+            InstanceId,
+            stagingStore: store,
+            imageReservations: budget);
+        var source = CreatePng(256);
+        native.SetFormats((reader.KnownFormats.Png.Id, source));
+
+        var result = reader.Read(0);
+        var png = Assert.Single(result.Formats);
+
+        Assert.Equal(ClipboardPayloadStorageKind.LeasedBlob, png.PayloadStorageKind);
+        Assert.True(png.Payload.IsEmpty);
+        Assert.Equal(source.Length, png.PayloadByteLength);
+        Assert.Equal(1, store.OutstandingLeaseCount);
+        Assert.Equal(1, budget.CurrentJobCount);
+        Assert.Equal(source.Length + 16, budget.CurrentReservedBytes);
+        using (var stream = png.OpenPayloadReadStream())
+        {
+            Assert.Equal(source, ReadAll(stream));
+        }
+
+        result.Dispose();
+        result.Dispose();
+
+        Assert.Equal(0, store.OutstandingLeaseCount);
+        Assert.Equal(0, budget.CurrentJobCount);
+        Assert.Equal(0, budget.CurrentReservedBytes);
+        Assert.Empty(Directory.EnumerateFiles(stagingPath));
+    }
+
+    [Fact]
+    public void ReservationCapacityRejectsNextImageUntilFirstResultIsDisposed()
+    {
+        var imageOptions = CreateImageOptions(
+            inlinePayloadBytes: 256,
+            imageWorkerCapacity: 1);
+        var options = new ClipboardCaptureOptions(image: imageOptions);
+        using var budget = new ClipboardImageReservationBudget(imageOptions);
+        using var native = new FakeWindowsClipboardNativeApi { Sequence = 635 };
+        var reader = new WindowsClipboardSnapshotReader(
+            native,
+            options,
+            InstanceId,
+            imageReservations: budget);
+        native.SetFormats((reader.KnownFormats.Png.Id, CreatePng(64)));
+
+        var first = reader.Read(0);
+        using var rejected = reader.Read(0);
+
+        Assert.Equal(ClipboardCaptureDisposition.Captured, first.Disposition);
+        Assert.Equal(ClipboardCaptureDisposition.Unsupported, rejected.Disposition);
+        Assert.Equal(
+            ClipboardFormatCaptureState.CapacityExceeded,
+            Assert.Single(rejected.Formats).CaptureState);
+        Assert.Equal(1, budget.CurrentJobCount);
+
+        first.Dispose();
+        using var acceptedAfterRelease = reader.Read(0);
+
+        Assert.Equal(
+            ClipboardCaptureDisposition.Captured,
+            acceptedAfterRelease.Disposition);
+        Assert.Equal(1, budget.CurrentJobCount);
+    }
+
+    [Fact]
+    public void CloseClipboardFailureReleasesStagedPayloadBeforeReturningFailure()
+    {
+        var stagingPath = Path.Combine(
+            Path.GetTempPath(),
+            "Vok.ClipboardSnapshotReaderTests",
+            Guid.NewGuid().ToString("N"));
+        var imageOptions = CreateImageOptions(inlinePayloadBytes: 32);
+        var options = new ClipboardCaptureOptions(image: imageOptions);
+        using var store = new ClipboardStagingStore(stagingPath);
+        using var budget = new ClipboardImageReservationBudget(imageOptions);
+        using var native = new FakeWindowsClipboardNativeApi
+        {
+            Sequence = 636,
+            FailClose = true,
+        };
+        var reader = new WindowsClipboardSnapshotReader(
+            native,
+            options,
+            InstanceId,
+            stagingStore: store,
+            imageReservations: budget);
+        native.SetFormats((reader.KnownFormats.Png.Id, CreatePng(256)));
+
+        using var result = reader.Read(0);
+
+        Assert.Equal(ClipboardCaptureDisposition.Failed, result.Disposition);
+        Assert.Contains("CloseClipboard", result.Error, StringComparison.Ordinal);
+        Assert.Equal(0, store.OutstandingLeaseCount);
+        Assert.Equal(0, budget.CurrentJobCount);
+        Assert.Empty(Directory.EnumerateFiles(stagingPath));
+    }
+
+    [Fact]
+    public void ReservationBudgetEnforcesAggregateBytesAndReleasesIdempotently()
+    {
+        var options = new ClipboardImageCaptureOptions(
+            maximumInputBytes: 64,
+            maximumDimensionPixels: 4,
+            maximumPixelCount: 16,
+            maximumCanonicalBytes: 64,
+            inlinePayloadBytes: 16,
+            leaseCopyBufferBytes: 8,
+            imageWorkerCapacity: 4,
+            maximumReservedBytes: 100,
+            thumbnailMaximumEdgePixels: 4,
+            thumbnailCacheBytes: 64);
+        using var budget = new ClipboardImageReservationBudget(options);
+
+        Assert.True(budget.TryReserve(60, out var first));
+        Assert.False(budget.TryReserve(41, out var rejected));
+        Assert.Null(rejected);
+        Assert.True(budget.TryReserve(40, out var second));
+        Assert.Equal(2, budget.CurrentJobCount);
+        Assert.Equal(100, budget.CurrentReservedBytes);
+
+        first!.Dispose();
+        first.Dispose();
+        second!.Dispose();
+
+        Assert.Equal(0, budget.CurrentJobCount);
+        Assert.Equal(0, budget.CurrentReservedBytes);
+    }
+
+    [Fact]
+    public void StagingStartupDeletesOnlyOwnedStalePayloadPattern()
+    {
+        var stagingPath = Path.Combine(
+            Path.GetTempPath(),
+            "Vok.ClipboardSnapshotReaderTests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(stagingPath);
+        var stale = Path.Combine(stagingPath, "capture-stale.blob");
+        var unrelated = Path.Combine(stagingPath, "keep.txt");
+        File.WriteAllBytes(stale, [1]);
+        File.WriteAllBytes(unrelated, [2]);
+        try
+        {
+            using var store = new ClipboardStagingStore(stagingPath);
+
+            Assert.False(File.Exists(stale));
+            Assert.True(File.Exists(unrelated));
+            Assert.Equal(0, store.OutstandingLeaseCount);
+        }
+        finally
+        {
+            Directory.Delete(stagingPath, recursive: true);
+        }
     }
 
     [Fact]
@@ -247,6 +476,65 @@ public sealed class WindowsClipboardSnapshotReaderTests
         FakeWindowsClipboardNativeApi native) =>
         new(native, new ClipboardCaptureOptions(), InstanceId);
 
+    private static ClipboardImageCaptureOptions CreateImageOptions(
+        int inlinePayloadBytes,
+        int imageWorkerCapacity = 4) => new(
+        maximumInputBytes: 4096,
+        maximumDimensionPixels: 64,
+        maximumPixelCount: 4096,
+        maximumCanonicalBytes: 16 * 1024,
+        inlinePayloadBytes: inlinePayloadBytes,
+        leaseCopyBufferBytes: 16,
+        imageWorkerCapacity: imageWorkerCapacity,
+        maximumReservedBytes: 32 * 1024,
+        thumbnailMaximumEdgePixels: 32,
+        thumbnailCacheBytes: 1024);
+
+    private static byte[] CreatePng(int byteLength)
+    {
+        var bytes = new byte[Math.Max(byteLength, 29)];
+        new byte[] { 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a }
+            .CopyTo(bytes, 0);
+        BinaryPrimitives.WriteUInt32BigEndian(bytes.AsSpan(8), 13);
+        "IHDR"u8.CopyTo(bytes.AsSpan(12));
+        BinaryPrimitives.WriteUInt32BigEndian(bytes.AsSpan(16), 2);
+        BinaryPrimitives.WriteUInt32BigEndian(bytes.AsSpan(20), 2);
+        bytes[24] = 8;
+        bytes[25] = 6;
+        return bytes;
+    }
+
+    private static byte[] CreateDibV5()
+    {
+        var bytes = new byte[124];
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes, 124);
+        WriteDibDimensions(bytes);
+        return bytes;
+    }
+
+    private static byte[] CreateDib()
+    {
+        var bytes = new byte[40];
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes, 40);
+        WriteDibDimensions(bytes);
+        return bytes;
+    }
+
+    private static void WriteDibDimensions(Span<byte> bytes)
+    {
+        BinaryPrimitives.WriteInt32LittleEndian(bytes[4..], 2);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes[8..], 2);
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes[12..], 1);
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes[14..], 32);
+    }
+
+    private static byte[] ReadAll(Stream stream)
+    {
+        using var output = new MemoryStream();
+        stream.CopyTo(output);
+        return output.ToArray();
+    }
+
     private sealed class FakeWindowsClipboardNativeApi : IWindowsClipboardNativeApi, IDisposable
     {
         private readonly Dictionary<string, uint> _registered =
@@ -262,6 +550,8 @@ public sealed class WindowsClipboardSnapshotReaderTests
         public uint Sequence { get; init; }
 
         public bool FailOpen { get; init; }
+
+        public bool FailClose { get; init; }
 
         public int EnumerationError { get; init; }
 
@@ -309,6 +599,12 @@ public sealed class WindowsClipboardSnapshotReaderTests
             CloseCount++;
             Assert.True(_isOpen);
             _isOpen = false;
+            if (FailClose)
+            {
+                _lastError = 5;
+                return false;
+            }
+
             return true;
         }
 

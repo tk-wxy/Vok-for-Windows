@@ -444,6 +444,195 @@ clipboard_files
 - 完成 PNG + 兼容位图多表示写回；
 - 以 Snipping Tool、Print Screen、浏览器图片、聊天软件和透明 PNG 完成真机往返。
 
+状态：详细实施规划、M2.3.0 格式/所有权/容量门禁与 M2.3.1 单候选 `Inline | LeasedBlob` 所有权均已完成。产品已按完整目录把图片置于 FileList/Text 之前，只取得 PNG→DIBV5→DIB 的一份自有载荷，并闭环队列丢弃、取消、关闭失败和退出清理；尚未把图片提交历史。下一步是 M2.3.2 严格 decoder、规范像素和 pixel identity，不能因轻量 header preflight 通过而宣称图片规范化已验证。
+
+#### M2.3.0 实施前基线、语料与交付边界
+
+M2.3.0 开始时，schema 4、`ClipboardContentNormalizer`、`ClipboardReplayPayload`、仓储和卡片只闭环 Text/FileList；平台快照会枚举并复制全部注册图片 HGLOBAL，结果流只按 16 个快照限项并以完整 `byte[]` 承载每份载荷。一张 7680×4320×32bpp 的未压缩位图仅像素即为 132,710,400 字节，超过旧 64 MiB 单格式门槛，也证明“把 PNG、DIBV5 和 DIB 都复制进托管队列”不能作为 M2.3 基线。M2.3.1 已替换这段载荷取得机制；schema、normalizer、仓储和卡片仍未接入 Image。
+
+编码前新增只记录非敏感元数据的真实格式取证：每次用户动作记录 sequence、格式名称/顺序、载荷字节数、DIB header 类型、像素尺寸、方向、位深、压缩、色彩空间/Alpha 声明、解码成败和各表示是否得到相同像素身份；不写图片字节、缩略图、来源窗口标题、进程命令行或文件路径。最低语料如下：
+
+1. Snipping Tool 矩形截图与全屏截图；Print Screen；
+2. Edge/Chrome 中复制普通图片与带透明通道 PNG；
+3. Word、PowerPoint 或其他已安装 Office 应用中复制图片和形状；
+4. 一种本机常用聊天软件；不可用时明确标为未验证，不能用可控 producer 冒充；
+5. 100%/150%/200% DPI、4K 和可获得的 8K/等价合成语料，并记录 DPI 元数据在各表示间是否稳定；
+6. 现有独立 Window Station producer 增加可控 PNG、DIBV5、DIB 和纯 `CF_BITMAP`，覆盖同像素多编码、表示内容冲突、延迟渲染和畸形数据。
+
+当前已交付两件 Gate 0 工具：
+
+- `tools/Record-M2ImageClipboard.ps1` 在交互桌面监听上述有序动作，报告默认写到 `%TEMP%\Vok.ClipboardImageRecorder`。JSONL 只序列化 sequence、格式目录/顺序、图片载荷长度和 PNG/DIB header 字段，不写载荷、像素、哈希、窗口标题、进程信息或路径；现阶段的 `isHeaderValid` 只是 header 检查，不能冒充完整 codec 解码成功。执行：`pwsh -NoProfile -File tools/Record-M2ImageClipboard.ps1`；自定义来源可用 `-Labels source-a,source-b`，未显式传 `-Count` 时自动按标签数结束；
+- `tools/Probe-M2Clipboard.ps1` 的隔离 Window Station producer 已发布有效 PNG + DIBV5 + DIB、多表示图片、真正的 `CF_BITMAP` 和畸形 DIB。2026-08-28 实测纯 `CF_BITMAP` 快照按顺序得到 MetadataOnly `CF_BITMAP`，并在同次读取中捕获 Windows 合成的 `CF_DIB` 68 bytes 与 `CF_DIBV5` 152 bytes；多表示载荷捕获 PNG 81 bytes、DIBV5 140 bytes、DIB 56 bytes，畸形 DIB 不被现有 router 提交。探针 `schema=4, reportVersion=2, success=true`，证明产品可继续保持“不跨 `CloseClipboard` 持有 HBITMAP、优先复制系统合成 packed DIB”的所有权边界。
+
+记录器刻意不执行完整 codec 解码或像素身份比较；header 报告不能冒充 decoder 通过。严格 decoder 原型仍必须在进入 schema 5 前回放已采与合成语料，补齐每个表示的解码结果与像素等价组；报告只需序列化“成功/失败及等价组”，仍不得写像素或内容哈希。这是 M2.3.2 的实现门禁，不再阻塞 M2.3.1 的载荷所有权。
+
+2026-08-28 首轮真实交互语料已完成 6/6，报告位于 `%TEMP%\Vok.ClipboardImageRecorder\m2.3-image-formats-20260828-223357-775.jsonl`：
+
+| 动作 | 像素表示 | 关键结果 |
+|---|---|---|
+| Snipping Tool 区域 | PNG 2631×1552；DIB/V5 2631×1552 | 同时出现 `CF_HDROP`、Shell/虚拟文件格式和图片格式；PNG 459,169 bytes，单份 DIB 约 16.33 MB |
+| Print Screen | PNG 3200×2000；DIB/V5 3200×2000 | 同样混有 `CF_HDROP`；PNG 697,153 bytes，单份 DIB 约 25.60 MB，是首轮最大语料 |
+| 浏览器普通图片 | PNG/DIB/V5 420×420 | PNG 为 RGB、DIBV5 为 `BI_RGB` 且写有 Alpha mask；同时带 HTML/URL |
+| Office 图片/形状 | PNG 865×541；DIB/V5 554×346 | 同一动作的表示尺寸已经冲突，PNG 保留更高像素尺寸，不能假定 PNG 与 DIB 总是同像素 |
+| 浏览器“透明 PNG” | PNG/DIB/V5 152×148 | PNG 实为 color type 2 且无 `tRNS` 取证，未证明透明；DIBV5 仍是 `BI_RGB` + Alpha mask 异常组合，必须用已知 Alpha 样本复测 |
+| QQ 图片 | DIB/V5 304×819，无 PNG | 同时出现 HTML、`CF_HDROP` 和图片格式，证明 DIB 家族后备不可删除 |
+
+首轮据此锁定两项并保留三项门禁：注册 `PNG` 是主候选，`CF_DIBV5`/`CF_DIB` 是无 PNG 来源的必要后备；图片格式与 `CF_HDROP` 同现时，不能继续采用“文件绝对优先”。仍须用 Explorer 复制真实 PNG 文件作为反例门禁，用已知透明 PNG 判断 Alpha，并用 8K 语料观察 oversize 的真实原始长度。所有 DIB 的 X/Y pixels-per-meter 均为 0，旧版记录器又未扫描 PNG `pHYs`，所以 DPI 语义仍未锁定。记录器现已补 `pHYs`、`tRNS` 和 `sRGB` 辅助块取证，并能生成已知透明 256×256、透明 8K 与浏览器样本页；这些新增字段必须通过定向复采后才进入容量或语义结论。
+
+第一次受控复采因包装脚本把单个逗号字符串在拆分前按 `$Labels.Count=1` 计算，只监听到一条；记录器又默认跳过不含图片格式的纯文件快照，因此 Explorer 动作未入报告，下一次浏览器动作继承了 `explorer-image-file` 标签。格式目录中的 Chromium token、HTML/URL 证明该条实际是浏览器复制的已知透明 256×256 PNG，不能按标签误作 Explorer 证据。该条 PNG 为 color type 6，确认可信 Alpha；源文件声明约 96 DPI，但 Chromium 重新发布的 PNG 已无 `pHYs`，DIB/V5 pixels-per-meter 仍为 0，因此浏览器路径不提供稳定 DPI。包装脚本现先规范化逗号/数组标签再推导数量，显式 `-Count` 仍优先；记录器新增 `-IncludeNonImage` 以允许只记录目录元数据的 Explorer 反例。原触发形式、数组/空白标签、显式 Count 与 1 秒超时真实启动烟雾均通过。剩余门禁缩为 Explorer 复制生成的 PNG 文件和浏览器复制生成的 8K PNG 两项。
+
+最终受控复采完成 2/2，报告为 `%TEMP%\Vok.ClipboardImageRecorder\m2.3-image-formats-20260828-230407-480.jsonl`：Explorer Ctrl+C 生成的 PNG 文件只发布 Shell/HDROP/PreferredDropEffect/虚拟文件目录，没有 PNG/DIB/Bitmap 像素表示；浏览器复制生成的 7680×4320 Alpha PNG 发布 1,334,507-byte PNG，同时 DIB 为 132,710,440 bytes、DIBV5 为 132,710,524 bytes，二者均被旧 64 MiB 单格式门槛准确标为 Oversize。至此 R22 的精确分类通过正反语料：有已知像素格式即 Image，无像素格式而有 HDROP 才是 FileList。
+
+M2.3.0 最终锁定：
+
+| 选项 | 数值 | 含义/依据 |
+|---|---:|---|
+| `MaximumInputBytes` | 192 MiB | 容纳 8K packed DIB 约 126.56 MiB，并给 header/palette/profile/编码开销留界限 |
+| `MaximumDimensionPixels` | 8,192 | 单边明确支持到 8K；更长超宽图首期拒绝而非隐式超配 |
+| `MaximumPixelCount` | 41,943,040 | 40 Mi pixels，覆盖 7680×4320 的 33,177,600 pixels |
+| `MaximumCanonicalBytes` | 160 MiB | `MaximumPixelCount × 4` 的 straight-alpha BGRA8 上限 |
+| `InlinePayloadBytes` | 2 MiB | 首轮 PNG 最大 1.33 MB 可内联；16–132 MB DIB 不进入托管队列大数组 |
+| `LeaseCopyBufferBytes` | 1 MiB | HGLOBAL→staging 分块缓冲，固定且可池化 |
+| `ImageWorkerCapacity` | 4 jobs | 小图 burst 有界；不能形成现有 16 个大快照队列 |
+| `MaximumReservedBytes` | 384 MiB | 每 job 按 `input bytes + canonical bytes` 精确预留；保证容纳两个受控 8K PNG 或一个最坏界限 job。三个同形受控样本合计只比上限少 518,463 bytes，空队列时仍可被精确接受，任何稍大第三项或已有占用都会过载拒绝 |
+| `ThumbnailMaximumEdgePixels` | 512 | 不放大，单张最坏 BGRA decode 1 MiB，覆盖当前卡片可见尺寸 |
+| `ThumbnailCacheBytes` | 32 MiB | 按解码字节限额而非条目数，足够当前可见/邻近容器且不会随历史线性增长 |
+
+这些数值是 M2.3 首版安全上限，不是性能 SLA；M2.4 的真实连续截图和长期资源曲线可以下调或提出版本化扩容，但不得静默提高。DPI 不进入 `Vok.Image.Pixel.v1`：真实 DIB 全为 0，受控 PNG 的 96 DPI `pHYs` 又被 Chromium 丢弃。有效 DPI 只可作为 nullable replay metadata 保存，缺失时 DIBV5 写回使用 3,780 pixels/meter（约 96 DPI）；它不得让同像素生成不同历史或不同 canonical asset。PNG 的 color type 4/6 或合法 `tRNS` 是可信 Alpha；`BI_RGB` 的孤立 Alpha mask 只记诊断，不能参与 Alpha 语义。
+
+本阶段交付：图片捕获、像素身份、内容寻址主图/缩略图、schema 5、可见容器缩略图、固定/删除、PNG + DIBV5 写回及沿用既有安全粘贴状态机。以下仍不实现：EMF/WMF、动画、多帧、HDR/浮点、高于 8 bit/通道的保真编辑、OCR、图片编辑、来源应用猜测、“截图”标签、图片拖出和顶栏搜索。高位深来源可以在门禁明确记录为降级到 sRGB 8-bit 展示语义，但不能宣称原始位深无损。
+
+#### M2.3.1 快照路由与二进制载荷所有权
+
+继续先枚举完整格式目录、检查隐私 marker 和自写 marker，再按目录决定本次只需要复制的候选，避免复制业务上必然不会使用的大对象：
+
+1. 目录中出现注册 `PNG`、`CF_DIBV5`、`CF_DIB` 或 `CF_BITMAP` 任一像素表示时，先归为 Image 候选；随附 `CF_HDROP`、Shell/虚拟文件、HTML 或 URL 只作为未读取的目录证据，不能把 Snipping Tool/QQ 图片抢成 FileList。若图片候选后来畸形，也不降级为临时文件或文本；Explorer 复制真实图片文件的定向门禁通过后才把此规则接入产品；
+2. 只有目录没有图片表示而含 `CF_HDROP` 时才进入 M2.2 FileList 路由并复制文件所需载荷；纯文本规则保持其后。分类一旦确定，不因首选载荷损坏而跨类回退；
+3. Image 每次只复制一个主候选：注册 `PNG` 优先，否则 `CF_DIBV5`，再否则 `CF_DIB`。PNG 的 HGLOBAL 复制失败、超限或同次轻量签名/IHDR preflight 失败时，才在仍持有剪贴板的本轮尝试一个 DIB 家族候选；PNG 已复制且 header 合法后不再复制 DIB，也不读取随附 HTML/URL/HDROP。8K 语料证明“为事后 codec fallback 总是再复制 DIB”会为 1.33 MB PNG 增加约 132.71 MB 重复载荷和持有剪贴板时间；
+4. `CF_BITMAP` 是图片来源信号，不把 HBITMAP 当 HGLOBAL。Windows 会为只发布 `CF_BITMAP` 的来源合成 DIB/DIBV5，Vok 必须在同一次 `OpenClipboard` 内取得并复制合成的 DIB；独立 producer 必须证明该路径。若系统未给出可复制 DIB，则本次明确记为 UnsupportedImage，不能在 `CloseClipboard` 后继续使用 HBITMAP；
+5. PNG 通过轻量 preflight 但在关闭剪贴板后 codec 解码失败时，本次图片明确失败，不再拥有 DIB 事后后备；这是单候选有界所有权的显式取舍。Office 已证明 PNG/DIB 可有不同尺寸，因此不得拼接两个表示的颜色、Alpha 或像素，也不得在 decoder 阶段偷偷切换语义。
+
+图片载荷改为显式所有权的 `Inline | LeasedBlob`：小载荷仍可内联，不超过命名阈值的大 HGLOBAL 在剪贴板仍打开时用固定大小缓冲分块复制到同卷 staging 文件；`ClipboardCaptureResult` 只携带只读 lease、字节数和格式元数据。Controller 正常、异常、取消、队列丢弃和退出路径都必须在 `finally` 释放 lease，未提交 staging 文件不能跨进程重启遗留。Core 契约只暴露只读流/长度/释放语义，不暴露 HGLOBAL、HBITMAP、WPF `BitmapSource` 或任意可写临时路径。
+
+图片门槛从通用 HGLOBAL 门槛拆出，并集中在单一不可变 options 对象，使用 M2.3.0 表中的精确默认值。job 预留量以 checked arithmetic 计算 `source byte length + width × height × 4`；队列同时按 4 jobs 和 384 MiB 已预留字节拒绝。过载只产生计数和明确状态，不阻塞 Clipboard STA、不无限排队，也不留下 lease；所有上限必须有边界值、加一拒绝和取消/退出归零测试。
+
+实现状态（2026-08-29）：M2.3.1 已完成。Core 只暴露只读流、长度、`Inline | LeasedBlob`、图片尺寸和幂等释放语义；Clipboard STA 在同次打开内做轻量 PNG IHDR/DIB 尺寸门禁、checked 预留，并以 1 MiB 缓冲复制大 HGLOBAL 到 `%LOCALAPPDATA%\Vok\assets\clipboard\.staging`。启动只清理 `capture-*.blob`，结果正常消费、router 拒绝、容量拒绝、Close 失败、队列满丢弃和服务退出均有归零测试。隔离探针 `reportVersion=3` 实测多表示只捕获 PNG、纯 Bitmap 只捕获系统合成 DIBV5、畸形图片为 Unsupported；完整 Release 为 62/62 + 255/255，共 317/317。严格 codec、像素身份、worker 消费和历史提交仍属于 M2.3.2。
+
+#### M2.3.2 严格解码、规范像素与语义哈希
+
+新增单一 `ClipboardImageNormalizer`，在专属图片 worker 上消费已经脱离系统句柄的载荷。它先做 header 级门禁再创建 WIC/WPF Imaging decoder：
+
+- PNG 要求正确签名、单帧、有效 IHDR、非零且受限的尺寸；完整 chunk/CRC 和像素解码交给 Windows PNG codec，解码器异常只令该候选失败；
+- DIB 只接受可完整界定的 `BITMAPINFOHEADER`/V4/V5 packed DIB；用 checked arithmetic 校验 header、mask、palette、profile、行 stride、像素偏移和最终长度。首期只接受 1/4/8/16/24/32 bpp 的 `BI_RGB`、`BI_BITFIELDS`/明确 Alpha bitfields；RLE、内嵌 JPEG/PNG、OS/2 header 和未知压缩明确不支持；
+- 正 `height` 按 bottom-up 翻转，负 `height` 按 top-down；`height=int.MinValue`、零尺寸、planes≠1、重叠/非连续 mask、越界 profile 和乘法溢出均整条拒绝；
+- DIBV5 仅在位深、compression 与显式 Alpha mask 组成受支持且不重叠的 bitfields 契约时保留 Alpha。首轮 Chromium 语料实测 `BI_RGB` + `bV5AlphaMask=0xFF000000`，但 Windows 的 32bpp `BI_RGB` 契约明确高字节未使用，因此该组合只记兼容性诊断，不能让 mask 单独推翻 compression 契约；无可信 PNG 后备时按不透明归一，不能用“只要存在非零值就猜 Alpha”的启发式；
+- `PROFILE_EMBEDDED` 只有在 profile 完整落入载荷并受字节预算约束时才允许进入色彩转换；`PROFILE_LINKED` 可能指向本地或网络文件，Vok 不打开该路径并把候选记为不支持，不能让剪贴板触发外部 I/O；
+- 所有有效来源通过 Windows Imaging Component 归一为 top-down、sRGB、straight-alpha BGRA8。premultiplied 来源必须正确还原，不能把 PBGRA 字节直接当直通 BGRA；规范化输出不携带 EXIF、文本、来源路径或其他原始 metadata。
+
+语义哈希使用版本化二进制输入 `Vok.Image.Pixel.v1 + width + height + pixel-format-tag + top-down row bytes`，逐行/分带计算，不把完整 4K/8K 像素再次拼成大数组。编码字节、PNG metadata、DPI、DIB padding、上下行存储方式和来源格式不参与，因此同一规范像素的 PNG/DIBV5/DIB/Bitmap 只形成一条记录；RGBA 任一可观察通道不同则是不同内容。DPI 仅作为 nullable replay metadata，缺失时按约 96 DPI 写回；未来若有产品证据要求物理尺寸成为身份，必须升级哈希版本和 schema，不能改变 `v1` 含义。
+
+规范输出只生成两份无 metadata PNG：原尺寸 canonical PNG 和不放大的等比 thumbnail PNG。缩略图最大边是命名选项，使用 WIC scaler 一次生成；哈希、缩放和 PNG 编码都从同一个规范 source 拉取分带像素，禁止为哈希、主图和缩略图各保留一份完整 BGRA 数组。
+
+#### M2.3.3 有界图片 worker 与失败隔离
+
+新增由 DI 唯一拥有的 `WindowsClipboardImageExecutor`：一条专用后台线程、单消费者、有界 channel 和字节预留，不使用散落 `Task.Run`，不复用 Clipboard STA、Shell/COM STA、SQLite 执行器或 WPF UI Dispatcher。WIC/WPF Imaging 对象只在线程内使用；需要跨到 UI 的对象只能是已从 thumbnail asset 解码并 `Freeze()` 的小型 `BitmapImage`。
+
+每个 job 在入队前凭 header 尺寸预留最大规范字节；无法安全读取尺寸、超像素/字节预算或队列预留失败时不开始解码。job 只有 `Queued→Claimed→Completed|Failed|Cancelled` 一次终态，取消与 worker 认领竞争同一所有权；旧 job、迟到 codec 回调和退出 watchdog 不能提交新记录。失败只隔离当前图片：文本/文件监听继续工作，UI 显示最近一次图片捕获失败/过载的非敏感状态，不能把 listener 整体标死。
+
+退出顺序固定为：停止接收新 clipboard update → 完成/取消 active capture → 关闭结果流 → 取消并收尾图片 job → 删除未提交 staging → 释放图片线程 → 释放 Clipboard STA/asset store/SQLite。自动门禁直接观察 outstanding job、reserved bytes、lease、staging 文件、线程和 GDI/USER handle 都回到零或命名缓存上限；不得用 `GC.Collect` 或固定 sleep 制造回落。
+
+#### M2.3.4 内容寻址资产与 schema 5
+
+资产根为 `%LOCALAPPDATA%\Vok\assets\clipboard`，staging 位于同一卷；最终相对路径只由校验过的小写 SHA-256 和固定扩展名生成，例如 `<prefix>/<hash>.png`。文件先写 staging、flush、重新计算内容哈希和解码校验，再用同卷原子 rename 提交；同哈希已存在时必须核对长度/哈希后复用，不能覆盖未知内容。semantic hash 描述规范像素，asset hash 描述实际 PNG 文件字节，两者不得混用。
+
+schema 5 在现有 schema 4 上增量扩展：
+
+```text
+clipboard_entries
+  + pixel_width INTEGER NULL
+  + pixel_height INTEGER NULL
+  + has_alpha INTEGER NULL
+  + dpi_x_milli INTEGER NULL       # replay metadata，不参与 Vok.Image.Pixel.v1
+  + dpi_y_milli INTEGER NULL
+
+content_assets
+  hash TEXT PRIMARY KEY
+  relative_path TEXT NOT NULL UNIQUE
+  media_type TEXT NOT NULL
+  byte_length INTEGER NOT NULL
+  pixel_width INTEGER NOT NULL
+  pixel_height INTEGER NOT NULL
+  state INTEGER NOT NULL            # Ready | PendingDelete | Quarantined
+  revision INTEGER NOT NULL
+  created_utc TEXT NOT NULL
+
+clipboard_asset_refs
+  entry_id TEXT NOT NULL
+  role INTEGER NOT NULL             # PrimaryPng | ThumbnailPng
+  asset_hash TEXT NOT NULL
+  PRIMARY KEY (entry_id, role)
+  FOREIGN KEY (entry_id) REFERENCES clipboard_entries(id) ON DELETE CASCADE
+  FOREIGN KEY (asset_hash) REFERENCES content_assets(hash) ON DELETE RESTRICT
+```
+
+不在 `clipboard_entries` 重复保存 asset path，也不维护易漂移的手工 `ref_count`；通过 `clipboard_asset_refs(asset_hash)` 索引判断真实引用。Text/FileList 必须保持图片列全 NULL 且无 asset refs；Image 必须 `file_intent=NULL,item_count=0`、尺寸为正，并恰有 Ready 的 Primary/Thumbnail 两个角色。分页查询只 LEFT JOIN 两个轻量 asset hash，不读取 PNG 字节；replay 再单独物化 Primary。
+
+schema 4→5 迁移在单一 SQLite 事务内增加列、资产表、引用表、外键与索引，既有文本/文件行原样保留，全部结构核验通过后才写 `user_version=5`。已知 schema 4、完整 schema 5 和无剪贴板表以外的任何半迁移结构都原样回滚。资产目录不可用只关闭图片捕获/取用并显示降级，不能阻止既有文本/文件历史加载。
+
+图片提交遵循“文件先 Ready、数据库后引用”：asset coordinator 先原子提交并验证两个文件，再由 SQLite 单事务 insert/reuse asset rows、upsert Image entry 和替换两个 refs；数据库失败只会留下无引用 asset，绝不能留下数据库指向缺失文件。删除 Image entry 时先在事务内级联 refs，并把提交后已无引用的 asset 标为 PendingDelete；物理删除和 asset row 删除由同一个串行 coordinator 以 `(hash, revision)` 再认领，若中途被新捕获重新引用则取消删除。删除失败保留 tombstone 供启动重试，不能删除仍有引用的共享 asset；更完整的保留期/总容量清理仍属于 M2.4。
+
+主图或缩略图缺失、哈希不符、解码失败时只把对应 asset 标为 Quarantined 并保留证据。主图损坏的卡片不可粘贴但仍可删除；仅缩略图损坏时显示不可用占位，主图仍可按验证结果回放。应用不得自动删除整库或掩盖为“空历史”。
+
+#### M2.3.5 图片卡、可见性加载与缓存
+
+图片继续进入现有单一 Recycling `ListBox`，不建立第二份集合或把所有图片一次加载进 ViewModel：
+
+- 卡片展示等比缩略图，`Stretch=Uniform`，不裁切、不拉伸、不放大；显示 `宽×高`、捕获时间以及加载中/资产不可用状态，透明区域必须在主题安全背景上可辨认；
+- 主动作仍是“粘贴到呼出前目标”，固定和卡内二次确认删除沿用现有语义；不在本切片增加编辑、OCR、保存到文件或拖出按钮；
+- `AutomationName` 包含“图片”、像素尺寸、可用状态和时间，不把 asset hash/path 暴露给 UI；空状态更新为真实能力“支持文本、文件和图片”；
+- thumbnail 只在 ListBox 容器已实现且图片元素 Loaded 时请求；Unloaded、容器回收、条目 revision 改变、删除和应用退出都取消绑定并释放 `ImageSource`。迟到结果必须同时匹配 entry id、asset hash、revision 和当前容器数据项才可应用；
+- UI 只解码已经受限的小 thumbnail，并用 `BitmapCacheOption.OnLoad` 后关闭流、`Freeze()` 再绑定。缓存按解码字节而不是条目数设限，键为 asset hash；原图从不进入 ViewModel 或 UI cache。
+
+真实 WPF 门禁覆盖浅/深主题、横/竖/超宽/超高/透明图片、80 个混合文本/文件/图片卡、100%/150%/200% DPI、连续滚动和 Recycling。断言当前页以外无数据库明细，未实现容器无 thumbnail decode，离开视口后 ViewModel 不持有原图或已逐出的缩略图。
+
+#### M2.3.6 图片 replay、写回与安全粘贴
+
+仓储的 replay 查询对 Image 只返回轻量 descriptor：semantic hash、Primary asset hash、像素尺寸/Alpha/DPI metadata。显式 `IClipboardImageReplayMaterializer` 在图片 worker 上打开并重新校验 canonical PNG，逐带重算 `Vok.Image.Pixel.v1`；hash、尺寸或格式不匹配则在写系统剪贴板前失败并保持工作台可见。物化产物使用有生命周期的只读 blob：canonical PNG 可直接引用 Ready asset，兼容 DIBV5 写入同卷临时 blob，避免在 Controller/VM 中形成大 `byte[]`。
+
+`WindowsClipboardWriter` 的 Image 分支一次 `EmptyClipboard` 后依次写：
+
+1. 注册格式 `PNG`：canonical PNG 字节；
+2. `CF_DIBV5`：124 字节 V5 header + 32bpp bottom-up 像素，`BI_BITFIELDS`、R/G/B/A mask 明确、`LCS_sRGB`、无 linked/embedded profile；
+3. `Vok.Internal.ClipboardWrite`：继续绑定 instance、operation 和图片 semantic hash。
+
+Windows 已定义 DIBV5→DIB/Bitmap 的按需转换，因此基线不额外发布 `CF_BITMAP`，避免引入 HBITMAP/GDI 对象所有权；只有 Paint、Office、浏览器和聊天软件真机门禁证明某目标无法消费系统合成格式时，才单独评估显式 `CF_DIB`，不能凭猜测复制三份大位图。每个 blob 都按长度预分配 GMEM_MOVEABLE HGLOBAL 并分块复制；`SetClipboardData` 成功后所有权转给系统，失败时只释放未转移句柄，任一后续格式失败仍按既有部分写入清除策略收口。
+
+图片主动作复用现有 `Materialize→Write→Hide/Restore→Verify→Inject` 和 generation/state machine，不新增第二套焦点逻辑。materialize/asset 验证/写入失败时窗口保持可见；写入成功但隐藏、恢复、焦点或注入失败时明确降级为“已复制图片，可手动粘贴”；外部覆盖令 receipt 失效，不注入第三方内容。双击、取消、退出和旧代完成仍只能认领一次写回/注入。
+
+#### M2.3.7 实施顺序与自动门禁
+
+按下列顺序一次只打开一条新风险链；步骤 6 前不把半成品图片卡注册到产品组合根：
+
+1. **真实语料与阈值（已完成）**：实现非敏感格式记录器并扩展独立 producer，完成 M2.3.0；用结果锁定候选优先级、DPI 语义和所有命名容量值；
+2. **载荷所有权（已完成）**：加入 Inline/LeasedBlob、分块 HGLOBAL copy、候选裁剪、队列字节预留和所有 drop/cancel/exit 清理；文本/文件全量回归先通过；
+3. **decoder + pixel identity**：严格 PNG/DIB preflight、WIC sRGB/BGRA8 规范化、方向/Alpha、分带 hash、canonical/thumbnail PNG 和有界 worker；先只输出临时结果，不写数据库；
+4. **asset + schema 5**：完成内容寻址 store、4→5 单事务迁移、图片 upsert/replay descriptor、重复回顶、固定、删除/tombstone、损坏隔离和重启恢复；
+5. **thumbnail + UI**：增加异构图片卡、可见性驱动加载、字节缓存、迟到结果门禁、空状态与可访问名称；通过真实 WPF Recycling/DPI 渲染；
+6. **writer + paste**：加入 image replay materializer、PNG/DIBV5/marker 写回、receipt 与既有粘贴门禁；覆盖部分句柄转移、外部覆盖、取消、双击、旧代和退出；
+7. **产品接入与发布**：组合根一次启用完整切片，跑 Release 全量测试、0 警告构建、win-x64 自包含发布、PowerShell AST、隔离 Window Station 图片往返和长期资源曲线后再做真机验收。
+
+自动测试最低矩阵：
+
+- PNG/DIBV5/DIB 的 top-down/bottom-up、行 padding、调色板、16/24/32bpp、显式/缺失 Alpha、embedded/linked profile、同像素不同编码和冲突表示；
+- 纯 `CF_BITMAP` 由系统合成 DIB 后形成 Image，Explorer 复制图片文件仍只形成 FileList，浏览器图片附带 URL/HTML 仍只形成 Image；
+- 截断 header/palette/profile/pixel、溢出尺寸、非法 mask、RLE/内嵌编码、损坏 PNG、多帧、输入/像素/队列超限均不分配越界、不降级成文本、不提交半条历史；
+- schema 4→5、未知/半迁移回滚、两资产原子提交、数据库失败遗留无引用而非悬空引用、共享 asset 删除、recapture-vs-delete revision 竞态、missing/quarantined/tombstone 重启；
+- 同像素去重回顶、重启 replay、固定/删除、thumbnail 可见性/回收、80 卡混合列表和原图不进 VM；
+- PNG/DIBV5/marker 真实写回、系统合成 DIB/Bitmap、SelfWrite、外部覆盖、部分 transfer、Close 失败和图片粘贴全部既有状态机路径；
+- 4K/8K 与连续截图下 queue/reserved bytes/cache 始终不超命名预算，第二轮 burst 不出现单调增长，空闲后 job/lease/staging/句柄/线程归零或回到固定缓存上限。
+
+真机验收按来源×目标而不是只看 Vok 卡片：Snipping Tool、Print Screen、浏览器、Office、聊天软件和透明 PNG 各确认“捕获→卡片→重启→写回→目标粘贴”；目标至少覆盖 Paint、Office、浏览器可编辑区和一种聊天软件。核对方向、长宽比、色彩、透明 Alpha、像素尺寸、DPI/物理粘贴尺寸、重复回顶和 4K/8K 清晰度；快速连续截图时 UI/热键/文本文件监听仍响应。删除历史后 asset refs 与文件一致，不改变系统剪贴板；损坏主图、只损坏缩略图、目录只读/空间不足分别明确降级。验收后只读确认真实用户库 schema 5、Image 行、两个 asset refs 与对应文件，再宣布 M2.3 完成。
+
 ### M2.4：规模与故障门禁
 
 - 完成保留策略、固定豁免、总字节清理、tombstone 回收和一键清理用例；
@@ -500,8 +689,14 @@ clipboard_files
 - [Standard Clipboard Formats](https://learn.microsoft.com/windows/win32/dataxchg/standard-clipboard-formats)
 - [Clipboard Operations](https://learn.microsoft.com/windows/win32/dataxchg/clipboard-operations)
 - [Using the Clipboard](https://learn.microsoft.com/windows/win32/dataxchg/using-the-clipboard)
+- [GetClipboardData](https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-getclipboarddata)
+- [SetClipboardData](https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-setclipboarddata)
 - [HTML Clipboard Format](https://learn.microsoft.com/windows/win32/dataxchg/html-clipboard-format)
 - [Shell Clipboard Formats](https://learn.microsoft.com/windows/win32/shell/clipboard)
 - [DROPEFFECT Constants](https://learn.microsoft.com/windows/win32/com/dropeffect-constants)
 - [DROPFILES structure](https://learn.microsoft.com/windows/win32/api/shlobj_core/ns-shlobj_core-dropfiles)
 - [DragQueryFileW](https://learn.microsoft.com/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew)
+- [BITMAPINFOHEADER](https://learn.microsoft.com/previous-versions/dd183376(v=vs.85))
+- [BITMAPV5HEADER](https://learn.microsoft.com/windows/win32/api/wingdi/ns-wingdi-bitmapv5header)
+- [WIC native pixel formats](https://learn.microsoft.com/windows/win32/wic/-wic-codec-native-pixel-formats)
+- [WPF Imaging Overview](https://learn.microsoft.com/dotnet/desktop/wpf/graphics-multimedia/imaging-overview)

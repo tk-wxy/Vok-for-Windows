@@ -66,6 +66,27 @@ internal sealed partial class ControlledClipboardProducer : IDisposable
             () => WriteDelayed(formats),
             cancellationToken);
 
+    public Task WriteBitmapAsync(
+        int width,
+        int height,
+        byte[] bgraPixels,
+        CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(width, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(height, 1);
+        ArgumentNullException.ThrowIfNull(bgraPixels);
+        if (bgraPixels.Length != checked(width * height * 4))
+        {
+            throw new ArgumentException(
+                "A 32-bpp bitmap requires exactly width * height * 4 bytes.",
+                nameof(bgraPixels));
+        }
+
+        return PostAsync(
+            () => WriteBitmap(width, height, bgraPixels),
+            cancellationToken);
+    }
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -270,6 +291,52 @@ internal sealed partial class ControlledClipboardProducer : IDisposable
         }
     }
 
+    private unsafe void WriteBitmap(int width, int height, byte[] bgraPixels)
+    {
+        const uint bitmapFormat = 2;
+        OpenAndEmpty();
+        nint bitmap = 0;
+        var transferred = false;
+        try
+        {
+            fixed (byte* pixels = bgraPixels)
+            {
+                bitmap = CreateBitmap(
+                    width,
+                    height,
+                    planes: 1,
+                    bitsPerPixel: 32,
+                    (nint)pixels);
+            }
+
+            if (bitmap == 0)
+            {
+                throw LastError("CreateBitmap(producer CF_BITMAP)");
+            }
+
+            if (SetClipboardData(bitmapFormat, bitmap) == 0)
+            {
+                throw LastError("SetClipboardData(CF_BITMAP)");
+            }
+
+            transferred = true;
+        }
+        finally
+        {
+            try
+            {
+                CloseOwnedClipboard();
+            }
+            finally
+            {
+                if (!transferred && bitmap != 0)
+                {
+                    _ = DeleteObject(bitmap);
+                }
+            }
+        }
+    }
+
     private void OpenAndEmpty()
     {
         if (!OpenClipboard(_window))
@@ -375,6 +442,18 @@ internal sealed partial class ControlledClipboardProducer : IDisposable
 
     [LibraryImport("kernel32.dll", SetLastError = true)]
     private static partial nint GlobalFree(nint memory);
+
+    [LibraryImport("gdi32.dll", SetLastError = true)]
+    private static partial nint CreateBitmap(
+        int width,
+        int height,
+        uint planes,
+        uint bitsPerPixel,
+        nint bits);
+
+    [LibraryImport("gdi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool DeleteObject(nint graphicsObject);
 
     [LibraryImport("user32.dll", EntryPoint = "RegisterClassW", SetLastError = true)]
     private static partial ushort RegisterClass(in ProducerWindowClass windowClass);

@@ -18,7 +18,8 @@ public sealed class ClipboardCaptureOptions
         int snapshotQueueCapacity = DefaultSnapshotQueueCapacity,
         int maximumFormatBytes = DefaultMaximumFormatBytes,
         int maximumSnapshotBytes = DefaultMaximumSnapshotBytes,
-        IReadOnlyList<TimeSpan>? busyRetrySchedule = null)
+        IReadOnlyList<TimeSpan>? busyRetrySchedule = null,
+        ClipboardImageCaptureOptions? image = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(snapshotQueueCapacity, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(maximumFormatBytes, 1);
@@ -36,6 +37,7 @@ public sealed class ClipboardCaptureOptions
         MaximumFormatBytes = maximumFormatBytes;
         MaximumSnapshotBytes = maximumSnapshotBytes;
         BusyRetrySchedule = Array.AsReadOnly(retries);
+        Image = image ?? new ClipboardImageCaptureOptions();
     }
 
     public int SnapshotQueueCapacity { get; }
@@ -45,4 +47,6 @@ public sealed class ClipboardCaptureOptions
     public int MaximumSnapshotBytes { get; }
 
     public IReadOnlyList<TimeSpan> BusyRetrySchedule { get; }
+
+    public ClipboardImageCaptureOptions Image { get; }
 }

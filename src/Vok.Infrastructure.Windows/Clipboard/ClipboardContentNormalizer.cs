@@ -24,6 +24,16 @@ public sealed class ClipboardContentNormalizer : IClipboardCaptureNormalizer
     {
         ArgumentNullException.ThrowIfNull(capture);
         if (capture.Formats.Any(static format =>
+                format.RepresentationKind is
+                    ClipboardRepresentationKind.Png or
+                    ClipboardRepresentationKind.DibV5 or
+                    ClipboardRepresentationKind.Dib or
+                    ClipboardRepresentationKind.Bitmap))
+        {
+            return null;
+        }
+
+        if (capture.Formats.Any(static format =>
                 format.RepresentationKind is ClipboardRepresentationKind.FileDrop &&
                 format.CaptureState is not ClipboardFormatCaptureState.NotRequested))
         {

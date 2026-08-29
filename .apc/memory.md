@@ -11,30 +11,30 @@
 
 ## §0 快照
 
-- **状态**：M0 宿主、Workbench 1:2:1 壳层、M1 启动台及 M2.0/M2.1 保持可用。M2.2 文件列表纵向切片与 Explorer COPY 位掩码根因修复已通过自动和用户物理验收，默认 Release PID 20420 正在运行且响应正常；本次提交完成 M2.2 收口。
-- **最近进展**：真实取证证明 Explorer COPY 发布 `Preferred DropEffect=5 (COPY | LINK)`，旧 normalizer 精确接受 0/1/2 而拒绝整条有效 `CF_HDROP`。修复改为按位解析且 COPY/MOVE 同现仍拒绝；304/304 测试、0 警告构建、自包含发布、PowerShell AST、隔离探针和真实库文件行通过，用户复测 Explorer 复制/剪切、文件卡及实际粘贴均符合预期。
-- **下一步**：进入 M2.3 图片/截图纵向切片分析规划；先以真实 Snipping Tool、Print Screen、浏览器和 Office 图片语料核对 PNG/DIBV5/DIB/Bitmap 多表示、像素去重、资产所有权和大图内存门禁，再决定实现切片。
-- **已知问题**：M2.2 的重启 replay、混合 DPI 和离线/权限路径仍可做专项回归，但不阻塞已验收功能。M2.3 PNG/DIB/截图资产、缩略图与有界解码尚未开始；虚拟文件、Shell namespace、未知私有格式、音视频/EMF 不支持，搜索和中转站仍无功能。
+- **状态**：M0、M1 与 M2.0–M2.2 保持可用，M2.2 已由 `8eb6089` 收口。M2.3.0 与 M2.3.1 已完成：产品 reader 现在执行 Image→FileList→Text 路由并只拥有 PNG→DIBV5→DIB 一个 `Inline | LeasedBlob` 候选，但尚不把图片提交历史。默认 Release PID 20420 未停止或替换。
+- **最近进展**：新增不可变图片容量 options、平台无关只读 lease/reservation 契约、轻量 header/尺寸门禁、1 MiB HGLOBAL→同卷 staging、4 jobs/384 MiB checked 预留及 `CapacityExceeded` 状态；Controller 消费、router 拒绝、Close 失败、队列 drop 和服务退出都幂等归零。隔离 Release 0 警告/错误，62/62 + 255/255 共 317/317，记录器 self-test 与探针 `reportVersion=3, success=true` 通过。
+- **下一步**：执行 M2.3.2：在专属有界图片 worker 上完成严格 PNG/DIB packed payload 校验、WIC sRGB/BGRA8 规范化、方向/Alpha/profile 边界、分带 `Vok.Image.Pixel.v1` 哈希及临时 canonical/thumbnail 输出；仍不先写 schema 5 或接 UI/replay。
+- **已知问题**：合法 PNG 轻量 header 仍可能在关闭剪贴板后 codec 失败且没有 DIB 事后后备；当前产品会明确丢弃 Image，因为 normalizer/worker/资产/schema 5/缩略图/写回尚未实现。Chromium `BI_RGB` + Alpha mask 只能诊断；完整 codec 像素等价、目标粘贴兼容性和 M2.4 长期资源曲线仍未验证。
 
 ## §0A 最近会话
 
-### 会话 2026-08-28 - M2.2 文件列表实现与自动门禁
+### 会话 2026-08-29 - M2.3.1 单候选图片载荷所有权
 
-- 在既有 Clipboard STA/receipt 上完成有效 `CF_HDROP` 优先 router、严格 Unicode/ANSI `DROPFILES`、COPY/MOVE/Unknown 意图和版本化路径哈希；虚拟附件只编目为 `VirtualFile`/Unsupported，畸形文件快照不降级为文本。schema 4 单事务迁移并核验列、外键和索引，文件去重/回顶/replay/cascade 只操作 Vok 元数据。
-- 启动台与剪贴板共用 DI 唯一拥有的有界 Shell/COM STA；文件卡异步展示图标/可用性，MOVE 可访问名称与失败文案明确移动风险，Unknown 安全按 COPY。文件主动作复用 Write→Hide/Restore→Verify→Inject，强制 COPY 只 Write→Verify；部分写入、迟到结果、取消认领、双动作和退出 watchdog 均完成根因复审。
-- 首次物理验收 1–6 全失败；监听取证抓到 Explorer COPY 的 `CF_HDROP` 完整有效，但 `Preferred DropEffect=5 (COPY | LINK)` 被精确 0/1/2 白名单拒绝。依据 Windows `DROPEFFECT` 掩码契约改为单一 COPY/MOVE 操作位解析，二者同现仍拒绝，探针 COPY 语料同步改为 5。最终 Release 58/58 + 246/246 共 304/304 自动测试、自包含发布、PowerShell AST 和独立探针通过；新版 PID 20420 运行正常，真实 schema 4 库生成首条文件记录，用户复测 Explorer 复制/剪切、文件卡和实际粘贴均符合预期并授权提交。
+- Core 新增精确默认图片容量、`Inline | LeasedBlob`、只读流、header 尺寸和 reservation 所有权；结果与格式均幂等释放。Clipboard STA 先按完整目录决定 Image，再只复制 PNG 或一个 DIB 家族候选；大载荷以 1 MiB 缓冲写入同卷 `.staging`，按 `input + width × height × 4` 同时受 4 jobs/384 MiB 限制。
+- 根因级生命周期收口覆盖 CloseClipboard 失败替换结果、忙重试丢弃、channel 满 drop、取消后的 Controller 消费和服务退出 drain；staging 启动只清理命名 blob，不暴露路径。router 现在让任何像素目录抢先于 HDROP/Text，但 M2.3.2 前仍返回 null，不写半条 Image 历史。
+- 隔离 Release 构建 0 警告/错误，Core 62/62 与 Integration 255/255 共 317/317；记录器 self-test 与独立 Window Station 探针 `reportVersion=3, success=true` 通过。默认 PID 20420 未替换；下一步是严格 decoder/pixel identity。
 
-### 会话 2026-08-28 - M2.2 文件列表详细规划与 M2.1 提交
+### 会话 2026-08-28 - M2.3 Gate 0 首轮真实图片语料
 
-- 用户确认 M2.1 真机测试通过；只读复核运行中新版进程的真实库为 schema 3，含 2 条记录及 2 个表示层。M2.0/M2.1 的 257/257 自动测试、自包含发布、真实 WPF 渲染和隔离探针证据以提交 `434966b` 收口，`.codex/` 未纳入提交。
-- 现状诊断确认 Clipboard STA 已复制 `CF_HDROP` 与 `Preferred DropEffect` 原始字节，但 normalizer、schema 3、replay payload、writer 和卡片仍为文本专用；现有 Shell STA 机制可复用，但 Core 接口绑定启动台模型。
-- M2.2 规划锁定严格 `DROPFILES`/路径解析、Unknown→COPY 安全回放、意图参与语义哈希、schema 4 文件子表、共享单一 Shell STA、文件卡与强制 COPY 次动作，并按真实语料→normalizer→迁移→UI→writer→产品接入分段门禁。本轮提交后仅改规划文档，未实现或运行新增代码测试。
+- 用户完成 6/6 非敏感交互动作。区域截图和 Print Screen 均发布 PNG/DIB/V5、Bitmap 与 HDROP/Shell 格式，QQ 图片发布 DIB/V5、Bitmap、HTML 与 HDROP；旧文件绝对优先会稳定误分类，故新增 R22 并把产品接入前的 Explorer 图片文件设为反例门禁。
+- 浏览器与截图均有 PNG，QQ 无 PNG；Office 的 PNG 865×541 与 DIB 554×346 尺寸冲突，支持 PNG 主候选和 DIB 家族必要后备。首轮最大为 3200×2000、单份 DIB 约 25.6 MB；所有 DIB pixels-per-meter 为 0，DPI 尚无语义证据。
+- 首轮透明标签样本的 PNG 实为 RGB；受控 256 PNG 的浏览器复采随后确认 color type 6 Alpha，但 Chromium 丢弃源 `pHYs`。首次复采还暴露逗号标签未先规范化导致请求数为 1、纯 Explorer 文件被默认图片过滤跳过；已修复根因并新增显式 `-IncludeNonImage`，自测及真实超时启动烟雾通过。最终 2/2 复采确认 Explorer 图片文件只有 HDROP、8K PNG 1.33 MB 而 DIB 约 126.56 MiB；Gate 0 以 §21 收口，下一步 M2.3.1。
 
-### 会话 2026-08-28 - M2.1 文本历史、卡片与安全粘贴
+### 会话 2026-08-28 - M2.3 Gate 0 记录器与隔离图片探针
 
-- 在 M2.0 快照之上新增有界 Unicode/ANSI/OEM、HTML/RTF 规范化与精确语义哈希；schema 3 由既有 SQLite 执行器单事务建表/结构识别，支持去重回顶、64 条 keyset 分页、固定、级联删除和重启多表示回放。右侧真实 ClipboardView 使用 Recycling 虚拟化文本卡，删除改为卡片内二次确认，避免模态框干扰工作台失活事务。
-- Clipboard STA 新增可认领 write/verify 命令和 instance + operation + semantic hash marker，receipt 同时核验 sequence；按代粘贴只在写回、同代隐藏/恢复、receipt 当前与顶层/子焦点再次匹配后 SendInput，恢复失败、外部覆盖、焦点变化和重复点击均不注入。
-- Release 55/55 + 202/202 共 257/257 自动测试、自包含发布和浅/深 80 卡渲染通过；独立 Window Station 探针真实验证多表示写回、自写抑制与外部覆盖失效。用户确认真机文本捕获、历史展示与粘贴测试通过；只读复核运行中 PID 3608 的真实库为 schema 3，含 2 条记录及 2 个表示层。
+- 新增独立交互记录器及 PowerShell 入口，只序列化图片格式目录、顺序、载荷长度和 PNG/DIB header 字段；不写图片载荷、像素、哈希、来源窗口/进程或路径。记录器 build/self-test/超时收尾通过，并明确 header 合法不等于 codec 解码成功。
+- 扩展非交互 Window Station producer：有效 PNG+DIBV5+DIB 多表示、真实 GDI `CF_BITMAP` 和畸形 DIB 均进入既有 Clipboard STA。纯 Bitmap 实测由 Windows 合成可复制 DIB/DIBV5，验证不跨 `CloseClipboard` 持有 HBITMAP 的边界；现有 router 仍不提交图片，未提前接入产品。
+- 隔离 Release solution build 0 警告/错误，Core 58/58 与 Integration 246/246 共 304/304、记录器 self-test、PowerShell 包装与 clipboard probe `reportVersion=2, success=true` 通过。默认构建只因运行中 PID 20420 锁住 bin 失败，未停止或替换用户进程；下一步需要用户完成真实语料。
 
 ## 指引
 

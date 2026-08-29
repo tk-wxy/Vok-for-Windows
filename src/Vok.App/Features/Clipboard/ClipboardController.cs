@@ -59,7 +59,6 @@ public sealed class ClipboardController : IDisposable
 
         _disposed = true;
         _lifetime.Cancel();
-        _platform.Dispose();
         try
         {
             if (_watchTask is not null &&
@@ -73,6 +72,7 @@ public sealed class ClipboardController : IDisposable
             Trace.TraceWarning("Clipboard capture loop ended with a shutdown fault: {0}", exception);
         }
 
+        _platform.Dispose();
         _lifetime.Dispose();
     }
 
@@ -84,36 +84,39 @@ public sealed class ClipboardController : IDisposable
                                .WatchAsync(_lifetime.Token)
                                .ConfigureAwait(false))
             {
-                if (capture.Disposition is ClipboardCaptureDisposition.Failed)
+                using (capture)
                 {
-                    var message = capture.Error ?? "Clipboard capture failed.";
-                    _workspaceWindow.PostNormal(() =>
-                        _viewModel.RecordCaptureFault(message));
-                    continue;
-                }
+                    if (capture.Disposition is ClipboardCaptureDisposition.Failed)
+                    {
+                        var message = capture.Error ?? "Clipboard capture failed.";
+                        _workspaceWindow.PostNormal(() =>
+                            _viewModel.RecordCaptureFault(message));
+                        continue;
+                    }
 
-                var content = _normalizer.Normalize(capture);
-                if (content is null)
-                {
-                    continue;
-                }
+                    var content = _normalizer.Normalize(capture);
+                    if (content is null)
+                    {
+                        continue;
+                    }
 
-                var entry = content switch
-                {
-                    ClipboardTextContent text => await _repository
-                        .UpsertTextAsync(text, capture.CapturedUtc, _lifetime.Token)
-                        .ConfigureAwait(false),
-                    ClipboardFileListContent files => await _repository
-                        .UpsertFileListAsync(files, capture.CapturedUtc, _lifetime.Token)
-                        .ConfigureAwait(false),
-                    _ => null,
-                };
-                if (entry is null)
-                {
-                    continue;
-                }
+                    var entry = content switch
+                    {
+                        ClipboardTextContent text => await _repository
+                            .UpsertTextAsync(text, capture.CapturedUtc, _lifetime.Token)
+                            .ConfigureAwait(false),
+                        ClipboardFileListContent files => await _repository
+                            .UpsertFileListAsync(files, capture.CapturedUtc, _lifetime.Token)
+                            .ConfigureAwait(false),
+                        _ => null,
+                    };
+                    if (entry is null)
+                    {
+                        continue;
+                    }
 
-                _workspaceWindow.PostNormal(() => _viewModel.ApplyCaptured(entry));
+                    _workspaceWindow.PostNormal(() => _viewModel.ApplyCaptured(entry));
+                }
             }
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)

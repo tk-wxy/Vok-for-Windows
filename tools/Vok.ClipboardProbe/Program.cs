@@ -9,8 +9,11 @@ namespace Vok.ClipboardProbe;
 internal static class Program
 {
     private const uint UnicodeText = 13;
+    private const uint Dib = 8;
+    private const uint DibV5 = 17;
     private const uint FileDrop = 15;
     private const string HtmlFormatName = "HTML Format";
+    private const string PngFormatName = "PNG";
     private const string ExcludeFormatName =
         "ExcludeClipboardContentFromMonitorProcessing";
     private const string PreferredDropEffectName = "Preferred DropEffect";
@@ -30,6 +33,7 @@ internal static class Program
             await using var snapshots = service
                 .WatchAsync(timeout.Token)
                 .GetAsyncEnumerator(timeout.Token);
+            using var captures = new OwnedCaptures();
 
             var html = producer.RegisterFormat(HtmlFormatName);
             await producer.WriteImmediateAsync(
@@ -42,7 +46,8 @@ internal static class Program
                         Encoding.Unicode.GetBytes("isolated\0")),
                 ],
                 timeout.Token);
-            var immediate = await ReadNextAsync(snapshots, timeout.Token);
+            var immediate = captures.Track(
+                await ReadNextAsync(snapshots, timeout.Token));
 
             await producer.WriteDelayedAsync(
                 [
@@ -51,7 +56,8 @@ internal static class Program
                         Encoding.Unicode.GetBytes("delayed\0")),
                 ],
                 timeout.Token);
-            var delayed = await ReadNextAsync(snapshots, timeout.Token);
+            var delayed = captures.Track(
+                await ReadNextAsync(snapshots, timeout.Token));
 
             var exclude = producer.RegisterFormat(ExcludeFormatName);
             await producer.WriteImmediateAsync(
@@ -62,7 +68,8 @@ internal static class Program
                         Encoding.Unicode.GetBytes("must-not-be-read\0")),
                 ],
                 timeout.Token);
-            var excluded = await ReadNextAsync(snapshots, timeout.Token);
+            var excluded = captures.Track(
+                await ReadNextAsync(snapshots, timeout.Token));
 
             var replayPayload = new ClipboardReplayPayload(
                 ClipboardContentKind.Text,
@@ -89,7 +96,8 @@ internal static class Program
                 Guid.NewGuid(),
                 timeout.Token);
             var receiptWasCurrent = await service.IsCurrentAsync(receipt, timeout.Token);
-            var selfWrite = await ReadNextAsync(snapshots, timeout.Token);
+            var selfWrite = captures.Track(
+                await ReadNextAsync(snapshots, timeout.Token));
 
             await producer.WriteImmediateAsync(
                 [new ProducerFormat(
@@ -99,7 +107,8 @@ internal static class Program
             var receiptAfterExternalWrite = await service.IsCurrentAsync(
                 receipt,
                 timeout.Token);
-            var externalOverwrite = await ReadNextAsync(snapshots, timeout.Token);
+            var externalOverwrite = captures.Track(
+                await ReadNextAsync(snapshots, timeout.Token));
 
             var preferredDropEffect = producer.RegisterFormat(PreferredDropEffectName);
             var filePaths = new[]
@@ -113,7 +122,8 @@ internal static class Program
                     new ProducerFormat(preferredDropEffect, DropEffect(2)),
                 ],
                 timeout.Token);
-            var fileCapture = await ReadNextAsync(snapshots, timeout.Token);
+            var fileCapture = captures.Track(
+                await ReadNextAsync(snapshots, timeout.Token));
             var normalizedFiles = new ClipboardContentNormalizer()
                 .Normalize(fileCapture) as ClipboardFileListContent;
             ClipboardWriteReceipt? fileReceipt = null;
@@ -135,7 +145,8 @@ internal static class Program
                 fileReceiptWasCurrent = await service.IsCurrentAsync(
                     fileReceipt.Value,
                     timeout.Token);
-                fileSelfWrite = await ReadNextAsync(snapshots, timeout.Token);
+                fileSelfWrite = captures.Track(
+                    await ReadNextAsync(snapshots, timeout.Token));
 
                 await producer.WriteImmediateAsync(
                     [new ProducerFormat(
@@ -145,7 +156,8 @@ internal static class Program
                 fileReceiptAfterExternalWrite = await service.IsCurrentAsync(
                     fileReceipt.Value,
                     timeout.Token);
-                _ = await ReadNextAsync(snapshots, timeout.Token);
+                _ = captures.Track(
+                    await ReadNextAsync(snapshots, timeout.Token));
             }
 
             var ansiPaths = new[]
@@ -159,14 +171,16 @@ internal static class Program
                     new ProducerFormat(preferredDropEffect, DropEffect(5)),
                 ],
                 timeout.Token);
-            var ansiCopyCapture = await ReadNextAsync(snapshots, timeout.Token);
+            var ansiCopyCapture = captures.Track(
+                await ReadNextAsync(snapshots, timeout.Token));
             var ansiCopyFiles = new ClipboardContentNormalizer()
                 .Normalize(ansiCopyCapture) as ClipboardFileListContent;
 
             await producer.WriteImmediateAsync(
                 [new ProducerFormat(FileDrop, CreateFileDrop(filePaths))],
                 timeout.Token);
-            var unknownCapture = await ReadNextAsync(snapshots, timeout.Token);
+            var unknownCapture = captures.Track(
+                await ReadNextAsync(snapshots, timeout.Token));
             var unknownFiles = new ClipboardContentNormalizer()
                 .Normalize(unknownCapture) as ClipboardFileListContent;
 
@@ -180,7 +194,8 @@ internal static class Program
                         Encoding.Unicode.GetBytes("must-not-fallback\0")),
                 ],
                 timeout.Token);
-            var malformedCapture = await ReadNextAsync(snapshots, timeout.Token);
+            var malformedCapture = captures.Track(
+                await ReadNextAsync(snapshots, timeout.Token));
             var malformedContent = new ClipboardContentNormalizer()
                 .Normalize(malformedCapture);
 
@@ -192,7 +207,37 @@ internal static class Program
                     new ProducerFormat(fileContents, [5, 6, 7, 8]),
                 ],
                 timeout.Token);
-            var virtualFileCapture = await ReadNextAsync(snapshots, timeout.Token);
+            var virtualFileCapture = captures.Track(
+                await ReadNextAsync(snapshots, timeout.Token));
+
+            var png = producer.RegisterFormat(PngFormatName);
+            await producer.WriteImmediateAsync(
+                [
+                    new ProducerFormat(png, ControlledImagePayloads.CreatePng()),
+                    new ProducerFormat(DibV5, ControlledImagePayloads.CreateDibV5()),
+                    new ProducerFormat(Dib, ControlledImagePayloads.CreateDib24()),
+                ],
+                timeout.Token);
+            var multiImageCapture = captures.Track(
+                await ReadNextAsync(snapshots, timeout.Token));
+            var imageRouterBaseline = new ClipboardContentNormalizer()
+                .Normalize(multiImageCapture);
+
+            await producer.WriteBitmapAsync(
+                ControlledImagePayloads.Width,
+                ControlledImagePayloads.Height,
+                ControlledImagePayloads.CreateBottomUpBgraPixels(),
+                timeout.Token);
+            var bitmapOnlyCapture = captures.Track(
+                await ReadNextAsync(snapshots, timeout.Token));
+
+            await producer.WriteImmediateAsync(
+                [new ProducerFormat(Dib, [1, 2, 3, 4])],
+                timeout.Token);
+            var malformedImageCapture = captures.Track(
+                await ReadNextAsync(snapshots, timeout.Token));
+            var malformedImageContent = new ClipboardContentNormalizer()
+                .Normalize(malformedImageCapture);
 
             var success =
                 immediate.Disposition is ClipboardCaptureDisposition.Captured &&
@@ -232,10 +277,35 @@ internal static class Program
                 virtualFileCapture.Formats.All(format =>
                     format.Role is ClipboardFormatRole.VirtualFile &&
                     format.CaptureState is ClipboardFormatCaptureState.MetadataOnly &&
-                    format.Payload.IsEmpty);
+                    format.Payload.IsEmpty) &&
+                multiImageCapture.Disposition is ClipboardCaptureDisposition.Captured &&
+                HasCapturedFormat(multiImageCapture, ClipboardRepresentationKind.Png) &&
+                multiImageCapture.Formats.Where(format =>
+                    format.RepresentationKind is
+                        ClipboardRepresentationKind.DibV5 or
+                        ClipboardRepresentationKind.Dib).All(format =>
+                    format.CaptureState is ClipboardFormatCaptureState.NotRequested) &&
+                imageRouterBaseline is null &&
+                bitmapOnlyCapture.Disposition is ClipboardCaptureDisposition.Captured &&
+                bitmapOnlyCapture.Formats.Any(format =>
+                    format.RepresentationKind is ClipboardRepresentationKind.Bitmap &&
+                    format.CaptureState is ClipboardFormatCaptureState.MetadataOnly) &&
+                bitmapOnlyCapture.Formats.Any(format =>
+                    format.RepresentationKind is
+                        ClipboardRepresentationKind.DibV5 or
+                        ClipboardRepresentationKind.Dib &&
+                    format.CaptureState is ClipboardFormatCaptureState.Captured) &&
+                malformedImageCapture.Disposition is ClipboardCaptureDisposition.Unsupported &&
+                malformedImageCapture.Formats.Any(format =>
+                    format.RepresentationKind is
+                        ClipboardRepresentationKind.DibV5 or
+                        ClipboardRepresentationKind.Dib &&
+                    format.CaptureState is ClipboardFormatCaptureState.Failed) &&
+                malformedImageContent is null;
             var report = new
             {
                 schema = 4,
+                reportVersion = 3,
                 isolatedWindowStation = true,
                 immediate = Summarize(immediate),
                 delayed = Summarize(delayed),
@@ -276,6 +346,21 @@ internal static class Program
                     routerRejectedWholeSnapshot = malformedContent is null,
                 },
                 virtualFiles = Summarize(virtualFileCapture),
+                imageFormats = new
+                {
+                    multiRepresentation = Summarize(multiImageCapture),
+                    routerNotImplemented = imageRouterBaseline is null,
+                    bitmapOnly = Summarize(bitmapOnlyCapture),
+                    bitmapWasCataloged = bitmapOnlyCapture.Formats.Any(format =>
+                        format.RepresentationKind is ClipboardRepresentationKind.Bitmap),
+                    synthesizedDibWasCaptured = bitmapOnlyCapture.Formats.Any(format =>
+                        format.RepresentationKind is
+                            ClipboardRepresentationKind.DibV5 or
+                            ClipboardRepresentationKind.Dib &&
+                        format.CaptureState is ClipboardFormatCaptureState.Captured),
+                    malformedDib = Summarize(malformedImageCapture),
+                    malformedRouterRejected = malformedImageContent is null,
+                },
                 diagnostics = service.GetDiagnosticSnapshot(),
                 success,
             };
@@ -315,9 +400,40 @@ internal static class Program
             role = format.Role.ToString(),
             state = format.CaptureState.ToString(),
             format.ByteLength,
+            storage = format.PayloadStorageKind.ToString(),
+            format.ReservedByteLength,
         }),
         result.Error,
     };
+
+    private static bool HasCapturedFormat(
+        ClipboardCaptureResult capture,
+        ClipboardRepresentationKind kind) => capture.Formats.Any(format =>
+            format.RepresentationKind == kind &&
+            format.CaptureState is ClipboardFormatCaptureState.Captured &&
+            format.PayloadByteLength > 0);
+
+    private sealed class OwnedCaptures : IDisposable
+    {
+        private readonly List<ClipboardCaptureResult> _captures = [];
+
+        public ClipboardCaptureResult Track(ClipboardCaptureResult capture)
+        {
+            ArgumentNullException.ThrowIfNull(capture);
+            _captures.Add(capture);
+            return capture;
+        }
+
+        public void Dispose()
+        {
+            for (var index = _captures.Count - 1; index >= 0; index--)
+            {
+                _captures[index].Dispose();
+            }
+
+            _captures.Clear();
+        }
+    }
 
     private static byte[] DropEffect(uint value)
     {

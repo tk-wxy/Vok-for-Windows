@@ -38,4 +38,5 @@ public enum ClipboardFormatCaptureState
     MetadataOnly = 2,
     Oversize = 3,
     Failed = 4,
+    CapacityExceeded = 5,
 }

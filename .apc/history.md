@@ -2,6 +2,30 @@
 
 > 归档超过滚动窗口的 `memory.md §0A` 完整会话。默认不读取，仅在取证时搜索；按时间从新到旧排列。
 
+### 会话 2026-08-28 - M2.3 图片纵向切片详细规划
+
+- 复核现有源码与 Windows 官方剪贴板/位图/WIC 契约，确认图片格式虽已枚举，但 router、schema 4、replay、writer 和 UI 尚未闭环；CF_BITMAP 不能按 HGLOBAL 读取，优先通过系统合成 DIB/DIBV5 脱离 HBITMAP 所有权。
+- 将 M2.3 细化为真实语料、显式二进制 lease、PNG+DIB 候选裁剪、严格 header/方向/Alpha/色彩规范、分带像素哈希、按字节有界单 worker、内容寻址主图/缩略图、schema 5 asset refs、可见容器加载以及 PNG+DIBV5 安全写回七段门禁。8K 原始位图证明当前 64 MiB 门槛必须按图片语料重定，DPI 是否参与语义保留为 Gate 0 的有证据选择。
+- 本轮只更新 `docs/M2_CLIPBOARD_PLAN.md` 与当前状态，没有实现产品代码、读取/覆盖交互剪贴板或运行新增测试；文档 `git diff --check` 通过。下一步待用户确认后执行 M2.3.0 非敏感格式取证。
+
+### 会话 2026-08-28 - M2.2 文件列表实现与自动门禁
+
+- 在既有 Clipboard STA/receipt 上完成有效 `CF_HDROP` 优先 router、严格 Unicode/ANSI `DROPFILES`、COPY/MOVE/Unknown 意图和版本化路径哈希；虚拟附件只编目为 `VirtualFile`/Unsupported，畸形文件快照不降级为文本。schema 4 单事务迁移并核验列、外键和索引，文件去重/回顶/replay/cascade 只操作 Vok 元数据。
+- 启动台与剪贴板共用 DI 唯一拥有的有界 Shell/COM STA；文件卡异步展示图标/可用性，MOVE 可访问名称与失败文案明确移动风险，Unknown 安全按 COPY。文件主动作复用 Write→Hide/Restore→Verify→Inject，强制 COPY 只 Write→Verify；部分写入、迟到结果、取消认领、双动作和退出 watchdog 均完成根因复审。
+- 首次物理验收 1–6 全失败；监听取证抓到 Explorer COPY 的 `CF_HDROP` 完整有效，但 `Preferred DropEffect=5 (COPY | LINK)` 被精确 0/1/2 白名单拒绝。依据 Windows `DROPEFFECT` 掩码契约改为单一 COPY/MOVE 操作位解析，二者同现仍拒绝，探针 COPY 语料同步改为 5。最终 Release 58/58 + 246/246 共 304/304 自动测试、自包含发布、PowerShell AST 和独立探针通过；新版 PID 20420 运行正常，真实 schema 4 库生成首条文件记录，用户复测 Explorer 复制/剪切、文件卡和实际粘贴均符合预期并授权提交。
+
+### 会话 2026-08-28 - M2.2 文件列表详细规划与 M2.1 提交
+
+- 用户确认 M2.1 真机测试通过；只读复核运行中新版进程的真实库为 schema 3，含 2 条记录及 2 个表示层。M2.0/M2.1 的 257/257 自动测试、自包含发布、真实 WPF 渲染和隔离探针证据以提交 `434966b` 收口，`.codex/` 未纳入提交。
+- 现状诊断确认 Clipboard STA 已复制 `CF_HDROP` 与 `Preferred DropEffect` 原始字节，但 normalizer、schema 3、replay payload、writer 和卡片仍为文本专用；现有 Shell STA 机制可复用，但 Core 接口绑定启动台模型。
+- M2.2 规划锁定严格 `DROPFILES`/路径解析、Unknown→COPY 安全回放、意图参与语义哈希、schema 4 文件子表、共享单一 Shell STA、文件卡与强制 COPY 次动作，并按真实语料→normalizer→迁移→UI→writer→产品接入分段门禁。本轮提交后仅改规划文档，未实现或运行新增代码测试。
+
+### 会话 2026-08-28 - M2.1 文本历史、卡片与安全粘贴
+
+- 在 M2.0 快照之上新增有界 Unicode/ANSI/OEM、HTML/RTF 规范化与精确语义哈希；schema 3 由既有 SQLite 执行器单事务建表/结构识别，支持去重回顶、64 条 keyset 分页、固定、级联删除和重启多表示回放。右侧真实 ClipboardView 使用 Recycling 虚拟化文本卡，删除改为卡片内二次确认，避免模态框干扰工作台失活事务。
+- Clipboard STA 新增可认领 write/verify 命令和 instance + operation + semantic hash marker，receipt 同时核验 sequence；按代粘贴只在写回、同代隐藏/恢复、receipt 当前与顶层/子焦点再次匹配后 SendInput，恢复失败、外部覆盖、焦点变化和重复点击均不注入。
+- Release 55/55 + 202/202 共 257/257 自动测试、自包含发布和浅/深 80 卡渲染通过；独立 Window Station 探针真实验证多表示写回、自写抑制与外部覆盖失效。用户确认真机文本捕获、历史展示与粘贴测试通过；只读复核运行中 PID 3608 的真实库为 schema 3，含 2 条记录及 2 个表示层。
+
 ### 会话 2026-08-28 - M2.0 剪贴板平台契约与隔离探针
 
 - Core 新增捕获结果、格式角色/状态、容量/重试选项、只含计数的诊断快照和只比较 sequence 相等性的协调器；不同 sequence 在活动捕获期间只保留最新 pending，完成时以实际观测 sequence 合并，覆盖重复通知与 DWORD 回绕。

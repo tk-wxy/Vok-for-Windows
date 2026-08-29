@@ -24,6 +24,7 @@
 - §18 启动台引用模型、外部拖入与隐藏后 Shell 事务 — 文件/目录/快捷方式以 SQLite 引用持久化，真实 OLE 拖放只在同代窄租约内延后失活，打开先完成隐藏恢复再调用 Shell。
 - §19 启动台点击反馈、内部排序与外部拖放终态闭环 — 单击动画完成后启动，内部拖动先内存预览后单次持久化，外部 OLE 热路径不读取数据且所有终态先认领清理。
 - §20 文件剪贴板 DROPEFFECT 掩码与 MOVE 安全边界 — 兼容 Explorer 的 COPY 附加位，但 COPY/MOVE 歧义不得归一为移动。
+- §21 图片剪贴板 Gate 0 路由、单候选与容量边界 — 像素格式优先分类，每次只拥有 PNG 或一个 DIB 候选，以 8K 实测锁定 lease/worker 预算。
 
 ## 详情
 
@@ -222,3 +223,13 @@
 - **新增失败模式**：COPY 与 MOVE 同现可能造成危险歧义；附加未来位可能与现有操作位共存；只有 LINK 的对象不在本阶段能力内；过短/未捕获 effect 不能参与判断。实现以单一操作位门禁、歧义整条拒绝、Unknown 永远 COPY 回放、格式状态/长度校验和 effect 5/3/4/7/SCROLL 组合测试限制影响；本次未改变 listener、receipt、代次认领或错误路径，因此不新增跨实例、同轮双执行或迟到回调通道。
 - **决定 / 最后验证**：2026-08-28 / 2026-08-28。
 - **状态**：active；304/304 自动测试、0 警告 Release 构建、自包含发布和隔离 Window Station 探针通过，新默认 Release PID 20420 响应正常；2026-08-28 用户复测 Explorer 物理复制/剪切、文件卡与目标窗口粘贴符合预期并授权提交。
+
+### §21 图片剪贴板 Gate 0 路由、单候选与容量边界
+
+- **最终方案**：完整格式目录中只要出现注册 `PNG`、`CF_DIBV5`、`CF_DIB` 或 `CF_BITMAP` 任一像素格式，就把本 sequence 归为 Image；随附 HDROP/Shell/HTML/URL 不抢占，也不在图片失败后跨类降级。没有像素格式而有有效 HDROP 才进入 FileList。Image 每次只复制一个候选：PNG 优先，否则 DIBV5，再否则 DIB；PNG 复制/超限/轻量 header preflight 失败时才在同次 OpenClipboard 尝试一个 DIB，已取得合法 PNG 后不为事后 codec fallback 复制 DIB。CF_BITMAP 只作来源信号并使用系统合成 packed DIB，不跨 CloseClipboard 借用 HBITMAP。`Vok.Image.Pixel.v1` 只含规范 RGBA 像素与尺寸，不含 DPI；有效 DPI 是 nullable replay metadata，缺失时约 96 DPI。首版上限为 input 192 MiB、单边 8192、40 Mi pixels、canonical 160 MiB、inline 2 MiB、copy buffer 1 MiB、worker 4 jobs、按 `input+canonical` 预留总计 384 MiB、thumbnail 512 px、thumbnail cache 32 MiB。
+- **范围**：M2.3 图片/文件/文本路由、Clipboard STA 载荷裁剪、Inline/LeasedBlob、图片 worker 预留、Alpha/DPI 身份和后续 schema 5/replay；不决定 M2.4 保留总量或性能 SLA。
+- **证据与根因**：Snipping Tool 区域/全屏与 QQ 图片都同时发布像素格式和 HDROP，证明“HDROP 绝对优先”会把图片误归文件；反例中 Explorer Ctrl+C 已知 PNG 文件只发布 Shell/HDROP，没有像素格式。Office 同次 PNG 865×541、DIB 554×346，证明多表示可冲突；QQ 无 PNG，证明 DIB 后备仍必需。浏览器受控 7680×4320 Alpha PNG 仅 1,334,507 bytes，但其 DIB/DIBV5 为 132,710,440/132,710,524 bytes；总是复制两种候选会无收益地增加约 126.56 MiB 载荷与持有剪贴板时间。全部真实 DIB DPI 为 0，受控源 PNG 的 96 DPI `pHYs` 被 Chromium 丢弃，DPI 不具稳定身份。Windows 官方契约还规定 32bpp BI_RGB 高字节未使用，因此 Chromium 的孤立 Alpha mask 只能诊断；可信 Alpha 来自 PNG color type 4/6、合法 `tRNS` 或受支持 bitfields。
+- **否决方案**：HDROP 绝对优先；同时复制 PNG 与 DIB 作为无条件后备；把 HBITMAP 当 HGLOBAL 或跨关闭持有；信任 `BI_RGB` 的孤立 Alpha mask；把 DPI 放进像素哈希；沿用 64 MiB 单格式/16 项纯计数队列；无上限接受任意维度、profile 或图片 burst。
+- **新增失败模式**：合法 PNG header 仍可能在关闭剪贴板后 codec 失败，此时因单候选策略没有 DIB 后备；一个最坏 DIB job 会占大部分 384 MiB 预留，后续 burst 将明确过载丢弃；超过 8192 单边但总像素较小的超宽图也会拒绝；同像素不同 DPI 去重后 replay 物理尺寸不构成身份。实现必须让这些结果可诊断，所有 reject/drop/cancel/exit 都释放 lease 与 reservation，且不得用提高上限或跨类回退掩盖。
+- **决定 / 最后验证**：2026-08-28 / 2026-08-29。
+- **状态**：active；M2.3.1 已按本决策实现不可变 options、图片优先目录路由、PNG→DIBV5→DIB 单候选、Inline/LeasedBlob、1 MiB staging copy、4 jobs/384 MiB checked reservation 和所有消费/拒绝/drop/Close/exit 清理。Release 317/317 与隔离探针 `reportVersion=3, success=true` 通过；图片 normalizer/worker/asset/schema 5/replay 尚未实现，下一步执行 M2.3.2。

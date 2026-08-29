@@ -187,7 +187,7 @@ public sealed class ClipboardFileListNormalizerTests
     }
 
     [Fact]
-    public void FileDropWinsOverTextAndImageFallbacks()
+    public void ImageDirectoryWinsOverFileDropAndText()
     {
         var router = new ClipboardContentNormalizer();
 
@@ -208,8 +208,7 @@ public sealed class ClipboardFileListNormalizerTests
                 ClipboardFormatCaptureState.Captured,
                 new byte[] { 1, 2, 3 })));
 
-        var files = Assert.IsType<ClipboardFileListContent>(content);
-        Assert.Equal("A.png", Assert.Single(files.Files).DisplayName);
+        Assert.Null(content);
     }
 
     [Fact]

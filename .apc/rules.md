@@ -28,6 +28,8 @@
 | R18 | 启动台只保存引用，拖入与启动按代完成且先隐藏后 Shell | 启动台业务 | 是 |
 | R19 | 启动台反馈、排序和外部拖放必须先认领终态再产生副作用 | 启动台交互 | 是 |
 | R20 | 文件剪贴板意图必须按 DROPEFFECT 掩码解析，模糊值不得成为 MOVE | 剪贴板文件 | 是 |
+| R21 | CF_BITMAP 不按 HGLOBAL 读取，优先复制系统合成 DIB/DIBV5 | 剪贴板图片 | 是 |
+| R22 | 图片像素格式与 CF_HDROP 同现时不得仅凭 HDROP 判为文件 | 剪贴板图片 | 是 |
 
 ## 规则
 
@@ -153,6 +155,18 @@
   - 最后验证：2026-08-28。
   - 状态：active；根因修复已部署，2026-08-28 用户复测 Explorer 物理复制/剪切、文件卡与目标粘贴符合预期。
 
+- [ ] R21：`CF_BITMAP` 的剪贴板句柄是 HBITMAP，不得调用 `GlobalSize`/`GlobalLock`，也不得在 `CloseClipboard` 后继续借用。只发布 `CF_BITMAP` 的来源应优先在同一次 `OpenClipboard` 内复制 Windows 合成的 packed `CF_DIBV5`/`CF_DIB`；若没有可复制表示，则明确标为不支持，不能延长 GDI 句柄生命周期。
+  - 范围：剪贴板图片目录、捕获载荷所有权与后续图片 normalizer。
+  - 证据：2026-08-28 独立 Window Station producer 通过真实 GDI `CreateBitmap` 只发布 `CF_BITMAP`；平台快照先将 `CF_BITMAP` 编目为 MetadataOnly，随后捕获 Windows 合成的 `CF_DIB` 68 bytes 与 `CF_DIBV5` 152 bytes。2026-08-29 M2.3.1 产品 reader 已只复制合成的 DIBV5，隔离探针 `reportVersion=3, success=true`；关闭失败与退出测试直接验证不保留 HBITMAP、staging lease 或 reservation。Microsoft 标准剪贴板格式契约将 `CF_BITMAP` 定义为 HBITMAP，并说明系统可在 `CF_DIB`、`CF_DIBV5` 与 `CF_BITMAP` 间按需转换。
+  - 最后验证：2026-08-29。
+  - 状态：active；产品捕获所有权已按此边界实现并通过真实隔离探针，图片 decoder、资产和 replay 仍待 M2.3.2–M2.3.6。
+
+- [ ] R22：不能把 `CF_HDROP` 的存在等同于用户复制文件；同一目录存在注册 `PNG`、`CF_DIBV5`、`CF_DIB` 或 `CF_BITMAP` 等像素表示时必须先按 Image 候选处理，随附 HDROP/HTML/URL 不得抢占类型，也不得在图片损坏后跨类降级。只有没有图片表示的有效 HDROP 才进入 FileList 路由；产品实现必须保留已通过的 Explorer 图片文件正反门禁。
+  - 范围：剪贴板 Image/FileList/Text 路由、候选裁剪和畸形载荷降级。
+  - 证据：2026-08-28 非敏感真实语料中，Snipping Tool 区域截图、Print Screen 和 QQ 图片三种明确图片动作都同时发布 `CF_HDROP` 与图片像素格式；旧“HDROP 绝对优先”会把三者稳定误归为文件。Office 同次 PNG 865×541 与 DIB 554×346 还证明多表示不能默认等像素。2026-08-29 产品 reader/router 定向测试验证图片目录使 HDROP/Text 保持 NotRequested，只有 PNG 一份 Captured；畸形图片不跨类降级，纯 Explorer 文件既有回归保持通过。
+  - 最后验证：2026-08-29。
+  - 状态：active；Image/FileList/Text 精确路由与单候选取得已接入产品，等待 M2.3.2 将合法图片规范化后提交历史。
+
 ### 存储与规模
 
 - [ ] R5：不得在 UI Dispatcher 上执行 Microsoft.Data.Sqlite；数据库写入由显式执行器串行化并使用 WAL。数据库升级必须同时核验版本号与真实表结构，在单事务内迁移并让未知结构原样回滚；`CREATE TABLE IF NOT EXISTS` 只能建新表，不能冒充已有表迁移。大集合必须同时实施 SQL 分页和 WPF 容器虚拟化，不能把 UI 虚拟化当作数据虚拟化。
@@ -198,6 +212,8 @@
 - 粘贴到了错误窗口或静默失败 → 检查 R3、R4。
 - 剪贴板重复、自写回流或漏记录 → 检查 R4。
 - Explorer 文件只出现路径文本、文件卡完全不生成或 COPY 全部漏记 → 检查 R20；先读取真实 `Preferred DropEffect`，不要恢复精确 0/1/2 比较。
+- 纯 Bitmap 来源漏图、GDI 句柄越界或把 `CF_BITMAP` 当普通字节读取 → 检查 R21；优先观察同次快照中的系统合成 DIB/DIBV5。
+- 截图或聊天图片被记成临时文件、图片格式存在却走 FileList → 检查 R22；不要仅按 `CF_HDROP` 是否存在分类。
 - 条目增加导致 UI/内存线性增长 → 检查 R5。
 - Debug 正常但发布版互操作失败 → 检查 R6。
 - 测试命令成功但显示 0 项测试 → 检查 R7。

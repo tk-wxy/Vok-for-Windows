@@ -23,8 +23,10 @@ public sealed class WindowsClipboardPlatformService : IClipboardPlatformService
     private readonly object _retryGate = new();
     private readonly ClipboardListenerNativeMethods.WindowProcedure _windowProcedure;
     private readonly ConcurrentQueue<IClipboardThreadCommand> _commands = new();
+    private readonly ClipboardImageReservationBudget _imageReservations;
     private WindowsClipboardSnapshotReader? _reader;
     private WindowsClipboardWriter? _writer;
+    private ClipboardStagingStore? _stagingStore;
     private Timer? _retryTimer;
     private nint _listenerWindow;
     private uint _threadId;
@@ -57,11 +59,12 @@ public sealed class WindowsClipboardPlatformService : IClipboardPlatformService
         _options = options;
         _native = native;
         _instanceId = instanceId;
+        _imageReservations = new ClipboardImageReservationBudget(options.Image);
         _snapshots = Channel.CreateBounded<ClipboardCaptureResult>(
             new BoundedChannelOptions(options.SnapshotQueueCapacity)
             {
                 FullMode = BoundedChannelFullMode.Wait,
-                SingleReader = true,
+                SingleReader = false,
                 SingleWriter = true,
                 AllowSynchronousContinuations = false,
             });
@@ -77,6 +80,14 @@ public sealed class WindowsClipboardPlatformService : IClipboardPlatformService
     internal Guid InstanceId => _instanceId;
 
     internal nint ListenerWindowHandle => Volatile.Read(ref _listenerWindow);
+
+    internal int OutstandingImageJobCount => _imageReservations.CurrentJobCount;
+
+    internal long OutstandingImageReservedBytes =>
+        _imageReservations.CurrentReservedBytes;
+
+    internal int OutstandingImageLeaseCount =>
+        _stagingStore?.OutstandingLeaseCount ?? 0;
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
@@ -158,6 +169,8 @@ public sealed class WindowsClipboardPlatformService : IClipboardPlatformService
                 _started.TrySetException(
                     new ObjectDisposedException(nameof(WindowsClipboardPlatformService)));
                 _snapshots.Writer.TryComplete();
+                DrainSnapshotQueue();
+                _imageReservations.Dispose();
                 return;
             }
         }
@@ -194,12 +207,15 @@ public sealed class WindowsClipboardPlatformService : IClipboardPlatformService
                 }
             }
 
+            _stagingStore = ClipboardStagingStore.CreateDefault(_diagnostics.Fault);
             _reader = new WindowsClipboardSnapshotReader(
                 _native,
                 _options,
                 _instanceId,
                 (sequence, marker) => _writer is not null &&
-                    _writer.IsExpectedSelfWrite(sequence, marker));
+                    _writer.IsExpectedSelfWrite(sequence, marker),
+                _stagingStore,
+                _imageReservations);
             _writer = new WindowsClipboardWriter(
                 _native,
                 _reader.KnownFormats,
@@ -282,11 +298,15 @@ public sealed class WindowsClipboardPlatformService : IClipboardPlatformService
                 _ = ClipboardListenerNativeMethods.Unregister(registration);
             }
 
-            _threadId = 0;
-            _diagnostics.Stopped();
             FailPendingCommands(terminalFailure ?? new ObjectDisposedException(
                 nameof(WindowsClipboardPlatformService)));
             _snapshots.Writer.TryComplete(terminalFailure);
+            DrainSnapshotQueue();
+            _stagingStore?.Dispose();
+            _stagingStore = null;
+            _imageReservations.Dispose();
+            _threadId = 0;
+            _diagnostics.Stopped();
         }
     }
 
@@ -396,6 +416,7 @@ public sealed class WindowsClipboardPlatformService : IClipboardPlatformService
             _busyRetryIndex < _options.BusyRetrySchedule.Count)
         {
             _diagnostics.BusyRetry();
+            result.Dispose();
             ScheduleRetry(_options.BusyRetrySchedule[_busyRetryIndex++]);
             return;
         }
@@ -406,17 +427,45 @@ public sealed class WindowsClipboardPlatformService : IClipboardPlatformService
 
     private void CompleteAndPublish(ClipboardCaptureResult result)
     {
-        var completion = _sequences.Complete(result.RuntimeSequence);
-        var state = _sequences.GetState();
-        _diagnostics.Completed(result, state);
-        if (!_snapshots.Writer.TryWrite(result))
+        var transferred = false;
+        ClipboardSequenceCompletion completion;
+        try
         {
-            _diagnostics.DroppedSnapshot();
+            completion = _sequences.Complete(result.RuntimeSequence);
+            var state = _sequences.GetState();
+            _diagnostics.Completed(result, state);
+            transferred = _snapshots.Writer.TryWrite(result);
+            if (!transferred)
+            {
+                _diagnostics.DroppedSnapshot();
+            }
+        }
+        finally
+        {
+            if (!transferred)
+            {
+                result.Dispose();
+            }
         }
 
         if (completion.ShouldScheduleCapture)
         {
             PostCaptureMessageOrFail(completion.Sequence);
+        }
+    }
+
+    private void DrainSnapshotQueue()
+    {
+        while (_snapshots.Reader.TryRead(out var snapshot))
+        {
+            try
+            {
+                snapshot.Dispose();
+            }
+            catch (Exception exception)
+            {
+                _diagnostics.Fault(exception);
+            }
         }
     }
 
