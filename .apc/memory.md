@@ -11,12 +11,18 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与 M2.0–M2.2 保持可用，M2.3.0–M2.3.6 已完成。隔离图片链已覆盖有界捕获、规范化、内容寻址双资产、schema 5、图片卡、解码缓存、primary replay、DIBV5 写回与安全粘贴复用；仍未注册产品组合根，因此产品当前不提交或回放 Image 历史。本阶段未停止、替换或启动产品实例。
-- **最近进展**：新增只读 canonical/DIBV5 materialization lease；coordinator 复核 Ready/revision、SHA、严格 PNG/WIC 和像素身份，仅内容完整性失败 quarantine。Clipboard STA 以分块 PNG→CF_DIBV5→marker 写入并正确区分 HGLOBAL 转移前后所有权，Controller 复用既有 receipt/generation/focus 门禁。隔离 Release 62/62 + 322/322 共 384/384、33 项高风险定向连续五轮、Window Station `reportVersion=5, success=true` 和 win-x64 自包含发布通过。
-- **下一步**：执行 M2.3.7：只在组合根一次注册完整图片捕获、资产、UI 与 replay 链，更新产品能力声明；随后完成真实来源×目标、150%/200% 跨屏、4K/8K 与长期资源门禁。接线前继续保持产品图片能力关闭。
-- **已知问题**：合法 PNG 轻量 header 仍可能在关闭剪贴板后 codec 失败且没有 DIB 事后后备；数据库失败留下的无引用文件要到 M2.4 清理。真实用户库未迁移 schema 5；150%/200% 物理跨屏、真实产品图片卡/来源×目标往返、有效 embedded ICC、4K/8K UI/codec 资源曲线、空间不足和 M2.4 长期曲线仍未验证。
+- **状态**：M0、M1、M2.0–M2.2 与 M2.3.0–6 保持可用；M2.3.7 产品接线和基础自动门禁已完成。组合根用单一图片功能所有者启用 Image 捕获/双资产/卡片/删除/replay，缩略图显示与规范原图粘贴保持分离；真实产品验收完成前仍不宣布 M2.3 收口。
+- **最近进展**：新版产品已实际持久化 Text/FileList/Image。只读核验真实库 schema 5、`quick_check=ok`、外键 0 违例；6 条 Image 具有 12 条 Primary/Thumbnail 双引用，11 个 Ready 资产的路径、长度、SHA-256 和 PNG 尺寸全部匹配，无孤儿、缺失、未跟踪 PNG 或暂存残留。Release 392/392、61 项高风险五轮、自包含发布和隔离 probe 保持通过。
+- **下一步**：完成真实来源×目标、重启 replay、透明 Alpha、150%/200% 跨屏、4K/8K 与长期资源门禁；目前真实库 schema 5/双引用与资产完整性已通过。
+- **已知问题**：合法 PNG 轻量 header 仍可能在关闭剪贴板后 codec 失败且没有 DIB 事后后备；数据库失败留下的无引用文件要到 M2.4 清理。当前 6 条真实 Image 均为 `has_alpha=false`且最大为 3200×1991，因此透明 Alpha 和 4K/8K 尚未覆盖；重启 replay、150%/200% 物理跨屏、有效 embedded ICC、UI/codec 长期资源曲线、空间不足和 M2.4 长期曲线仍未验证。
 
 ## §0A 最近会话
+
+### 会话 2026-08-31 - M2.3.7 产品图片接线与自动门禁
+
+- Core 新增转移 `ClipboardCaptureResult` 所有权的窄图片捕获接口，Windows pipeline 串接既有 normalizer 与资产 coordinator；App Controller 在图片目录分支提交 Image，单条失败可观察且不终止后续监听，取消/退出仍走既有 watchdog。
+- 组合根以单一 `ClipboardImageFeature` 显式拥有共享 options、normalizer、资产 coordinator 和缩略图缓存；同一 coordinator 同时用于双资产提交、缩略图、删除与 replay。部分启动失败会按 cache→coordinator/store→normalizer 释放，文本/文件继续可用并显示图片降级。
+- Release 62/62 + 330/330 共 392/392，61 项接线/生命周期/缓存/replay/平台高风险测试连续五轮、自包含发布、7 个脚本 AST 与 Window Station `reportVersion=5, success=true` 通过。用户授权后已停止旧 PID 4680，最终发布现以 PID 12368 运行且 `Responding=True`。用户真机操作后只读确认真实库已到 schema 5，6 条 Image、12 条双角色引用和 11 个 Ready 资产全部通过 SHA/长度/尺寸/外键核验，无孤儿与暂存残留；来源×目标、重启 replay、Alpha、DPI、4K/8K 和长期资源仍待验收。
 
 ### 会话 2026-08-31 - M2.3.6 图片 replay、写回与安全粘贴
 
@@ -29,12 +35,6 @@
 - Core 新增不暴露路径的缩略图资产契约；asset coordinator 在单一串行工作项内核验 hash/state/revision、512 px 与编码 envelope，读取后重做 SHA-256、严格 PNG/WIC 解码，损坏只 quarantine thumbnail。图片删除若未注入资产服务会安全拒绝，避免只删数据库引用。
 - App 在现有 Recycling ListBox 加入等比不放大图片卡、主题棋盘透明背景、尺寸/状态/可访问名称；32 MiB LRU 按 `width × height × 4` 计费，UI 以 `OnLoad` 解码、关流、Freeze，ViewModel 不持有图片源。无 Source 的 Image 实测布局为 0，现以固定展示槽真实 viewport 判定；滚动、回收、换项、revision 变化、隐藏和退出先撤销绑定再取消，四维迟到门禁阻断串图。
 - 隔离 Release 62/62 + 310/310 共 372/372，生命周期/缓存定向五轮、win-x64 自包含发布和浅/深当前 DPI 快照通过；PID 23964 未替换。150%/200% 物理跨屏与真实产品卡仍待 M2.3.7，下一步 M2.3.6 图片 replay/write/paste。
-
-### 会话 2026-08-30 - M2.3.4 内容寻址资产与 schema 5
-
-- `ContentAddressedClipboardAssetStore` 在同卷 staging 只拥有 `asset-*.tmp`，流式写入并 `Flush(true)` 后重新计算 PNG 文件 SHA-256、严格检查 chunk/CRC 并强制 WIC 分带像素解码；最终路径由小写 hash 唯一生成，同名目标只有完整复核通过才复用，未知内容绝不覆盖。
-- schema 5 单事务加入五个图片列、`content_assets`、`clipboard_asset_refs`、CASCADE/RESTRICT 外键和状态/引用索引；fresh、schema 3、schema 4、完整 5、半迁移与损坏 asset FK 均有门禁，既有 Text/FileList replay 保留。Image 分页/replay 只带轻量 hash/state/revision。
-- 单 MTA asset coordinator 先提交双文件再做 DB 引用事务；数据库失败仅留孤儿文件。共享引用删除、文件锁删除失败 tombstone、重启重试、recapture 使旧 revision claim 失效、主/缩略图独立 quarantine、预取消/排队取消/容量/shutdown/watchdog 一次终态均通过。隔离 Release 62/62 + 303/303 共 365/365；用户 PID 23964 未停止或替换。下一步 M2.3.5 图片卡与可见性缓存。
 
 ## 指引
 

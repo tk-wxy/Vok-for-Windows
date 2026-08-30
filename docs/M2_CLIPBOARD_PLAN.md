@@ -444,7 +444,7 @@ clipboard_files
 - 完成 PNG + 兼容位图多表示写回；
 - 以 Snipping Tool、Print Screen、浏览器图片、聊天软件和透明 PNG 完成真机往返。
 
-状态：详细实施规划与 M2.3.0–M2.3.6 已完成。产品 reader 已取得一份有界图片载荷，隔离图片 worker 已生成规范 canonical/thumbnail，内容寻址 store 与 schema 5 已能以独立串行 coordinator 提交、删除、隔离和重启恢复；图片卡、可见容器加载、32 MiB 解码缓存、primary replay、PNG+DIBV5+marker 写回和既有安全粘贴状态机均已在隔离切片闭环。图片链路仍未注册到产品组合根。下一步是 M2.3.7 一次接线、发布门禁与真实来源×目标验收，不能提前启用半条产品链。
+状态：详细实施规划与 M2.3.0–M2.3.6 已完成，M2.3.7 的产品接线和基础自动门禁已完成。组合根现以单一图片功能所有者共享捕获参数、normalizer、资产 coordinator、缩略图缓存与 replay；Controller 已提交 Image 历史，产品能力文案只在该链成功初始化时声明图片，资产根启动失败会释放部分 worker 并只降级图片能力。Release 62/62 + 330/330 共 392/392、61 项高风险定向连续五轮、win-x64 自包含发布、PowerShell AST 与隔离 Window Station `reportVersion=5, success=true` 通过。真实来源×目标、150%/200% 物理跨屏、4K/8K 长期资源曲线和真实用户库 schema 5 迁移仍待新版产品真机验收，M2.3 尚未宣布完成。
 
 #### M2.3.0 实施前基线、语料与交付边界
 
@@ -629,7 +629,9 @@ Windows 已定义 DIBV5→DIB/Bitmap 的按需转换，因此基线不额外发�
 4. **asset + schema 5（已完成）**：完成内容寻址 store、4→5 单事务迁移、图片 upsert/replay descriptor、重复回顶、固定、删除/tombstone、损坏隔离和重启恢复；
 5. **thumbnail + UI（已完成）**：增加异构图片卡、可见性驱动加载、字节缓存、迟到结果门禁和可访问名称；产品能力文案延后到完整接入时切换，当前 DPI 的真实 WPF Recycling/浅深渲染已通过，150%/200% 物理跨屏保留最终矩阵；
 6. **writer + paste（已完成）**：加入 image replay materializer、PNG/DIBV5/marker 写回、receipt 与既有粘贴门禁；覆盖部分句柄转移、外部覆盖、取消、双击、旧代和退出；
-7. **产品接入与发布**：组合根一次启用完整切片，跑 Release 全量测试、0 警告构建、win-x64 自包含发布、PowerShell AST、隔离 Window Station 图片往返和长期资源曲线后再做真机验收。
+7. **产品接入与发布（接线和基础自动门禁已完成）**：组合根一次启用完整切片，跑 Release 全量测试、0 警告构建、win-x64 自包含发布、PowerShell AST、隔离 Window Station 图片往返和长期资源曲线后再做真机验收。
+
+实现状态（2026-08-31）：组合根通过单一 `ClipboardImageFeature` 显式拥有并按缩略图缓存→资产 coordinator→normalizer 的顺序释放完整图片链；同一 coordinator 同时服务双资产提交、缩略图读取、图片删除和 primary replay，没有重复 worker/store。`ClipboardController` 以窄所有权接口把 Image capture 转交 `Normalize→Commit`，单条图片失败只发布可观察降级并继续下一条监听，取消和退出仍由既有 5 秒 watchdog 收口。图片链初始化失败时释放已启动的部分资源，产品继续提供文本/文件并明确显示图片暂不可用；成功时空状态才声明文本、文件和图片。新增真实 normalization→双资产→schema 5 集成、组合根单例参数、连续失败、取消、部分启动失败和退出归零门禁；Release 392/392、61 项高风险五轮、自包含发布、7 个脚本 AST 与隔离 probe 通过。用户授权后已停止旧 PID 4680，并以最终自包含发布启动 PID 12368；进程 `Responding=True`，真实库 WAL 与 SHM 已由新进程打开，owned staging 文件为 0。交互产品验收、真实库 schema/双引用核验、物理 DPI 和长期资源曲线仍未验证。
 
 自动测试最低矩阵：
 

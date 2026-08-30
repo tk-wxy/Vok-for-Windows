@@ -2,6 +2,12 @@
 
 > 归档超过滚动窗口的 `memory.md §0A` 完整会话。默认不读取，仅在取证时搜索；按时间从新到旧排列。
 
+### 会话 2026-08-30 - M2.3.4 内容寻址资产与 schema 5
+
+- `ContentAddressedClipboardAssetStore` 在同卷 staging 只拥有 `asset-*.tmp`，流式写入并 `Flush(true)` 后重新计算 PNG 文件 SHA-256、严格检查 chunk/CRC 并强制 WIC 分带像素解码；最终路径由小写 hash 唯一生成，同名目标只有完整复核通过才复用，未知内容绝不覆盖。
+- schema 5 单事务加入五个图片列、`content_assets`、`clipboard_asset_refs`、CASCADE/RESTRICT 外键和状态/引用索引；fresh、schema 3、schema 4、完整 5、半迁移与损坏 asset FK 均有门禁，既有 Text/FileList replay 保留。Image 分页/replay 只带轻量 hash/state/revision。
+- 单 MTA asset coordinator 先提交双文件再做 DB 引用事务；数据库失败仅留孤儿文件。共享引用删除、文件锁删除失败 tombstone、重启重试、recapture 使旧 revision claim 失效、主/缩略图独立 quarantine、预取消/排队取消/容量/shutdown/watchdog 一次终态均通过。隔离 Release 62/62 + 303/303 共 365/365；用户 PID 23964 未停止或替换。下一步 M2.3.5 图片卡与可见性缓存。
+
 ### 会话 2026-08-29 - M2.3.2–3 严格图片规范化与有界 worker
 
 - 严格 PNG inspector 流式校验 chunk/CRC、拒绝 APNG；packed DIB parser 以 checked layout 覆盖 1/4/8/16/24/32 bpp、方向、palette、bitfields、profile 与总长，linked profile/RLE/内嵌编码/非法 mask/截断整条拒绝。WIC 规范为 sRGB straight-alpha BGRA8，`BI_RGB` 孤立 Alpha mask 强制不透明，显式 bitfields Alpha 保留。

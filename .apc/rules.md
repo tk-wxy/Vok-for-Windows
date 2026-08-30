@@ -161,25 +161,25 @@
   - 范围：剪贴板图片目录、捕获载荷所有权与后续图片 normalizer。
   - 证据：2026-08-28 独立 Window Station producer 通过真实 GDI `CreateBitmap` 只发布 `CF_BITMAP`；平台快照先将 `CF_BITMAP` 编目为 MetadataOnly，随后捕获 Windows 合成的 `CF_DIB` 68 bytes 与 `CF_DIBV5` 152 bytes。2026-08-29 M2.3.1 产品 reader 已只复制合成的 DIBV5；M2.3.2 隔离探针进一步确认该 152-byte V5 在 header 内已有 masks 后仍重复附加 12-byte RGB mask block，严格 parser 只在重复块与 header 三个 masks 精确一致时接受并按无 Alpha 解码，任意同长度尾随仍拒绝。`reportVersion=4, success=true` 同时验证 PNG/DIBV5 像素等价与纯 Bitmap 系统合成解码。Microsoft 标准剪贴板格式契约将 `CF_BITMAP` 定义为 HBITMAP，并说明系统可在 `CF_DIB`、`CF_DIBV5` 与 `CF_BITMAP` 间按需转换。
   - 最后验证：2026-08-29。
-  - 状态：active；产品捕获所有权与严格 decoder 已按此边界通过真实隔离探针，内容寻址资产与 schema 5 已在独立 coordinator 闭环；产品历史接入和 replay 仍待 M2.3.5–M2.3.7。
+  - 状态：active；产品捕获所有权、严格 decoder、内容寻址资产、schema 5 与 replay 已通过单一图片功能所有者接入组合根；自动门禁通过，真实来源×目标仍待新版真机验收。
 
 - [ ] R22：不能把 `CF_HDROP` 的存在等同于用户复制文件；同一目录存在注册 `PNG`、`CF_DIBV5`、`CF_DIB` 或 `CF_BITMAP` 等像素表示时必须先按 Image 候选处理，随附 HDROP/HTML/URL 不得抢占类型，也不得在图片损坏后跨类降级。只有没有图片表示的有效 HDROP 才进入 FileList 路由；产品实现必须保留已通过的 Explorer 图片文件正反门禁。
   - 范围：剪贴板 Image/FileList/Text 路由、候选裁剪和畸形载荷降级。
   - 证据：2026-08-28 非敏感真实语料中，Snipping Tool 区域截图、Print Screen 和 QQ 图片三种明确图片动作都同时发布 `CF_HDROP` 与图片像素格式；旧“HDROP 绝对优先”会把三者稳定误归为文件。Office 同次 PNG 865×541 与 DIB 554×346 还证明多表示不能默认等像素。2026-08-29 产品 reader/router 定向测试验证图片目录使 HDROP/Text 保持 NotRequested，只有 PNG 一份 Captured；畸形图片不跨类降级，纯 Explorer 文件既有回归保持通过。
   - 最后验证：2026-08-29。
-  - 状态：active；Image/FileList/Text 精确路由已接入产品，合法单候选已可规范化并由独立 asset/schema 5 coordinator 提交；产品 Controller 仍在 M2.3.7 前保持不提交 Image 历史。
+  - 状态：active；Image/FileList/Text 精确路由、合法单候选规范化和 asset/schema 5 提交均已接入产品 Controller；连续图片失败不会终止后续监听，Explorer 图片文件反例仍由全量回归覆盖。
 
 - [ ] R23：图片缩略图不得按分页条目或空 `Image` 自身尺寸预加载。只有 Recycling 容器已实现、展示槽与真实 ScrollViewer viewport 相交且工作台可见时才能请求；离开视口、Unloaded、CleanUp、DataContext/entry revision 变化、删除、隐藏或退出必须先撤销当前绑定身份，再取消请求并清空容器 `Source`。迟到结果只有 entry id、thumbnail hash、entry/asset revision 与当前容器数据项全部匹配才可落地。ViewModel 不持有原图或 thumbnail `ImageSource`；UI cache 只按 asset hash 保存已 `OnLoad`/`Freeze()` 的缩略图，并按解码字节硬限制 32 MiB。
   - 范围：M2.3.5 图片卡、WPF Recycling、缩略图读取/缓存、隐藏与退出生命周期。
   - 证据：2026-08-31 真实 WPF 测试复现无 Source 的 `Image` 即使声明 Width/Height，初次布局 `ActualWidth/Height` 仍为 0；若以其自身尺寸作为加载门禁，会形成“有图才有尺寸、有尺寸才读图”的永久空卡。改用固定展示槽的已布局矩形后，80 条 Image 列表只加载视口容器；滚动回收前一条绑定并故意迟到完成时不串图，隐藏后所有已实现 `Source` 清空。32 MiB LRU 按 `width × height × 4` 淘汰，损坏 decode 不入缓存；定向生命周期测试连续五轮通过。
   - 最后验证：2026-08-31。
-  - 状态：active；隔离 Release 62/62 + 310/310 共 372/372、浅/深当前 DPI 真实渲染和 win-x64 自包含发布通过。产品组合根仍未启用 Image；150%/200% 物理跨屏与真实图片卡长期曲线保留 M2.3.7/M2.4。
+  - 状态：active；图片卡、缓存与单一资产 coordinator 已接入产品组合根，Release 392/392、61 项高风险五轮、浅/深当前 DPI 渲染和自包含发布通过；150%/200% 物理跨屏与真实图片卡长期曲线仍待真机。
 
 - [ ] R24：Image replay 的仓储查询只能返回 semantic hash、主资产引用与尺寸/Alpha/DPI descriptor；物化阶段必须以有生命周期的只读 lease 重新校验 Ready/revision、SHA-256、严格 PNG/WIC 和 `Vok.Image.Pixel.v1`，不得把路径或完整原图 `byte[]` 交给 App/VM。只有内容/像素完整性失败可按 `(hash, revision)` quarantine；取消、暂存目录不可用、DIB 生成或剪贴板写入失败不得污染 Ready 资产。writer 只在单一 Clipboard STA 一次 `EmptyClipboard` 后按 PNG→CF_DIBV5→marker 分块写入；成功转移的 HGLOBAL 归系统，失败只释放未转移句柄并清除半份内容。Controller 必须在物化成功后才隐藏，并在所有终态释放 materialization，继续复用 receipt/generation/focus 门禁。
   - 范围：M2.3.6 primary replay、DIBV5、WindowsClipboardWriter、ClipboardPasteController、取消与退出清理。
   - 证据：2026-08-31 隔离测试验证 semantic mismatch 会 quarantine，而预取消、过期 revision 和已关闭 replay staging store 均不改变 Ready primary；生成的 124-byte V5 header、bottom-up BGRA8、RGBA masks、sRGB、DPI 与严格 DIB parser 一致。writer 的 marker 失败、流长度不符和分块中取消均清除已转移格式、只显式释放未转移句柄。33 项 materializer/writer/paste/asset 定向测试连续五轮通过；独立 Window Station `reportVersion=5, success=true` 真实验证 PNG+DIBV5+marker receipt、自写抑制与外部覆盖失效。
   - 最后验证：2026-08-31。
-  - 状态：active；M2.3.6 隔离切片已闭环，产品组合根仍留到 M2.3.7 一次接入。
+  - 状态：active；M2.3.6 replay 切片已通过 M2.3.7 单一图片功能所有者接入产品，缩略图/删除/replay 共用同一 coordinator；自动门禁通过，真实目标粘贴仍待新版真机。
 
 ### 存储与规模
 

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using Vok.Core.Clipboard;
 using Vok.Hosting;
 
@@ -9,6 +10,7 @@ public sealed class ClipboardController : IDisposable
     private static readonly TimeSpan ShutdownWatchdog = TimeSpan.FromSeconds(5);
     private readonly IClipboardPlatformService _platform;
     private readonly IClipboardCaptureNormalizer _normalizer;
+    private readonly IClipboardImageCaptureService? _imageCapture;
     private readonly IClipboardHistoryRepository _repository;
     private readonly ClipboardViewModel _viewModel;
     private readonly IWorkspaceWindow _workspaceWindow;
@@ -22,12 +24,30 @@ public sealed class ClipboardController : IDisposable
         IClipboardHistoryRepository repository,
         ClipboardViewModel viewModel,
         IWorkspaceWindow workspaceWindow)
+        : this(
+            platform,
+            normalizer,
+            repository,
+            viewModel,
+            workspaceWindow,
+            imageCapture: null)
+    {
+    }
+
+    public ClipboardController(
+        IClipboardPlatformService platform,
+        IClipboardCaptureNormalizer normalizer,
+        IClipboardHistoryRepository repository,
+        ClipboardViewModel viewModel,
+        IWorkspaceWindow workspaceWindow,
+        IClipboardImageCaptureService? imageCapture)
     {
         _platform = platform ?? throw new ArgumentNullException(nameof(platform));
         _normalizer = normalizer ?? throw new ArgumentNullException(nameof(normalizer));
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         _workspaceWindow = workspaceWindow ?? throw new ArgumentNullException(nameof(workspaceWindow));
+        _imageCapture = imageCapture;
     }
 
     public async Task StartAsync()
@@ -84,6 +104,12 @@ public sealed class ClipboardController : IDisposable
                                .WatchAsync(_lifetime.Token)
                                .ConfigureAwait(false))
             {
+                if (IsImageCapture(capture))
+                {
+                    await ProcessImageCaptureAsync(capture).ConfigureAwait(false);
+                    continue;
+                }
+
                 using (capture)
                 {
                     if (capture.Disposition is ClipboardCaptureDisposition.Failed)
@@ -127,6 +153,71 @@ public sealed class ClipboardController : IDisposable
             PostFault(exception);
         }
     }
+
+    private async Task ProcessImageCaptureAsync(ClipboardCaptureResult capture)
+    {
+        if (_imageCapture is null)
+        {
+            try
+            {
+                capture.Dispose();
+            }
+            catch (Exception exception)
+            {
+                Trace.TraceWarning(
+                    "A disabled clipboard image capture did not release cleanly: {0}",
+                    exception);
+            }
+
+            PostCaptureFault("图片捕获服务尚未启用，未保存此条图片。");
+            return;
+        }
+
+        try
+        {
+            var entry = await _imageCapture
+                .CaptureAsync(capture, _lifetime.Token)
+                .ConfigureAwait(false);
+            if (entry.Kind is not ClipboardContentKind.Image || entry.Image is null)
+            {
+                throw new InvalidDataException(
+                    "The clipboard image pipeline returned a non-image entry.");
+            }
+
+            _workspaceWindow.PostNormal(() => _viewModel.ApplyCaptured(entry));
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            Trace.TraceWarning("Clipboard image capture failed: {0}", exception);
+            PostCaptureFault("图片捕获失败，未保存此条图片。");
+        }
+    }
+
+    private void PostCaptureFault(string message)
+    {
+        try
+        {
+            _workspaceWindow.PostNormal(() => _viewModel.RecordCaptureFault(message));
+        }
+        catch (Exception dispatchException)
+        {
+            Trace.TraceWarning(
+                "Unable to publish a clipboard capture failure during shutdown: {0}",
+                dispatchException);
+        }
+    }
+
+    private static bool IsImageCapture(ClipboardCaptureResult capture) =>
+        capture.Disposition is ClipboardCaptureDisposition.Captured &&
+        capture.Formats.Any(static format =>
+            format.RepresentationKind is
+                ClipboardRepresentationKind.Png or
+                ClipboardRepresentationKind.DibV5 or
+                ClipboardRepresentationKind.Dib or
+                ClipboardRepresentationKind.Bitmap);
 
     private void PostFault(Exception exception)
     {

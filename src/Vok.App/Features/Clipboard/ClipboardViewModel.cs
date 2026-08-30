@@ -15,6 +15,8 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
     private readonly IClipboardFilePresentationService? _filePresentation;
     private readonly IClipboardThumbnailCache? _thumbnailCache;
     private readonly IClipboardImageAssetService? _imageAssets;
+    private readonly bool _imageHistoryEnabled;
+    private readonly string? _imageFeatureUnavailableStatus;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly Queue<ClipboardItemViewModel> _pendingFilePresentations = new();
     private ClipboardPageCursor? _nextCursor;
@@ -34,7 +36,9 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
             repository,
             filePresentation: null,
             thumbnailCache: null,
-            imageAssets: null)
+            imageAssets: null,
+            imageHistoryEnabled: false,
+            imageFeatureUnavailableStatus: null)
     {
     }
 
@@ -45,7 +49,9 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
             repository,
             filePresentation,
             thumbnailCache: null,
-            imageAssets: null)
+            imageAssets: null,
+            imageHistoryEnabled: false,
+            imageFeatureUnavailableStatus: null)
     {
     }
 
@@ -53,12 +59,16 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
         IClipboardHistoryRepository repository,
         IClipboardFilePresentationService? filePresentation,
         IClipboardThumbnailCache? thumbnailCache,
-        IClipboardImageAssetService? imageAssets)
+        IClipboardImageAssetService? imageAssets,
+        bool imageHistoryEnabled = false,
+        string? imageFeatureUnavailableStatus = null)
     {
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         _filePresentation = filePresentation;
         _thumbnailCache = thumbnailCache;
         _imageAssets = imageAssets;
+        _imageHistoryEnabled = imageHistoryEnabled;
+        _imageFeatureUnavailableStatus = imageFeatureUnavailableStatus;
     }
 
     public ObservableCollection<ClipboardItemViewModel> Items { get; } = [];
@@ -66,6 +76,12 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
     public bool HasMore => _nextCursor is not null;
 
     public bool IsEmpty => _initialized && !IsLoading && !HasError && Items.Count == 0;
+
+    public string EmptyStateText => _imageHistoryEnabled
+        ? "复制文本、文件或图片后会自动显示在这里。\n支持文本、HTML、RTF、文件系统路径和图片。"
+        : _imageFeatureUnavailableStatus is null
+            ? "复制文本或文件后会自动显示在这里。\n支持文本、HTML、RTF 和文件系统路径。"
+            : $"复制文本或文件后会自动显示在这里。\n{_imageFeatureUnavailableStatus}";
 
     internal Func<ClipboardItemViewModel, Task>? PasteActionAsync { get; set; }
 
@@ -126,9 +142,11 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
     {
         IsListenerReady = true;
         HasError = false;
-        StatusText = Items.Count == 0
-            ? "复制文本或文件后会自动显示在这里。"
-            : "剪贴板监听已就绪。";
+        StatusText = _imageFeatureUnavailableStatus is not null
+            ? $"剪贴板监听已就绪；{_imageFeatureUnavailableStatus}"
+            : Items.Count == 0
+                ? EmptyPromptText
+                : "剪贴板监听已就绪。";
         OnPropertyChanged(nameof(IsEmpty));
     }
 
@@ -342,7 +360,7 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
             TotalCount = page.TotalCount;
             HasError = false;
             StatusText = Items.Count == 0
-                ? "复制文本或文件后会自动显示在这里。"
+                ? EmptyPromptText
                 : $"已加载 {Items.Count} 条剪贴板历史。";
             OnPropertyChanged(nameof(HasMore));
         }
@@ -363,6 +381,10 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
+
+    private string EmptyPromptText => _imageHistoryEnabled
+        ? "复制文本、文件或图片后会自动显示在这里。"
+        : _imageFeatureUnavailableStatus ?? "复制文本或文件后会自动显示在这里。";
 
     private void RecordOperationFault(string operation, Exception exception)
     {

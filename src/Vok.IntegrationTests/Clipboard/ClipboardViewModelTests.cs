@@ -7,6 +7,34 @@ namespace Vok.IntegrationTests.Clipboard;
 public sealed class ClipboardViewModelTests
 {
     [Fact]
+    public void EmptyStateDeclaresImagesOnlyWhenProductImageFeatureIsEnabled()
+    {
+        var repository = new FakeRepository(
+            new ClipboardPage([], null, TotalCount: 0));
+        using var disabled = new ClipboardViewModel(repository);
+        using var enabled = new ClipboardViewModel(
+            repository,
+            filePresentation: null,
+            thumbnailCache: null,
+            imageAssets: null,
+            imageHistoryEnabled: true,
+            imageFeatureUnavailableStatus: null);
+        using var degraded = new ClipboardViewModel(
+            repository,
+            filePresentation: null,
+            thumbnailCache: null,
+            imageAssets: null,
+            imageHistoryEnabled: false,
+            imageFeatureUnavailableStatus: "图片历史暂不可用；文本和文件仍可使用。");
+
+        Assert.DoesNotContain("图片", disabled.EmptyStateText, StringComparison.Ordinal);
+        Assert.Contains("图片", enabled.EmptyStateText, StringComparison.Ordinal);
+        Assert.Contains("暂不可用", degraded.EmptyStateText, StringComparison.Ordinal);
+        degraded.MarkListenerReady();
+        Assert.Contains("暂不可用", degraded.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task DuplicateFromUnloadedPageMovesToFrontWithoutInflatingTotalCount()
     {
         var loaded = Entry("loaded", captureCount: 1, order: 100);

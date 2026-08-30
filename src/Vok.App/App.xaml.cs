@@ -88,8 +88,24 @@ public partial class App : Application
     {
         var services = new ServiceCollection();
 
+        RegisterServices(services);
+
+        return services.BuildServiceProvider(new ServiceProviderOptions
+        {
+            ValidateOnBuild = true,
+            ValidateScopes = true,
+        });
+    }
+
+    internal static void RegisterServices(IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
         services.AddSingleton(GlobalHotkeyGesture.Default);
         services.AddSingleton(WorkspaceHostOptions.FromEnvironment());
+        services.AddSingleton(new ClipboardImageCaptureOptions());
+        services.AddSingleton(provider => new ClipboardCaptureOptions(
+            image: provider.GetRequiredService<ClipboardImageCaptureOptions>()));
         services.AddSingleton<WorkspaceSessionStateMachine>();
         services.AddSingleton<IForegroundWindowService, Win32ForegroundWindowService>();
         services.AddSingleton<IWindowPlacementService, Win32WindowPlacementService>();
@@ -109,22 +125,41 @@ public partial class App : Application
             new SqliteAppSettingsStore(provider.GetRequiredService<SqliteStorageExecutor>()));
         services.AddSingleton<ILauncherRepository>(provider =>
             new SqliteLauncherRepository(provider.GetRequiredService<SqliteStorageExecutor>()));
+        services.AddSingleton(provider =>
+            new SqliteClipboardHistoryRepository(
+                provider.GetRequiredService<SqliteStorageExecutor>()));
         services.AddSingleton<IClipboardHistoryRepository>(provider =>
-            new SqliteClipboardHistoryRepository(provider.GetRequiredService<SqliteStorageExecutor>()));
-        services.AddSingleton<IClipboardPlatformService, WindowsClipboardPlatformService>();
+            provider.GetRequiredService<SqliteClipboardHistoryRepository>());
+        services.AddSingleton<IClipboardPlatformService>(provider =>
+            new WindowsClipboardPlatformService(
+                provider.GetRequiredService<ClipboardCaptureOptions>()));
         services.AddSingleton<IClipboardCaptureNormalizer, ClipboardContentNormalizer>();
         services.AddSingleton<IPasteInputService, Win32PasteInputService>();
         services.AddSingleton<WindowsShellStaExecutor>();
         services.AddSingleton<ILauncherShellService, WindowsLauncherShellService>();
         services.AddSingleton<IClipboardFilePresentationService,
             WindowsClipboardFilePresentationService>();
+        services.AddSingleton(provider => ClipboardImageFeature.Create(
+            provider.GetRequiredService<SqliteClipboardHistoryRepository>(),
+            Current.Dispatcher,
+            provider.GetRequiredService<ClipboardImageCaptureOptions>()));
         services.AddSingleton<IAppThemeApplier>(_ => new WpfAppThemeApplier(Current));
         services.AddSingleton<AppearanceController>();
         services.AddSingleton<HotkeyController>();
         services.AddSingleton<SettingsViewModel>();
         services.AddSingleton<LauncherLayoutProfileCache>();
         services.AddSingleton<LauncherViewModel>();
-        services.AddSingleton<ClipboardViewModel>();
+        services.AddSingleton(provider =>
+        {
+            var images = provider.GetRequiredService<ClipboardImageFeature>();
+            return new ClipboardViewModel(
+                provider.GetRequiredService<IClipboardHistoryRepository>(),
+                provider.GetRequiredService<IClipboardFilePresentationService>(),
+                images.ThumbnailCache,
+                images.AssetService,
+                images.IsEnabled,
+                images.UnavailableStatus);
+        });
         services.AddSingleton<MainWindowViewModel>();
         services.AddSingleton<MainWindow>();
         services.AddSingleton<IWorkspaceWindow>(provider => provider.GetRequiredService<MainWindow>());
@@ -133,16 +168,31 @@ public partial class App : Application
         services.AddSingleton<IWorkspaceCommands>(provider =>
             provider.GetRequiredService<WorkspaceController>());
         services.AddSingleton<LauncherActionController>();
-        services.AddSingleton<ClipboardPasteController>();
-        services.AddSingleton<ClipboardController>();
+        services.AddSingleton(provider =>
+        {
+            var images = provider.GetRequiredService<ClipboardImageFeature>();
+            return new ClipboardPasteController(
+                provider.GetRequiredService<ClipboardViewModel>(),
+                provider.GetRequiredService<IClipboardHistoryRepository>(),
+                provider.GetRequiredService<IClipboardPlatformService>(),
+                provider.GetRequiredService<IWorkspaceCommands>(),
+                provider.GetRequiredService<IPasteInputService>(),
+                provider.GetRequiredService<IClipboardFilePresentationService>(),
+                images.ReplayMaterializer);
+        });
+        services.AddSingleton(provider =>
+        {
+            var images = provider.GetRequiredService<ClipboardImageFeature>();
+            return new ClipboardController(
+                provider.GetRequiredService<IClipboardPlatformService>(),
+                provider.GetRequiredService<IClipboardCaptureNormalizer>(),
+                provider.GetRequiredService<IClipboardHistoryRepository>(),
+                provider.GetRequiredService<ClipboardViewModel>(),
+                provider.GetRequiredService<IWorkspaceWindow>(),
+                images.CaptureService);
+        });
         services.AddSingleton<IApplicationLifetime, WpfApplicationLifetime>();
         services.AddSingleton<ApplicationController>();
-
-        return services.BuildServiceProvider(new ServiceProviderOptions
-        {
-            ValidateOnBuild = true,
-            ValidateScopes = true,
-        });
     }
 
     private static void InitializeLauncherLayouts(ServiceProvider services)

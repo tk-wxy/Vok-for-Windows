@@ -288,7 +288,7 @@
 
     <TextBlock Grid.Row="1"
                Margin="24"
-               Text="复制文本或文件后会自动显示在这里。&#x0a;支持文本、HTML、RTF 和文件系统路径。"
+               Text="{Binding EmptyStateText}"
                FontSize="12"
                LineHeight="20"
                Foreground="{DynamicResource TextFillColorSecondaryBrush}"
