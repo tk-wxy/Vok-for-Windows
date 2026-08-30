@@ -51,9 +51,9 @@
 
 - [ ] R2：WPF UI、热键、剪贴板、Shell/COM、SQLite 和图片任务各有明确所有者；跨边界只投递不可变数据或调用窄接口，禁止同步等待 UI、散落 `Task.Run` 和不明固定延时。
   - 范围：进程内全部后台服务和系统事件。
-  - 证据：Vok 产品要求覆盖失败、取消和重复触发；参考项目的轮询、跨线程等待和全局复位清单导致时序耦合；见 `decisions.md §1`。M2.2 将启动台与文件剪贴板适配器收敛到 DI 唯一拥有的容量 128 Shell/COM STA executor。M2.3.2–3 新增单消费者 MTA 图片 worker，只接受持有精确 `input+canonical` reservation 的 job；取消、队列拒绝、容量拒绝、codec 失败和退出均先认领一次终态并释放 capture，5 秒 watchdog 超时则由仍存活 worker 在 codec 返回后延迟归零。自动测试覆盖入队前/排队中/认领后取消、同轮 shutdown 竞态、watchdog 超时和重复 Dispose。
-  - 最后验证：2026-08-29。
-  - 状态：active；WPF、热键、Clipboard STA、共享 Shell/COM STA、SQLite 与图片 worker 均已有显式所有权和退出边界；图片 worker 尚不在产品组合根注册，等待 M2.3.4–7 完整切片接入。
+  - 证据：Vok 产品要求覆盖失败、取消和重复触发；参考项目的轮询、跨线程等待和全局复位清单导致时序耦合；见 `decisions.md §1`。M2.2 将启动台与文件剪贴板适配器收敛到 DI 唯一拥有的容量 128 Shell/COM STA executor。M2.3.2–3 新增单消费者 MTA 图片 worker，只接受持有精确 `input+canonical` reservation 的 job。M2.3.4 又以单 MTA/容量 4 asset coordinator 唯一串行化文件提交、Image 元数据、删除和 quarantine；预取消必须在占用 slot 后才注册回调，否则同步回调会在 slot 尚不存在时发布终态并泄漏后来取得的容量。两条 worker 的取消、队列/容量拒绝、失败、shutdown 和 5 秒 watchdog 均先认领一次终态；自动测试覆盖入队前/排队中/认领后取消、同轮 shutdown、watchdog 超时后延迟归零、重复 Dispose、删除失败启动重试和旧 revision claim 失效。
+  - 最后验证：2026-08-30。
+  - 状态：active；WPF、热键、Clipboard STA、共享 Shell/COM STA、SQLite、图片 worker 与 asset coordinator 均已有显式所有权和退出边界；后两者尚不在产品组合根注册，等待 M2.3.5–7 完整切片接入。
 
 - [ ] R11：`Application.Deactivated` 是整个 Vok 丢失前台的唯一权威信号；宿主不得暴露或转发无消费者的单窗口失活接口。除同代持有由真实外部 OLE `DragEnter` 建立的窄拖放租约外，当前 generation 在下一 Dispatcher 轮次仍为 `Visible` 时必须以 `ForegroundLost` 被动隐藏；真实前台捕获只用于诊断，HWND 为 0 或捕获失败也不得阻断。拖放租约必须在 Drop、窗口级 DragLeave、隐藏、换代、退出或下一次 DragEnter 时收尾，终态先占有后执行，陈旧/重复终态不得影响新代；已经可见时再次显式热键关闭可抢占租约，只有本次长按从隐藏态呼出的原始松键仍等待拖放终态。普通失活必须完成 Hide、退出 Topmost、状态机和诊断收尾，但不得恢复旧捕获目标；状态明确为 `NotRequested`。
   - 范围：M0 Deactivated、前台切换、隐藏策略、诊断和下一代目标捕获。
@@ -159,21 +159,21 @@
   - 范围：剪贴板图片目录、捕获载荷所有权与后续图片 normalizer。
   - 证据：2026-08-28 独立 Window Station producer 通过真实 GDI `CreateBitmap` 只发布 `CF_BITMAP`；平台快照先将 `CF_BITMAP` 编目为 MetadataOnly，随后捕获 Windows 合成的 `CF_DIB` 68 bytes 与 `CF_DIBV5` 152 bytes。2026-08-29 M2.3.1 产品 reader 已只复制合成的 DIBV5；M2.3.2 隔离探针进一步确认该 152-byte V5 在 header 内已有 masks 后仍重复附加 12-byte RGB mask block，严格 parser 只在重复块与 header 三个 masks 精确一致时接受并按无 Alpha 解码，任意同长度尾随仍拒绝。`reportVersion=4, success=true` 同时验证 PNG/DIBV5 像素等价与纯 Bitmap 系统合成解码。Microsoft 标准剪贴板格式契约将 `CF_BITMAP` 定义为 HBITMAP，并说明系统可在 `CF_DIB`、`CF_DIBV5` 与 `CF_BITMAP` 间按需转换。
   - 最后验证：2026-08-29。
-  - 状态：active；产品捕获所有权与严格 decoder 已按此边界通过真实隔离探针，资产、历史提交和 replay 仍待 M2.3.4–M2.3.6。
+  - 状态：active；产品捕获所有权与严格 decoder 已按此边界通过真实隔离探针，内容寻址资产与 schema 5 已在独立 coordinator 闭环；产品历史接入和 replay 仍待 M2.3.5–M2.3.7。
 
 - [ ] R22：不能把 `CF_HDROP` 的存在等同于用户复制文件；同一目录存在注册 `PNG`、`CF_DIBV5`、`CF_DIB` 或 `CF_BITMAP` 等像素表示时必须先按 Image 候选处理，随附 HDROP/HTML/URL 不得抢占类型，也不得在图片损坏后跨类降级。只有没有图片表示的有效 HDROP 才进入 FileList 路由；产品实现必须保留已通过的 Explorer 图片文件正反门禁。
   - 范围：剪贴板 Image/FileList/Text 路由、候选裁剪和畸形载荷降级。
   - 证据：2026-08-28 非敏感真实语料中，Snipping Tool 区域截图、Print Screen 和 QQ 图片三种明确图片动作都同时发布 `CF_HDROP` 与图片像素格式；旧“HDROP 绝对优先”会把三者稳定误归为文件。Office 同次 PNG 865×541 与 DIB 554×346 还证明多表示不能默认等像素。2026-08-29 产品 reader/router 定向测试验证图片目录使 HDROP/Text 保持 NotRequested，只有 PNG 一份 Captured；畸形图片不跨类降级，纯 Explorer 文件既有回归保持通过。
   - 最后验证：2026-08-29。
-  - 状态：active；Image/FileList/Text 精确路由已接入产品，合法单候选已可在隔离 worker 规范化；历史提交仍等待 M2.3.4 资产/schema 5 与 M2.3.7 完整接入。
+  - 状态：active；Image/FileList/Text 精确路由已接入产品，合法单候选已可规范化并由独立 asset/schema 5 coordinator 提交；产品 Controller 仍在 M2.3.7 前保持不提交 Image 历史。
 
 ### 存储与规模
 
 - [ ] R5：不得在 UI Dispatcher 上执行 Microsoft.Data.Sqlite；数据库写入由显式执行器串行化并使用 WAL。数据库升级必须同时核验版本号与真实表结构，在单事务内迁移并让未知结构原样回滚；`CREATE TABLE IF NOT EXISTS` 只能建新表，不能冒充已有表迁移。大集合必须同时实施 SQL 分页和 WPF 容器虚拟化，不能把 UI 虚拟化当作数据虚拟化。
   - 范围：SQLite、启动台、剪贴板历史、图片与后续大列表。
-  - 证据：https://learn.microsoft.com/dotnet/standard/data/sqlite/async 说明 Async 方法实际同步；https://learn.microsoft.com/dotnet/desktop/wpf/advanced/optimizing-performance-controls 说明 WPF 没有内建数据虚拟化。2026-08-28 真机旧库因已有 `launcher_items` 使 `CREATE TABLE IF NOT EXISTS` 静默跳过，但代码仍写入版本并查询新列，复现 `no such column: target_kind`；schema 2 改为列集合识别和单事务迁移。M2.1 schema 3 在同一容量 64 的单连接 WAL 执行器中增加结构识别的剪贴板表。M2.2 schema 4 在同一事务增加意图/数量列与级联文件表，并验证三表列集合、外键和关键索引；已知 schema 3 保留文本 replay，损坏外键/索引和半迁移结构原样回滚。64 条 keyset 页与 81 卡真实 WPF Recycling 渲染继续通过。
-  - 最后验证：2026-08-28。
-  - 状态：active；设置、启动台与剪贴板共享串行所有权，schema 1→2→3→4、失败回滚、SQL 分页、WPF 虚拟化、重启持久化、去重/排序和取消一致性均有自动测试；2026-08-28 默认 Release 启动后只读复核真实用户库已升 schema 4，文件子表从修复前 0 行增至同形交互语料捕获后的 1 行。
+  - 证据：https://learn.microsoft.com/dotnet/standard/data/sqlite/async 说明 Async 方法实际同步；https://learn.microsoft.com/dotnet/desktop/wpf/advanced/optimizing-performance-controls 说明 WPF 没有内建数据虚拟化。2026-08-28 真机旧库因已有 `launcher_items` 使 `CREATE TABLE IF NOT EXISTS` 静默跳过，但代码仍写入版本并查询新列，复现 `no such column: target_kind`；schema 2 改为列集合识别和单事务迁移。M2.1–2 形成 schema 3/4。M2.3.4 以同一事务增加五个 nullable 图片列、`content_assets`、`clipboard_asset_refs`、CASCADE/RESTRICT 外键及引用/状态索引；fresh、schema 3、schema 4 与完整 schema 5 均按真实列/FK/index 识别，半迁移列和损坏 asset FK 原样拒绝。迁移定向验证 Text/FileList replay 均保留，图片分页只 LEFT JOIN 两个轻量引用，不读取 PNG。
+  - 最后验证：2026-08-30。
+  - 状态：active；设置、启动台与剪贴板共享串行所有权，schema 1→2→3→4→5、失败回滚、SQL 分页、WPF 虚拟化、重启持久化、去重/排序和取消一致性均有自动测试；真实用户库仍由用户运行中的旧实例占用，本轮未启动新默认实例或迁移该库。
 
 ### 发布与互操作
 

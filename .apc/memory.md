@@ -11,12 +11,18 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与 M2.0–M2.2 保持可用，M2.2 已由 `8eb6089` 收口，M2.3.0–M2.3.3 已完成。产品 reader 已取得有界单图片载荷，隔离 worker 已能严格规范化为临时 canonical/thumbnail PNG；worker 尚未注册到产品组合根，图片仍不提交历史。本轮未停止或替换用户进程；最终检查 PID 20420 已不存在。
-- **最近进展**：新增 PNG chunk/CRC 与 APNG 拒绝、严格 packed DIB layout/profile/mask、WIC sRGB straight-alpha BGRA8、分带 `Vok.Image.Pixel.v1`、metadata chunk 流式净化和 512 px thumbnail；单 MTA worker 只接受精确 reservation，覆盖取消/容量/失败/shutdown/watchdog 一次终态。Release 0 警告/错误，62/62 + 286/286 共 348/348，隔离探针 `reportVersion=4, success=true`，staging 为 0。
-- **下一步**：执行 M2.3.4：实现同卷内容寻址 asset store、canonical/thumbnail 双资产提交与校验、schema 4→5 单事务迁移、Image upsert/replay descriptor、引用删除/tombstone、损坏隔离和重启恢复；仍不提前接图片卡或 writer/paste。
-- **已知问题**：合法 PNG 轻量 header 仍可能在关闭剪贴板后 codec 失败且没有 DIB 事后后备；worker/临时结果尚未接仓储与产品消费。有效 embedded ICC 的真实转换、4K/8K codec 资源曲线、真实来源到目标的图片往返、资产损坏/空间不足、目标粘贴兼容性和 M2.4 长期曲线仍未验证。
+- **状态**：M0、M1 与 M2.0–M2.2 保持可用，M2.2 已由 `8eb6089` 收口，M2.3.0–M2.3.4 已完成。产品 reader/worker 已取得并规范化单图片载荷，独立 asset coordinator 已能提交内容寻址双资产和 schema 5 Image 元数据；图片链路仍未注册到产品组合根，不显示图片卡或写回。本轮未停止或替换用户进程；最终检查用户 PID 23964 仍在运行。
+- **最近进展**：新增同卷 `asset-*.tmp`→flush→重哈希→严格 PNG/WIC 解码→不覆盖原子 move，schema 5 五个图片列与 assets/refs 外键索引，以及单 MTA asset coordinator 的文件先行/DB 后引用、重复回顶、共享引用、PendingDelete revision 再认领、Quarantined 和启动恢复。隔离 Release 0 警告/错误，Core 62/62 + Integration 303/303 共 365/365。
+- **下一步**：执行 M2.3.5：在现有 Recycling `ListBox` 增加图片卡、仅可见容器 thumbnail 加载、32 MiB 解码字节缓存、entry/hash/revision/容器四重迟到门禁、透明背景与可访问状态；仍不提前接 image writer/paste。
+- **已知问题**：合法 PNG 轻量 header 仍可能在关闭剪贴板后 codec 失败且没有 DIB 事后后备；asset coordinator 尚未注册产品，数据库失败留下的无引用文件要到 M2.4 才做总量清理。真实用户库未由本轮新代码迁移；有效 embedded ICC、4K/8K codec/UI 资源曲线、真实图片卡/往返、空间不足、目标粘贴兼容性和 M2.4 长期曲线仍未验证。
 
 ## §0A 最近会话
+
+### 会话 2026-08-30 - M2.3.4 内容寻址资产与 schema 5
+
+- `ContentAddressedClipboardAssetStore` 在同卷 staging 只拥有 `asset-*.tmp`，流式写入并 `Flush(true)` 后重新计算 PNG 文件 SHA-256、严格检查 chunk/CRC 并强制 WIC 分带像素解码；最终路径由小写 hash 唯一生成，同名目标只有完整复核通过才复用，未知内容绝不覆盖。
+- schema 5 单事务加入五个图片列、`content_assets`、`clipboard_asset_refs`、CASCADE/RESTRICT 外键和状态/引用索引；fresh、schema 3、schema 4、完整 5、半迁移与损坏 asset FK 均有门禁，既有 Text/FileList replay 保留。Image 分页/replay 只带轻量 hash/state/revision。
+- 单 MTA asset coordinator 先提交双文件再做 DB 引用事务；数据库失败仅留孤儿文件。共享引用删除、文件锁删除失败 tombstone、重启重试、recapture 使旧 revision claim 失效、主/缩略图独立 quarantine、预取消/排队取消/容量/shutdown/watchdog 一次终态均通过。隔离 Release 62/62 + 303/303 共 365/365；用户 PID 23964 未停止或替换。下一步 M2.3.5 图片卡与可见性缓存。
 
 ### 会话 2026-08-29 - M2.3.2–3 严格图片规范化与有界 worker
 
@@ -29,12 +35,6 @@
 - Core 新增精确默认图片容量、`Inline | LeasedBlob`、只读流、header 尺寸和 reservation 所有权；结果与格式均幂等释放。Clipboard STA 先按完整目录决定 Image，再只复制 PNG 或一个 DIB 家族候选；大载荷以 1 MiB 缓冲写入同卷 `.staging`，按 `input + width × height × 4` 同时受 4 jobs/384 MiB 限制。
 - 根因级生命周期收口覆盖 CloseClipboard 失败替换结果、忙重试丢弃、channel 满 drop、取消后的 Controller 消费和服务退出 drain；staging 启动只清理命名 blob，不暴露路径。router 现在让任何像素目录抢先于 HDROP/Text，但 M2.3.2 前仍返回 null，不写半条 Image 历史。
 - 隔离 Release 构建 0 警告/错误，Core 62/62 与 Integration 255/255 共 317/317；记录器 self-test 与独立 Window Station 探针 `reportVersion=3, success=true` 通过。默认 PID 20420 未替换；下一步是严格 decoder/pixel identity。
-
-### 会话 2026-08-28 - M2.3 Gate 0 首轮真实图片语料
-
-- 用户完成 6/6 非敏感交互动作。区域截图和 Print Screen 均发布 PNG/DIB/V5、Bitmap 与 HDROP/Shell 格式，QQ 图片发布 DIB/V5、Bitmap、HTML 与 HDROP；旧文件绝对优先会稳定误分类，故新增 R22 并把产品接入前的 Explorer 图片文件设为反例门禁。
-- 浏览器与截图均有 PNG，QQ 无 PNG；Office 的 PNG 865×541 与 DIB 554×346 尺寸冲突，支持 PNG 主候选和 DIB 家族必要后备。首轮最大为 3200×2000、单份 DIB 约 25.6 MB；所有 DIB pixels-per-meter 为 0，DPI 尚无语义证据。
-- 首轮透明标签样本的 PNG 实为 RGB；受控 256 PNG 的浏览器复采随后确认 color type 6 Alpha，但 Chromium 丢弃源 `pHYs`。首次复采还暴露逗号标签未先规范化导致请求数为 1、纯 Explorer 文件被默认图片过滤跳过；已修复根因并新增显式 `-IncludeNonImage`，自测及真实超时启动烟雾通过。最终 2/2 复采确认 Explorer 图片文件只有 HDROP、8K PNG 1.33 MB 而 DIB 约 126.56 MiB；Gate 0 以 §21 收口，下一步 M2.3.1。
 
 ## 指引
 

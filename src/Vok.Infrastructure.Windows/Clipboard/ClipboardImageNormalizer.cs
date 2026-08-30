@@ -78,6 +78,8 @@ internal sealed class ClipboardImageNormalizer : IClipboardImageNormalizationEng
                 identity.HasAlpha,
                 payloadInfo.DpiXMilli,
                 payloadInfo.DpiYMilli,
+                thumbnail.PixelWidth,
+                thumbnail.PixelHeight,
                 canonicalLease,
                 thumbnailLease);
             canonicalLease = null;

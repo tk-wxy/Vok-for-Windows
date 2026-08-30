@@ -2,6 +2,12 @@
 
 > 归档超过滚动窗口的 `memory.md §0A` 完整会话。默认不读取，仅在取证时搜索；按时间从新到旧排列。
 
+### 会话 2026-08-28 - M2.3 Gate 0 首轮真实图片语料
+
+- 用户完成 6/6 非敏感交互动作。区域截图和 Print Screen 均发布 PNG/DIB/V5、Bitmap 与 HDROP/Shell 格式，QQ 图片发布 DIB/V5、Bitmap、HTML 与 HDROP；旧文件绝对优先会稳定误分类，故新增 R22 并把产品接入前的 Explorer 图片文件设为反例门禁。
+- 浏览器与截图均有 PNG，QQ 无 PNG；Office 的 PNG 865×541 与 DIB 554×346 尺寸冲突，支持 PNG 主候选和 DIB 家族必要后备。首轮最大为 3200×2000、单份 DIB 约 25.6 MB；所有 DIB pixels-per-meter 为 0，DPI 尚无语义证据。
+- 首轮透明标签样本的 PNG 实为 RGB；受控 256 PNG 的浏览器复采随后确认 color type 6 Alpha，但 Chromium 丢弃源 `pHYs`。首次复采还暴露逗号标签未先规范化导致请求数为 1、纯 Explorer 文件被默认图片过滤跳过；已修复根因并新增显式 `-IncludeNonImage`，自测及真实超时启动烟雾通过。最终 2/2 复采确认 Explorer 图片文件只有 HDROP、8K PNG 1.33 MB 而 DIB 约 126.56 MiB；Gate 0 以 §21 收口，下一步 M2.3.1。
+
 ### 会话 2026-08-28 - M2.3 Gate 0 记录器与隔离图片探针
 
 - 新增独立交互记录器及 PowerShell 入口，只序列化图片格式目录、顺序、载荷长度和 PNG/DIB header 字段；不写图片载荷、像素、哈希、来源窗口/进程或路径。记录器 build/self-test/超时收尾通过，并明确 header 合法不等于 codec 解码成功。

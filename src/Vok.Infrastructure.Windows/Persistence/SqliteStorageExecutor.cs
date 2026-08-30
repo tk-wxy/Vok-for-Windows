@@ -7,7 +7,7 @@ namespace Vok.Infrastructure.Windows.Persistence;
 public sealed class SqliteStorageExecutor : IDisposable
 {
     private const int QueueCapacity = 64;
-    private const int CurrentSchemaVersion = 4;
+    private const int CurrentSchemaVersion = 5;
     private static readonly HashSet<string> CurrentLauncherColumns =
     [
         "id",
@@ -44,11 +44,20 @@ public sealed class SqliteStorageExecutor : IDisposable
         "is_pinned",
         "revision",
     ];
-    private static readonly HashSet<string> CurrentClipboardEntryColumns =
+    private static readonly HashSet<string> SchemaFourClipboardEntryColumns =
     [
         .. LegacyClipboardEntryColumns,
         "file_intent",
         "item_count",
+    ];
+    private static readonly HashSet<string> CurrentClipboardEntryColumns =
+    [
+        .. SchemaFourClipboardEntryColumns,
+        "pixel_width",
+        "pixel_height",
+        "has_alpha",
+        "dpi_x_milli",
+        "dpi_y_milli",
     ];
     private static readonly HashSet<string> CurrentClipboardRepresentationColumns =
     [
@@ -65,6 +74,24 @@ public sealed class SqliteStorageExecutor : IDisposable
         "original_path",
         "canonical_path",
         "display_name",
+    ];
+    private static readonly HashSet<string> CurrentContentAssetColumns =
+    [
+        "hash",
+        "relative_path",
+        "media_type",
+        "byte_length",
+        "pixel_width",
+        "pixel_height",
+        "state",
+        "revision",
+        "created_utc",
+    ];
+    private static readonly HashSet<string> CurrentClipboardAssetReferenceColumns =
+    [
+        "entry_id",
+        "role",
+        "asset_hash",
     ];
     private readonly BlockingCollection<IStorageWorkItem> _queue = new(QueueCapacity);
     private readonly TaskCompletionSource _ready =
@@ -391,27 +418,52 @@ public sealed class SqliteStorageExecutor : IDisposable
             connection,
             transaction,
             "clipboard_files");
+        var assetColumns = ReadTableColumns(
+            connection,
+            transaction,
+            "content_assets");
+        var assetReferenceColumns = ReadTableColumns(
+            connection,
+            transaction,
+            "clipboard_asset_refs");
         if (entryColumns.Count == 0 &&
             representationColumns.Count == 0 &&
-            fileColumns.Count == 0)
+            fileColumns.Count == 0 &&
+            assetColumns.Count == 0 &&
+            assetReferenceColumns.Count == 0)
         {
             CreateClipboardTables(connection, transaction);
         }
         else if (entryColumns.SetEquals(LegacyClipboardEntryColumns) &&
                  representationColumns.SetEquals(CurrentClipboardRepresentationColumns) &&
-                 fileColumns.Count == 0)
+                 fileColumns.Count == 0 &&
+                 assetColumns.Count == 0 &&
+                 assetReferenceColumns.Count == 0)
         {
             MigrateClipboardSchema3(connection, transaction);
+            MigrateClipboardSchema4(connection, transaction);
+        }
+        else if (entryColumns.SetEquals(SchemaFourClipboardEntryColumns) &&
+                 representationColumns.SetEquals(CurrentClipboardRepresentationColumns) &&
+                 fileColumns.SetEquals(CurrentClipboardFileColumns) &&
+                 assetColumns.Count == 0 &&
+                 assetReferenceColumns.Count == 0)
+        {
+            MigrateClipboardSchema4(connection, transaction);
         }
         else if (!entryColumns.SetEquals(CurrentClipboardEntryColumns) ||
                  !representationColumns.SetEquals(CurrentClipboardRepresentationColumns) ||
-                 !fileColumns.SetEquals(CurrentClipboardFileColumns))
+                 !fileColumns.SetEquals(CurrentClipboardFileColumns) ||
+                 !assetColumns.SetEquals(CurrentContentAssetColumns) ||
+                 !assetReferenceColumns.SetEquals(CurrentClipboardAssetReferenceColumns))
         {
             throw new InvalidOperationException(
                 "The clipboard history tables have an unsupported schema. " +
                 $"Entry columns: {string.Join(", ", entryColumns.Order())}; " +
                 $"representation columns: {string.Join(", ", representationColumns.Order())}; " +
-                $"file columns: {string.Join(", ", fileColumns.Order())}.");
+                $"file columns: {string.Join(", ", fileColumns.Order())}; " +
+                $"asset columns: {string.Join(", ", assetColumns.Order())}; " +
+                $"asset reference columns: {string.Join(", ", assetReferenceColumns.Order())}.");
         }
 
         using var indexCommand = connection.CreateCommand();
@@ -422,6 +474,12 @@ public sealed class SqliteStorageExecutor : IDisposable
 
             CREATE INDEX IF NOT EXISTS ix_clipboard_entries_capture_order
             ON clipboard_entries(last_capture_order DESC, id DESC);
+
+            CREATE INDEX IF NOT EXISTS ix_clipboard_asset_refs_hash
+            ON clipboard_asset_refs(asset_hash);
+
+            CREATE INDEX IF NOT EXISTS ix_content_assets_state
+            ON content_assets(state, hash);
             """;
         indexCommand.ExecuteNonQuery();
 
@@ -433,6 +491,7 @@ public sealed class SqliteStorageExecutor : IDisposable
                 connection,
                 transaction,
                 "clipboard_files") ||
+            !HasClipboardAssetReferenceForeignKeys(connection, transaction) ||
             !HasIndex(
                 connection,
                 transaction,
@@ -446,7 +505,21 @@ public sealed class SqliteStorageExecutor : IDisposable
                 "clipboard_entries",
                 "ix_clipboard_entries_capture_order",
                 isUnique: false,
-                ["last_capture_order", "id"]))
+                ["last_capture_order", "id"]) ||
+            !HasIndex(
+                connection,
+                transaction,
+                "clipboard_asset_refs",
+                "ix_clipboard_asset_refs_hash",
+                isUnique: false,
+                ["asset_hash"]) ||
+            !HasIndex(
+                connection,
+                transaction,
+                "content_assets",
+                "ix_content_assets_state",
+                isUnique: false,
+                ["state", "hash"]))
         {
             throw new InvalidOperationException(
                 "The clipboard history tables have unsupported foreign keys or indexes.");
@@ -487,6 +560,39 @@ public sealed class SqliteStorageExecutor : IDisposable
         }
 
         return count == 1 && matches;
+    }
+
+    private static bool HasClipboardAssetReferenceForeignKeys(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "PRAGMA foreign_key_list(clipboard_asset_refs);";
+        using var reader = command.ExecuteReader();
+        var entryMatches = false;
+        var assetMatches = false;
+        var count = 0;
+        while (reader.Read())
+        {
+            count++;
+            var table = reader.GetString(2);
+            var from = reader.GetString(3);
+            var to = reader.GetString(4);
+            var onDelete = reader.GetString(6);
+            entryMatches |=
+                string.Equals(table, "clipboard_entries", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(from, "entry_id", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(to, "id", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(onDelete, "CASCADE", StringComparison.OrdinalIgnoreCase);
+            assetMatches |=
+                string.Equals(table, "content_assets", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(from, "asset_hash", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(to, "hash", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(onDelete, "RESTRICT", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return count == 2 && entryMatches && assetMatches;
     }
 
     private static bool HasIndex(
@@ -560,7 +666,12 @@ public sealed class SqliteStorageExecutor : IDisposable
                 is_pinned INTEGER NOT NULL,
                 revision INTEGER NOT NULL,
                 file_intent INTEGER NULL,
-                item_count INTEGER NOT NULL DEFAULT 0
+                item_count INTEGER NOT NULL DEFAULT 0,
+                pixel_width INTEGER NULL,
+                pixel_height INTEGER NULL,
+                has_alpha INTEGER NULL,
+                dpi_x_milli INTEGER NULL,
+                dpi_y_milli INTEGER NULL
             );
 
             CREATE TABLE clipboard_representations (
@@ -581,6 +692,27 @@ public sealed class SqliteStorageExecutor : IDisposable
                 display_name TEXT NOT NULL,
                 PRIMARY KEY (entry_id, ordinal),
                 FOREIGN KEY (entry_id) REFERENCES clipboard_entries(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE content_assets (
+                hash TEXT NOT NULL PRIMARY KEY,
+                relative_path TEXT NOT NULL UNIQUE,
+                media_type TEXT NOT NULL,
+                byte_length INTEGER NOT NULL,
+                pixel_width INTEGER NOT NULL,
+                pixel_height INTEGER NOT NULL,
+                state INTEGER NOT NULL,
+                revision INTEGER NOT NULL,
+                created_utc TEXT NOT NULL
+            );
+
+            CREATE TABLE clipboard_asset_refs (
+                entry_id TEXT NOT NULL,
+                role INTEGER NOT NULL,
+                asset_hash TEXT NOT NULL,
+                PRIMARY KEY (entry_id, role),
+                FOREIGN KEY (entry_id) REFERENCES clipboard_entries(id) ON DELETE CASCADE,
+                FOREIGN KEY (asset_hash) REFERENCES content_assets(hash) ON DELETE RESTRICT
             );
             """;
         command.ExecuteNonQuery();
@@ -607,6 +739,52 @@ public sealed class SqliteStorageExecutor : IDisposable
                 display_name TEXT NOT NULL,
                 PRIMARY KEY (entry_id, ordinal),
                 FOREIGN KEY (entry_id) REFERENCES clipboard_entries(id) ON DELETE CASCADE
+            );
+            """;
+        command.ExecuteNonQuery();
+    }
+
+    private static void MigrateClipboardSchema4(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            ALTER TABLE clipboard_entries
+            ADD COLUMN pixel_width INTEGER NULL;
+
+            ALTER TABLE clipboard_entries
+            ADD COLUMN pixel_height INTEGER NULL;
+
+            ALTER TABLE clipboard_entries
+            ADD COLUMN has_alpha INTEGER NULL;
+
+            ALTER TABLE clipboard_entries
+            ADD COLUMN dpi_x_milli INTEGER NULL;
+
+            ALTER TABLE clipboard_entries
+            ADD COLUMN dpi_y_milli INTEGER NULL;
+
+            CREATE TABLE content_assets (
+                hash TEXT NOT NULL PRIMARY KEY,
+                relative_path TEXT NOT NULL UNIQUE,
+                media_type TEXT NOT NULL,
+                byte_length INTEGER NOT NULL,
+                pixel_width INTEGER NOT NULL,
+                pixel_height INTEGER NOT NULL,
+                state INTEGER NOT NULL,
+                revision INTEGER NOT NULL,
+                created_utc TEXT NOT NULL
+            );
+
+            CREATE TABLE clipboard_asset_refs (
+                entry_id TEXT NOT NULL,
+                role INTEGER NOT NULL,
+                asset_hash TEXT NOT NULL,
+                PRIMARY KEY (entry_id, role),
+                FOREIGN KEY (entry_id) REFERENCES clipboard_entries(id) ON DELETE CASCADE,
+                FOREIGN KEY (asset_hash) REFERENCES content_assets(hash) ON DELETE RESTRICT
             );
             """;
         command.ExecuteNonQuery();

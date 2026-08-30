@@ -444,7 +444,7 @@ clipboard_files
 - 完成 PNG + 兼容位图多表示写回；
 - 以 Snipping Tool、Print Screen、浏览器图片、聊天软件和透明 PNG 完成真机往返。
 
-状态：详细实施规划与 M2.3.0–M2.3.3 已完成。产品 reader 已按完整目录把图片置于 FileList/Text 之前并只取得 PNG→DIBV5→DIB 一份自有载荷；隔离图片 worker 已完成严格 decoder、sRGB straight-alpha BGRA8、分带 pixel identity 和临时 canonical/thumbnail 输出，但尚未注册到产品组合根或提交图片历史。下一步是 M2.3.4 内容寻址资产与 schema 5，不能在资产事务完成前提前接 UI/replay。
+状态：详细实施规划与 M2.3.0–M2.3.4 已完成。产品 reader 已取得一份有界图片载荷，隔离图片 worker 已生成规范 canonical/thumbnail，内容寻址 store 与 schema 5 已能以独立串行 coordinator 提交、删除、隔离和重启恢复；该 coordinator 仍未注册到产品组合根，图片卡、可见性加载和系统写回尚未接入。下一步是 M2.3.5 thumbnail + UI，不能提前接 writer/paste。
 
 #### M2.3.0 实施前基线、语料与交付边界
 
@@ -587,6 +587,8 @@ schema 4→5 迁移在单一 SQLite 事务内增加列、资产表、引用表�
 
 主图或缩略图缺失、哈希不符、解码失败时只把对应 asset 标为 Quarantined 并保留证据。主图损坏的卡片不可粘贴但仍可删除；仅缩略图损坏时显示不可用占位，主图仍可按验证结果回放。应用不得自动删除整库或掩盖为“空历史”。
 
+实现状态（2026-08-30）：M2.3.4 已完成为尚未接入产品组合根的独立资产切片。`ContentAddressedClipboardAssetStore` 只拥有 `asset-*.tmp`，在同卷 staging 流式写入并 `Flush(true)`，落盘后重新计算文件 SHA-256、严格检查 PNG chunk/CRC 并强制 WIC 像素解码，再以不覆盖的原子 move 提交；同哈希目标必须长度、哈希、尺寸和解码全部复核后才复用。schema 5 以单事务加入五个图片列、`content_assets`、`clipboard_asset_refs`、两条外键和状态/引用索引，schema 3/4 与 fresh 库均升级到完整结构，未知或半迁移结构原样拒绝；Text/FileList 保持图片列 NULL。单 MTA `ClipboardImageAssetCoordinator` 复用 4-job 命名容量，先提交两文件再做 Image upsert/refs 事务；数据库失败只留可复用无引用文件。删除以 `(hash, revision)` 再认领，失败 tombstone 启动重试，重新捕获使旧 claim 失效，主图/缩略图分别 quarantine；预取消、排队取消、容量拒绝、shutdown 和 5 秒 watchdog 都先认领一次终态并释放规范化结果。隔离 Release 构建 0 警告/错误，Core 62/62、Windows/WPF 303/303，共 365/365；资产目录不可用时 SQLite 文本 replay 定向门禁仍通过。
+
 #### M2.3.5 图片卡、可见性加载与缓存
 
 图片继续进入现有单一 Recycling `ListBox`，不建立第二份集合或把所有图片一次加载进 ViewModel：
@@ -620,7 +622,7 @@ Windows 已定义 DIBV5→DIB/Bitmap 的按需转换，因此基线不额外发�
 1. **真实语料与阈值（已完成）**：实现非敏感格式记录器并扩展独立 producer，完成 M2.3.0；用结果锁定候选优先级、DPI 语义和所有命名容量值；
 2. **载荷所有权（已完成）**：加入 Inline/LeasedBlob、分块 HGLOBAL copy、候选裁剪、队列字节预留和所有 drop/cancel/exit 清理；文本/文件全量回归先通过；
 3. **decoder + pixel identity（已完成）**：严格 PNG/DIB preflight、WIC sRGB/BGRA8 规范化、方向/Alpha、分带 hash、canonical/thumbnail PNG 和有界 worker；当前只输出临时结果，不写数据库；
-4. **asset + schema 5**：完成内容寻址 store、4→5 单事务迁移、图片 upsert/replay descriptor、重复回顶、固定、删除/tombstone、损坏隔离和重启恢复；
+4. **asset + schema 5（已完成）**：完成内容寻址 store、4→5 单事务迁移、图片 upsert/replay descriptor、重复回顶、固定、删除/tombstone、损坏隔离和重启恢复；
 5. **thumbnail + UI**：增加异构图片卡、可见性驱动加载、字节缓存、迟到结果门禁、空状态与可访问名称；通过真实 WPF Recycling/DPI 渲染；
 6. **writer + paste**：加入 image replay materializer、PNG/DIBV5/marker 写回、receipt 与既有粘贴门禁；覆盖部分句柄转移、外部覆盖、取消、双击、旧代和退出；
 7. **产品接入与发布**：组合根一次启用完整切片，跑 Release 全量测试、0 警告构建、win-x64 自包含发布、PowerShell AST、隔离 Window Station 图片往返和长期资源曲线后再做真机验收。

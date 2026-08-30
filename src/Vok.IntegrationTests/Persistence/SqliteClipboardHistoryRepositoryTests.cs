@@ -10,7 +10,7 @@ namespace Vok.IntegrationTests.Persistence;
 public sealed class SqliteClipboardHistoryRepositoryTests
 {
     [Fact]
-    public async Task SchemaTwoUpgradesToFourWithoutLosingLauncherRows()
+    public async Task SchemaTwoUpgradesToFiveWithoutLosingLauncherRows()
     {
         var directory = CreateTestDirectory();
         var databasePath = Path.Combine(directory, "upgrade.db");
@@ -29,7 +29,7 @@ public sealed class SqliteClipboardHistoryRepositoryTests
             }
 
             using var connection = OpenDatabase(databasePath);
-            Assert.Equal(4L, ExecuteInt64(connection, "PRAGMA user_version;"));
+            Assert.Equal(5L, ExecuteInt64(connection, "PRAGMA user_version;"));
             Assert.Equal(
                 "keep-launcher",
                 ExecuteString(
@@ -38,6 +38,8 @@ public sealed class SqliteClipboardHistoryRepositoryTests
             Assert.Equal(1L, TableExists(connection, "clipboard_entries"));
             Assert.Equal(1L, TableExists(connection, "clipboard_representations"));
             Assert.Equal(1L, TableExists(connection, "clipboard_files"));
+            Assert.Equal(1L, TableExists(connection, "content_assets"));
+            Assert.Equal(1L, TableExists(connection, "clipboard_asset_refs"));
         }
         finally
         {
@@ -71,7 +73,7 @@ public sealed class SqliteClipboardHistoryRepositoryTests
             }
 
             using var connection = OpenDatabase(databasePath);
-            Assert.Equal(4L, ExecuteInt64(connection, "PRAGMA user_version;"));
+            Assert.Equal(5L, ExecuteInt64(connection, "PRAGMA user_version;"));
             Assert.Equal(1L, TableExists(connection, "clipboard_files"));
             Assert.Equal(
                 0L,
@@ -129,6 +131,8 @@ public sealed class SqliteClipboardHistoryRepositoryTests
             using var reopened = OpenDatabase(databasePath);
             Assert.Equal(3L, ExecuteInt64(reopened, "PRAGMA user_version;"));
             Assert.Equal(0L, TableExists(reopened, "clipboard_files"));
+            Assert.Equal(0L, TableExists(reopened, "content_assets"));
+            Assert.Equal(0L, TableExists(reopened, "clipboard_asset_refs"));
             Assert.Equal(
                 0L,
                 ExecuteInt64(
@@ -139,6 +143,173 @@ public sealed class SqliteClipboardHistoryRepositoryTests
                 ExecuteString(
                     reopened,
                     "SELECT inline_text FROM clipboard_representations LIMIT 1;"));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task SchemaFourMigratesToFiveAndKeepsExistingRowsImageColumnsNull()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "schema4.db");
+        try
+        {
+            CreateSchemaFourDatabase(databasePath);
+
+            using (var repository = new SqliteClipboardHistoryRepository(databasePath))
+            {
+                var page = await repository.LoadPageAsync(
+                    null,
+                    32,
+                    TestContext.Current.CancellationToken);
+                Assert.Equal(2, page.Items.Count);
+                var entry = Assert.Single(
+                    page.Items,
+                    static item => item.Kind is ClipboardContentKind.Text);
+                var fileEntry = Assert.Single(
+                    page.Items,
+                    static item => item.Kind is ClipboardContentKind.FileList);
+                Assert.Null(entry.Image);
+                Assert.Null(fileEntry.Image);
+                Assert.Equal(
+                    "preserved",
+                    (await repository.GetReplayPayloadAsync(
+                        entry.Id,
+                        TestContext.Current.CancellationToken))?.PlainText);
+                var fileReplay = await repository.GetReplayPayloadAsync(
+                    fileEntry.Id,
+                    TestContext.Current.CancellationToken);
+                Assert.NotNull(fileReplay);
+                Assert.Equal(
+                    Path.Combine(directory, "preserved-file.txt"),
+                    Assert.Single(fileReplay.FileReferences).CanonicalPath);
+            }
+
+            using var connection = OpenDatabase(databasePath);
+            Assert.Equal(5L, ExecuteInt64(connection, "PRAGMA user_version;"));
+            Assert.Equal(1L, TableExists(connection, "content_assets"));
+            Assert.Equal(1L, TableExists(connection, "clipboard_asset_refs"));
+            Assert.Equal(
+                5L,
+                ExecuteInt64(
+                    connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('clipboard_entries') WHERE name IN ('pixel_width', 'pixel_height', 'has_alpha', 'dpi_x_milli', 'dpi_y_milli');"));
+            Assert.Equal(
+                0L,
+                ExecuteInt64(
+                    connection,
+                    "SELECT COUNT(*) FROM clipboard_entries WHERE pixel_width IS NOT NULL OR pixel_height IS NOT NULL OR has_alpha IS NOT NULL OR dpi_x_milli IS NOT NULL OR dpi_y_milli IS NOT NULL;"));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task HalfMigratedSchemaFourIsRejectedWithoutFurtherMutation()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "half-schema4.db");
+        try
+        {
+            CreateSchemaFourDatabase(databasePath);
+            using (var connection = OpenDatabase(databasePath))
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    ALTER TABLE clipboard_entries
+                    ADD COLUMN pixel_width INTEGER NULL;
+                    """;
+                command.ExecuteNonQuery();
+            }
+
+            using (var repository = new SqliteClipboardHistoryRepository(databasePath))
+            {
+                var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    repository.LoadPageAsync(
+                        null,
+                        32,
+                        TestContext.Current.CancellationToken));
+                Assert.Contains("unsupported schema", exception.Message);
+            }
+
+            using var reopened = OpenDatabase(databasePath);
+            Assert.Equal(4L, ExecuteInt64(reopened, "PRAGMA user_version;"));
+            Assert.Equal(0L, TableExists(reopened, "content_assets"));
+            Assert.Equal(0L, TableExists(reopened, "clipboard_asset_refs"));
+            Assert.Equal(
+                1L,
+                ExecuteInt64(
+                    reopened,
+                    "SELECT COUNT(*) FROM pragma_table_info('clipboard_entries') WHERE name IN ('pixel_width', 'pixel_height', 'has_alpha', 'dpi_x_milli', 'dpi_y_milli');"));
+            Assert.Equal(
+                "preserved",
+                ExecuteString(
+                    reopened,
+                    "SELECT inline_text FROM clipboard_representations LIMIT 1;"));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task SchemaFiveWithBrokenAssetForeignKeyIsRejectedInPlace()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "broken-schema5.db");
+        try
+        {
+            using (var repository = new SqliteClipboardHistoryRepository(databasePath))
+            {
+                _ = await repository.LoadPageAsync(
+                    null,
+                    32,
+                    TestContext.Current.CancellationToken);
+            }
+
+            using (var connection = OpenDatabase(databasePath))
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    PRAGMA foreign_keys = OFF;
+                    DROP TABLE clipboard_asset_refs;
+                    CREATE TABLE clipboard_asset_refs (
+                        entry_id TEXT NOT NULL,
+                        role INTEGER NOT NULL,
+                        asset_hash TEXT NOT NULL,
+                        PRIMARY KEY (entry_id, role),
+                        FOREIGN KEY (entry_id) REFERENCES clipboard_entries(id) ON DELETE CASCADE
+                    );
+                    CREATE INDEX ix_clipboard_asset_refs_hash
+                    ON clipboard_asset_refs(asset_hash);
+                    """;
+                command.ExecuteNonQuery();
+            }
+
+            using (var repository = new SqliteClipboardHistoryRepository(databasePath))
+            {
+                var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    repository.LoadPageAsync(
+                        null,
+                        32,
+                        TestContext.Current.CancellationToken));
+                Assert.Contains("foreign keys or indexes", exception.Message);
+            }
+
+            using var reopened = OpenDatabase(databasePath);
+            Assert.Equal(5L, ExecuteInt64(reopened, "PRAGMA user_version;"));
+            Assert.Equal(
+                1L,
+                ExecuteInt64(
+                    reopened,
+                    "SELECT COUNT(*) FROM pragma_foreign_key_list('clipboard_asset_refs');"));
+            Assert.Equal(1L, TableExists(reopened, "content_assets"));
         }
         finally
         {
@@ -574,6 +745,69 @@ public sealed class SqliteClipboardHistoryRepositoryTests
             PRAGMA user_version = 3;
             """;
         command.ExecuteNonQuery();
+    }
+
+    private static void CreateSchemaFourDatabase(string databasePath)
+    {
+        CreateSchemaThreeDatabase(databasePath);
+        using var connection = OpenDatabase(databasePath);
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            ALTER TABLE clipboard_entries
+            ADD COLUMN file_intent INTEGER NULL;
+
+            ALTER TABLE clipboard_entries
+            ADD COLUMN item_count INTEGER NOT NULL DEFAULT 0;
+
+            CREATE TABLE clipboard_files (
+                entry_id TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                original_path TEXT NOT NULL,
+                canonical_path TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                PRIMARY KEY (entry_id, ordinal),
+                FOREIGN KEY (entry_id) REFERENCES clipboard_entries(id) ON DELETE CASCADE
+            );
+
+            PRAGMA user_version = 4;
+            """;
+        command.ExecuteNonQuery();
+
+        var filePath = Path.Combine(
+            Path.GetDirectoryName(databasePath)!,
+            "preserved-file.txt");
+        var files = new[]
+        {
+            new ClipboardFileReference(
+                0,
+                filePath,
+                filePath,
+                Path.GetFileName(filePath)),
+        };
+        using var insert = connection.CreateCommand();
+        insert.CommandText = """
+            INSERT INTO clipboard_entries (
+                id, kind, semantic_hash, plain_preview,
+                first_captured_utc, last_captured_utc,
+                last_capture_order, capture_count, is_pinned, revision,
+                file_intent, item_count)
+            VALUES (
+                '00000000-0000-0000-0000-000000000003', 2, $hash, 'preserved-file.txt',
+                '2026-08-28T00:00:00.0000000+00:00',
+                '2026-08-28T00:00:00.0000000+00:00', 2, 1, 0, 1, 1, 1);
+
+            INSERT INTO clipboard_files (
+                entry_id, ordinal, original_path, canonical_path, display_name)
+            VALUES (
+                '00000000-0000-0000-0000-000000000003', 0, $path, $path, 'preserved-file.txt');
+            """;
+        insert.Parameters.AddWithValue(
+            "$hash",
+            ClipboardFileSemanticIdentity.Compute(
+                ClipboardFileTransferIntent.Copy,
+                files));
+        insert.Parameters.AddWithValue("$path", filePath);
+        insert.ExecuteNonQuery();
     }
 
     private static SqliteConnection OpenDatabase(string databasePath)

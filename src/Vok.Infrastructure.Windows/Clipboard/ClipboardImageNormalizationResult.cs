@@ -18,12 +18,16 @@ public sealed class ClipboardImageNormalizationResult : IDisposable
         bool hasAlpha,
         int? dpiXMilli,
         int? dpiYMilli,
+        int thumbnailPixelWidth,
+        int thumbnailPixelHeight,
         IClipboardPayloadLease canonicalPng,
         IClipboardPayloadLease thumbnailPng)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(semanticHash);
         ArgumentOutOfRangeException.ThrowIfLessThan(pixelWidth, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(pixelHeight, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(thumbnailPixelWidth, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(thumbnailPixelHeight, 1);
         ArgumentNullException.ThrowIfNull(canonicalPng);
         ArgumentNullException.ThrowIfNull(thumbnailPng);
 
@@ -34,6 +38,8 @@ public sealed class ClipboardImageNormalizationResult : IDisposable
         HasAlpha = hasAlpha;
         DpiXMilli = dpiXMilli;
         DpiYMilli = dpiYMilli;
+        ThumbnailPixelWidth = thumbnailPixelWidth;
+        ThumbnailPixelHeight = thumbnailPixelHeight;
         _canonicalPng = canonicalPng;
         _thumbnailPng = thumbnailPng;
     }
@@ -51,6 +57,10 @@ public sealed class ClipboardImageNormalizationResult : IDisposable
     public int? DpiXMilli { get; }
 
     public int? DpiYMilli { get; }
+
+    public int ThumbnailPixelWidth { get; }
+
+    public int ThumbnailPixelHeight { get; }
 
     public long CanonicalPngByteLength =>
         GetLease(_canonicalPng).Length;

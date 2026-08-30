@@ -5,7 +5,8 @@ public sealed record ClipboardReplayPayload(
     string SemanticHash,
     IReadOnlyList<ClipboardStoredRepresentation> Representations,
     ClipboardFileTransferIntent? FileIntent = null,
-    IReadOnlyList<ClipboardFileReference>? Files = null)
+    IReadOnlyList<ClipboardFileReference>? Files = null,
+    ClipboardImageMetadata? Image = null)
 {
     public string? PlainText => Representations
         .FirstOrDefault(static representation =>
