@@ -6,7 +6,7 @@ using Vok.Infrastructure.Windows.Persistence;
 
 namespace Vok.Infrastructure.Windows.Clipboard;
 
-public sealed class ClipboardImageAssetCoordinator : IDisposable
+public sealed class ClipboardImageAssetCoordinator : IClipboardImageAssetService
 {
     private static readonly TimeSpan DefaultShutdownWatchdog =
         TimeSpan.FromSeconds(5);
@@ -19,6 +19,8 @@ public sealed class ClipboardImageAssetCoordinator : IDisposable
     private readonly TimeSpan _shutdownWatchdog;
     private readonly Action<Exception>? _diagnosticFault;
     private readonly int _maximumJobs;
+    private readonly int _thumbnailMaximumEdgePixels;
+    private readonly int _thumbnailEncodedOverheadBytes;
     private Exception? _terminalFailure;
     private int _outstandingJobs;
     private int _workerManagedThreadId;
@@ -61,6 +63,8 @@ public sealed class ClipboardImageAssetCoordinator : IDisposable
         }
 
         _maximumJobs = options.ImageWorkerCapacity;
+        _thumbnailMaximumEdgePixels = options.ThumbnailMaximumEdgePixels;
+        _thumbnailEncodedOverheadBytes = options.ThumbnailEncodedOverheadBytes;
         _shutdownWatchdog = shutdownWatchdog;
         _diagnosticFault = diagnosticFault;
         _queue = new BlockingCollection<AssetWorkItem>(_maximumJobs);
@@ -117,6 +121,20 @@ public sealed class ClipboardImageAssetCoordinator : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(assetHash);
         ArgumentOutOfRangeException.ThrowIfLessThan(expectedRevision, 1);
         return Enqueue(new VerifyWorkItem(
+            assetHash,
+            expectedRevision,
+            cancellationToken,
+            ReleaseJobSlot));
+    }
+
+    public Task<ClipboardImageThumbnailResult?> LoadThumbnailAsync(
+        string assetHash,
+        long expectedRevision,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(assetHash);
+        ArgumentOutOfRangeException.ThrowIfLessThan(expectedRevision, 1);
+        return Enqueue(new LoadThumbnailWorkItem(
             assetHash,
             expectedRevision,
             cancellationToken,
@@ -356,6 +374,80 @@ public sealed class ClipboardImageAssetCoordinator : IDisposable
                 .GetResult();
         }
     }
+
+    private ClipboardImageThumbnailResult? LoadThumbnailCore(
+        string assetHash,
+        long expectedRevision,
+        CancellationToken cancellationToken)
+    {
+        var stored = _repository.LoadAssetAsync(assetHash, cancellationToken)
+            .GetAwaiter()
+            .GetResult();
+        if (stored is null)
+        {
+            return null;
+        }
+
+        if (stored.Revision != expectedRevision ||
+            stored.State is not ClipboardAssetState.Ready)
+        {
+            return CreateThumbnailResult(stored, pngBytes: null);
+        }
+
+        try
+        {
+            var decodedBytes = checked(
+                (long)stored.Asset.PixelWidth * stored.Asset.PixelHeight * 4);
+            var maximumEncodedBytes = checked(
+                decodedBytes + _thumbnailEncodedOverheadBytes);
+            if (stored.Asset.PixelWidth > _thumbnailMaximumEdgePixels ||
+                stored.Asset.PixelHeight > _thumbnailMaximumEdgePixels ||
+                stored.Asset.ByteLength > maximumEncodedBytes)
+            {
+                throw new InvalidDataException(
+                    "The clipboard thumbnail exceeds its bounded presentation envelope.");
+            }
+
+            var pngBytes = _assetStore.ReadPng(stored.Asset, cancellationToken);
+            return CreateThumbnailResult(stored, pngBytes);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            ReportFault(new InvalidDataException(
+                "A clipboard thumbnail failed integrity validation and was quarantined.",
+                exception));
+            var current = _repository.MarkAssetQuarantinedAsync(
+                    assetHash,
+                    expectedRevision,
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            return current is null
+                ? null
+                : new ClipboardImageThumbnailResult(
+                    current.Hash,
+                    current.State,
+                    current.Revision,
+                    stored.Asset.PixelWidth,
+                    stored.Asset.PixelHeight,
+                    pngBytes: null);
+        }
+    }
+
+    private static ClipboardImageThumbnailResult CreateThumbnailResult(
+        ClipboardStoredAsset stored,
+        byte[]? pngBytes) =>
+        new(
+            stored.Asset.Hash,
+            stored.State,
+            stored.Revision,
+            stored.Asset.PixelWidth,
+            stored.Asset.PixelHeight,
+            pngBytes);
 
     private void RecoverPendingDeletes(CancellationToken cancellationToken)
     {
@@ -762,6 +854,22 @@ public sealed class ClipboardImageAssetCoordinator : IDisposable
             ClipboardImageAssetCoordinator owner,
             CancellationToken cancellationToken) =>
             PublishSuccess(owner.VerifyAssetCore(
+                assetHash,
+                expectedRevision,
+                cancellationToken));
+    }
+
+    private sealed class LoadThumbnailWorkItem(
+        string assetHash,
+        long expectedRevision,
+        CancellationToken callerCancellation,
+        Action releaseSlot)
+        : AssetWorkItem<ClipboardImageThumbnailResult?>(callerCancellation, releaseSlot)
+    {
+        protected override void ExecuteCore(
+            ClipboardImageAssetCoordinator owner,
+            CancellationToken cancellationToken) =>
+            PublishSuccess(owner.LoadThumbnailCore(
                 assetHash,
                 expectedRevision,
                 cancellationToken));

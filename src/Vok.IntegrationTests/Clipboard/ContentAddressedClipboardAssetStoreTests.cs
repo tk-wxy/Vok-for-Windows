@@ -48,6 +48,9 @@ public sealed class ContentAddressedClipboardAssetStoreTests
                 File.ReadAllBytes(GetAssetPath(directory, first.Hash)));
             Assert.Equal(0, store.OwnedStagingFileCount);
             store.ValidatePng(first, TestContext.Current.CancellationToken);
+            Assert.Equal(
+                png,
+                store.ReadPng(first, TestContext.Current.CancellationToken));
         }
         finally
         {

@@ -20,6 +20,7 @@ public sealed class ClipboardImageCaptureOptionsTests
         Assert.Equal(384L * 1024 * 1024, options.MaximumReservedBytes);
         Assert.Equal(512, options.ThumbnailMaximumEdgePixels);
         Assert.Equal(32L * 1024 * 1024, options.ThumbnailCacheBytes);
+        Assert.Equal(1024 * 1024, options.ThumbnailEncodedOverheadBytes);
     }
 
     [Fact]

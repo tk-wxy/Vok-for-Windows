@@ -444,7 +444,7 @@ clipboard_files
 - 完成 PNG + 兼容位图多表示写回；
 - 以 Snipping Tool、Print Screen、浏览器图片、聊天软件和透明 PNG 完成真机往返。
 
-状态：详细实施规划与 M2.3.0–M2.3.4 已完成。产品 reader 已取得一份有界图片载荷，隔离图片 worker 已生成规范 canonical/thumbnail，内容寻址 store 与 schema 5 已能以独立串行 coordinator 提交、删除、隔离和重启恢复；该 coordinator 仍未注册到产品组合根，图片卡、可见性加载和系统写回尚未接入。下一步是 M2.3.5 thumbnail + UI，不能提前接 writer/paste。
+状态：详细实施规划与 M2.3.0–M2.3.5 已完成。产品 reader 已取得一份有界图片载荷，隔离图片 worker 已生成规范 canonical/thumbnail，内容寻址 store 与 schema 5 已能以独立串行 coordinator 提交、删除、隔离和重启恢复；图片卡、可见容器加载、32 MiB 解码缓存和迟到门禁也已在隔离 WPF 切片闭环。图片链路仍未注册到产品组合根，系统写回尚未接入。下一步是 M2.3.6 image replay + writer/paste，不能提前启用半条产品链。
 
 #### M2.3.0 实施前基线、语料与交付边界
 
@@ -595,11 +595,13 @@ schema 4→5 迁移在单一 SQLite 事务内增加列、资产表、引用表�
 
 - 卡片展示等比缩略图，`Stretch=Uniform`，不裁切、不拉伸、不放大；显示 `宽×高`、捕获时间以及加载中/资产不可用状态，透明区域必须在主题安全背景上可辨认；
 - 主动作仍是“粘贴到呼出前目标”，固定和卡内二次确认删除沿用现有语义；不在本切片增加编辑、OCR、保存到文件或拖出按钮；
-- `AutomationName` 包含“图片”、像素尺寸、可用状态和时间，不把 asset hash/path 暴露给 UI；空状态更新为真实能力“支持文本、文件和图片”；
+- `AutomationName` 包含“图片”、像素尺寸、可用状态和时间，不把 asset hash/path 暴露给 UI；产品空状态只在 M2.3.7 完整接入时更新为“支持文本、文件和图片”，此前继续如实显示文本/文件能力；
 - thumbnail 只在 ListBox 容器已实现且图片元素 Loaded 时请求；Unloaded、容器回收、条目 revision 改变、删除和应用退出都取消绑定并释放 `ImageSource`。迟到结果必须同时匹配 entry id、asset hash、revision 和当前容器数据项才可应用；
 - UI 只解码已经受限的小 thumbnail，并用 `BitmapCacheOption.OnLoad` 后关闭流、`Freeze()` 再绑定。缓存按解码字节而不是条目数设限，键为 asset hash；原图从不进入 ViewModel 或 UI cache。
 
 真实 WPF 门禁覆盖浅/深主题、横/竖/超宽/超高/透明图片、80 个混合文本/文件/图片卡、100%/150%/200% DPI、连续滚动和 Recycling。断言当前页以外无数据库明细，未实现容器无 thumbnail decode，离开视口后 ViewModel 不持有原图或已逐出的缩略图。
+
+实现状态（2026-08-31）：M2.3.5 已完成为仍未注册产品组合根的隔离 UI 切片。Core 的窄资产服务只返回 hash/state/revision、尺寸和自有缩略图 PNG，不暴露路径；asset coordinator 在同一串行工作项内完成 revision/state 复核、2 MiB 级编码 envelope、SHA-256/PNG/WIC 校验和读取，损坏缩略图只 quarantine 自身。App 使用单请求闸门和按 `width × height × 4` 计费的 32 MiB LRU，只在 UI STA 以 `OnLoad` 解码并 `Freeze()`；原图和 thumbnail `ImageSource` 均不进入 ViewModel。WPF 以固定展示槽而不是空 `Image` 的零布局尺寸判断视口，Loaded/Unloaded、滚动、Recycling、DataContext/entry revision 变化、隐藏和退出均先撤销绑定身份再取消；结果同时匹配 entry、hash、entry/asset revision 和当前容器才可落地。Release 62/62 + 310/310 共 372/372、生命周期定向门禁连续五轮、win-x64 自包含发布和浅/深真实渲染通过；当前机器只实测当前 DPI，150%/200% 物理跨屏仍留到 M2.3.7 真机矩阵。
 
 #### M2.3.6 图片 replay、写回与安全粘贴
 
@@ -623,7 +625,7 @@ Windows 已定义 DIBV5→DIB/Bitmap 的按需转换，因此基线不额外发�
 2. **载荷所有权（已完成）**：加入 Inline/LeasedBlob、分块 HGLOBAL copy、候选裁剪、队列字节预留和所有 drop/cancel/exit 清理；文本/文件全量回归先通过；
 3. **decoder + pixel identity（已完成）**：严格 PNG/DIB preflight、WIC sRGB/BGRA8 规范化、方向/Alpha、分带 hash、canonical/thumbnail PNG 和有界 worker；当前只输出临时结果，不写数据库；
 4. **asset + schema 5（已完成）**：完成内容寻址 store、4→5 单事务迁移、图片 upsert/replay descriptor、重复回顶、固定、删除/tombstone、损坏隔离和重启恢复；
-5. **thumbnail + UI**：增加异构图片卡、可见性驱动加载、字节缓存、迟到结果门禁、空状态与可访问名称；通过真实 WPF Recycling/DPI 渲染；
+5. **thumbnail + UI（已完成）**：增加异构图片卡、可见性驱动加载、字节缓存、迟到结果门禁和可访问名称；产品能力文案延后到完整接入时切换，当前 DPI 的真实 WPF Recycling/浅深渲染已通过，150%/200% 物理跨屏保留最终矩阵；
 6. **writer + paste**：加入 image replay materializer、PNG/DIBV5/marker 写回、receipt 与既有粘贴门禁；覆盖部分句柄转移、外部覆盖、取消、双击、旧代和退出；
 7. **产品接入与发布**：组合根一次启用完整切片，跑 Release 全量测试、0 警告构建、win-x64 自包含发布、PowerShell AST、隔离 Window Station 图片往返和长期资源曲线后再做真机验收。
 

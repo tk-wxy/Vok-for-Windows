@@ -177,6 +177,63 @@ public sealed class ClipboardImageAssetCoordinatorTests
     }
 
     [Fact]
+    public async Task ThumbnailLoadReturnsVerifiedOwnedBytesAndRejectsStaleRevision()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "thumbnail.db");
+        var assetRoot = Path.Combine(directory, "assets");
+        try
+        {
+            using var repository = new SqliteClipboardHistoryRepository(databasePath);
+            using var coordinator = new ClipboardImageAssetCoordinator(
+                repository,
+                new ContentAddressedClipboardAssetStore(assetRoot));
+            var thumbnailBytes = EncodePng(1, 1, [9, 8, 7, 128]);
+            var entry = await coordinator.CommitAsync(
+                CreateResult(
+                    Hash(12),
+                    EncodePng(2, 1, [1, 2, 3, 255, 4, 5, 6, 255]),
+                    2,
+                    1,
+                    thumbnailBytes,
+                    1,
+                    1),
+                DateTimeOffset.UtcNow,
+                TestContext.Current.CancellationToken);
+            var thumbnail = entry.Image!.ThumbnailPng!;
+
+            var loaded = await coordinator.LoadThumbnailAsync(
+                thumbnail.Hash,
+                thumbnail.Revision,
+                TestContext.Current.CancellationToken);
+
+            Assert.NotNull(loaded);
+            Assert.True(loaded.IsReady);
+            Assert.Equal(4, loaded.DecodedByteLength);
+            using (var stream = loaded.OpenPngReadStream())
+            using (var copy = new MemoryStream())
+            {
+                await stream.CopyToAsync(copy, TestContext.Current.CancellationToken);
+                Assert.Equal(thumbnailBytes, copy.ToArray());
+            }
+
+            var stale = await coordinator.LoadThumbnailAsync(
+                thumbnail.Hash,
+                thumbnail.Revision + 1,
+                TestContext.Current.CancellationToken);
+            Assert.NotNull(stale);
+            Assert.Equal(ClipboardAssetState.Ready, stale.State);
+            Assert.Equal(thumbnail.Revision, stale.Revision);
+            Assert.False(stale.IsReady);
+            Assert.Throws<InvalidOperationException>(stale.OpenPngReadStream);
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
     public async Task DeleteFailureKeepsTombstoneAndStartupRecoveryRetries()
     {
         var directory = CreateTestDirectory();
@@ -275,13 +332,14 @@ public sealed class ClipboardImageAssetCoordinatorTests
             using var restarted = new ClipboardImageAssetCoordinator(
                 repository,
                 new ContentAddressedClipboardAssetStore(assetRoot));
-            var verified = await restarted.VerifyAssetAsync(
+            var verified = await restarted.LoadThumbnailAsync(
                 thumbnail.Hash,
                 thumbnail.Revision,
                 TestContext.Current.CancellationToken);
 
             Assert.NotNull(verified);
             Assert.Equal(ClipboardAssetState.Quarantined, verified.State);
+            Assert.False(verified.IsReady);
             var primary = await repository.LoadAssetAsync(
                 entry.Image.PrimaryPng!.Hash,
                 TestContext.Current.CancellationToken);
@@ -825,6 +883,11 @@ public sealed class ClipboardImageAssetCoordinatorTests
         {
         }
 
+        public byte[] ReadPng(
+            ClipboardPreparedAsset asset,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
         public void Delete(ClipboardAssetDeleteClaim claim)
         {
         }
@@ -873,6 +936,11 @@ public sealed class ClipboardImageAssetCoordinatorTests
             CancellationToken cancellationToken = default)
         {
         }
+
+        public byte[] ReadPng(
+            ClipboardPreparedAsset asset,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
 
         public void Delete(ClipboardAssetDeleteClaim claim)
         {

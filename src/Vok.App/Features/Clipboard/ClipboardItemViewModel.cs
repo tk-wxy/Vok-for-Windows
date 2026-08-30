@@ -4,6 +4,14 @@ using Vok.Core.Clipboard;
 
 namespace Vok.Features.Clipboard;
 
+public enum ClipboardThumbnailDisplayState
+{
+    NotRequested = 0,
+    Loading = 1,
+    Ready = 2,
+    Unavailable = 3,
+}
+
 public sealed partial class ClipboardItemViewModel : ObservableObject
 {
     [ObservableProperty] private ClipboardEntry _entry;
@@ -11,6 +19,7 @@ public sealed partial class ClipboardItemViewModel : ObservableObject
     [ObservableProperty] private ImageSource? _icon;
     [ObservableProperty] private ClipboardFileAvailability _fileAvailability;
     [ObservableProperty] private string _fileDetailsText = string.Empty;
+    [ObservableProperty] private ClipboardThumbnailDisplayState _thumbnailState;
 
     public ClipboardItemViewModel(ClipboardEntry entry)
     {
@@ -21,11 +30,28 @@ public sealed partial class ClipboardItemViewModel : ObservableObject
 
     public bool IsFileList => Entry.Kind is ClipboardContentKind.FileList;
 
+    public bool IsImage => Entry.Kind is ClipboardContentKind.Image;
+
     public ClipboardFileTransferIntent? FileIntent => Entry.FileIntent;
 
     public string PreviewText => string.IsNullOrEmpty(Entry.PlainPreview)
-        ? IsFileList ? "（空文件列表）" : "（空文本）"
+        ? IsFileList
+            ? "（空文件列表）"
+            : IsImage
+                ? "图片"
+                : "（空文本）"
         : Entry.PlainPreview;
+
+    public string ImageDimensionsText => Entry.Image is { } image
+        ? $"{image.PixelWidth}×{image.PixelHeight}"
+        : "尺寸不可用";
+
+    public string ThumbnailStatusText => ThumbnailState switch
+    {
+        ClipboardThumbnailDisplayState.Loading => "正在加载缩略图",
+        ClipboardThumbnailDisplayState.Unavailable => "缩略图不可用",
+        _ => string.Empty,
+    };
 
     public string IntentText => Entry.FileIntent switch
     {
@@ -59,26 +85,45 @@ public sealed partial class ClipboardItemViewModel : ObservableObject
 
     public string DeleteGlyph => IsDeleteArmed ? "\uE73E" : "\uE74D";
 
-    public string AutomationName => IsFileList
-        ? Entry.FileIntent is ClipboardFileTransferIntent.Move
-            ? $"文件剪贴板，{PreviewText}，{IntentText}，粘贴可能移动源文件，{CapturedAtText}"
-            : $"文件剪贴板，{PreviewText}，{IntentText}，{CapturedAtText}"
-        : $"文本剪贴板，{PreviewText}，{CapturedAtText}";
+    public string AutomationName => Entry.Kind switch
+    {
+        ClipboardContentKind.FileList =>
+            Entry.FileIntent is ClipboardFileTransferIntent.Move
+                ? $"文件剪贴板，{PreviewText}，{IntentText}，粘贴可能移动源文件，{CapturedAtText}"
+                : $"文件剪贴板，{PreviewText}，{IntentText}，{CapturedAtText}",
+        ClipboardContentKind.Image => string.IsNullOrEmpty(ThumbnailStatusText)
+            ? $"图片剪贴板，{ImageDimensionsText}，{CapturedAtText}"
+            : $"图片剪贴板，{ImageDimensionsText}，{ThumbnailStatusText}，{CapturedAtText}",
+        _ => $"文本剪贴板，{PreviewText}，{CapturedAtText}",
+    };
 
     public void Update(ClipboardEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
+        var imageIdentityChanged = Entry.Kind != entry.Kind ||
+            Entry.Revision != entry.Revision ||
+            !string.Equals(
+                Entry.Image?.ThumbnailPng?.Hash,
+                entry.Image?.ThumbnailPng?.Hash,
+                StringComparison.Ordinal) ||
+            Entry.Image?.ThumbnailPng?.Revision != entry.Image?.ThumbnailPng?.Revision;
         Entry = entry;
         OnPropertyChanged(nameof(Id));
         OnPropertyChanged(nameof(IsFileList));
+        OnPropertyChanged(nameof(IsImage));
         OnPropertyChanged(nameof(FileIntent));
         OnPropertyChanged(nameof(PreviewText));
+        OnPropertyChanged(nameof(ImageDimensionsText));
         OnPropertyChanged(nameof(IntentText));
         OnPropertyChanged(nameof(PasteToolTip));
         OnPropertyChanged(nameof(CapturedAtText));
         OnPropertyChanged(nameof(PinGlyph));
         OnPropertyChanged(nameof(PinToolTip));
         OnPropertyChanged(nameof(AutomationName));
+        if (imageIdentityChanged)
+        {
+            SetThumbnailState(ClipboardThumbnailDisplayState.NotRequested);
+        }
     }
 
     public void ApplyFilePresentation(
@@ -117,5 +162,17 @@ public sealed partial class ClipboardItemViewModel : ObservableObject
         IsDeleteArmed = isArmed;
         OnPropertyChanged(nameof(DeleteToolTip));
         OnPropertyChanged(nameof(DeleteGlyph));
+    }
+
+    public void SetThumbnailState(ClipboardThumbnailDisplayState state)
+    {
+        if (!Enum.IsDefined(state) || ThumbnailState == state)
+        {
+            return;
+        }
+
+        ThumbnailState = state;
+        OnPropertyChanged(nameof(ThumbnailStatusText));
+        OnPropertyChanged(nameof(AutomationName));
     }
 }

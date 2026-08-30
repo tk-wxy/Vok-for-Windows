@@ -101,6 +101,73 @@
                           <DataTrigger Binding="{Binding IsFileList}" Value="True">
                             <Setter Property="Visibility" Value="Collapsed" />
                           </DataTrigger>
+                          <DataTrigger Binding="{Binding IsImage}" Value="True">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </Grid.Style>
+                  </Grid>
+
+                  <Grid x:Name="ImageCardContent">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="100" />
+                      <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Width="92"
+                            Height="64"
+                            Margin="0,0,8,0"
+                            CornerRadius="5"
+                            ClipToBounds="True"
+                            VerticalAlignment="Top">
+                      <Border.Background>
+                        <DrawingBrush TileMode="Tile"
+                                      Viewport="0,0,12,12"
+                                      ViewportUnits="Absolute">
+                          <DrawingBrush.Drawing>
+                            <DrawingGroup>
+                              <GeometryDrawing Brush="{DynamicResource ControlFillColorSecondaryBrush}"
+                                               Geometry="M0,0 H12 V12 H0 Z" />
+                              <GeometryDrawing Brush="{DynamicResource ControlFillColorTertiaryBrush}"
+                                               Geometry="M0,0 H6 V6 H0 Z M6,6 H12 V12 H6 Z" />
+                            </DrawingGroup>
+                          </DrawingBrush.Drawing>
+                        </DrawingBrush>
+                      </Border.Background>
+                      <Image x:Name="ThumbnailImage"
+                             Width="92"
+                             Height="64"
+                             Source="{x:Null}"
+                             Stretch="Uniform"
+                             StretchDirection="DownOnly"
+                             Loaded="OnThumbnailLoaded"
+                             Unloaded="OnThumbnailUnloaded"
+                             DataContextChanged="OnThumbnailDataContextChanged" />
+                    </Border>
+                    <StackPanel Grid.Column="1">
+                      <TextBlock Text="图片"
+                                 FontSize="12"
+                                 FontWeight="SemiBold" />
+                      <TextBlock Margin="0,4,0,0"
+                                 Text="{Binding ImageDimensionsText}"
+                                 FontSize="10"
+                                 Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                      <TextBlock Margin="0,4,0,0"
+                                 Text="{Binding ThumbnailStatusText}"
+                                 FontSize="9.5"
+                                 Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                      <TextBlock Margin="0,4,0,0"
+                                 Text="{Binding CapturedAtText}"
+                                 FontSize="10"
+                                 Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                    </StackPanel>
+                    <Grid.Style>
+                      <Style TargetType="Grid">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding IsImage}" Value="True">
+                            <Setter Property="Visibility" Value="Visible" />
+                          </DataTrigger>
                         </Style.Triggers>
                       </Style>
                     </Grid.Style>

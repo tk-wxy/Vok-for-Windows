@@ -112,6 +112,64 @@ public sealed class ClipboardViewModelTests
         Assert.Equal(1, copyCount);
     }
 
+    [Fact]
+    public async Task ImageEntryStaysLightweightAndDeletesThroughAssetCoordinatorBoundary()
+    {
+        var hash = new string('a', 64);
+        var thumbnail = new ClipboardAssetReference(
+            new string('b', 64),
+            ClipboardAssetState.Ready,
+            4);
+        var entry = new ClipboardEntry(
+            Guid.NewGuid(),
+            ClipboardContentKind.Image,
+            hash,
+            string.Empty,
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            1,
+            1,
+            false,
+            7,
+            Image: new ClipboardImageMetadata(
+                1920,
+                1080,
+                true,
+                96000,
+                96000,
+                new ClipboardAssetReference(
+                    new string('c', 64),
+                    ClipboardAssetState.Ready,
+                    3),
+                thumbnail));
+        var repository = new FakeRepository(
+            new ClipboardPage([entry], null, TotalCount: 1));
+        using var imageAssets = new FakeImageAssetService();
+        using var viewModel = new ClipboardViewModel(
+            repository,
+            filePresentation: null,
+            thumbnailCache: null,
+            imageAssets);
+
+        await viewModel.InitializeAsync();
+        var item = Assert.Single(viewModel.Items);
+
+        Assert.True(item.IsImage);
+        Assert.False(item.IsFileList);
+        Assert.Equal("1920×1080", item.ImageDimensionsText);
+        Assert.Contains("图片剪贴板", item.AutomationName);
+        Assert.Null(item.Icon);
+        item.SetThumbnailState(ClipboardThumbnailDisplayState.Unavailable);
+        Assert.Contains("缩略图不可用", item.AutomationName);
+
+        await viewModel.RequestRemoveAsync(item);
+        await viewModel.RequestRemoveAsync(item);
+
+        Assert.Equal(1, imageAssets.RemoveCallCount);
+        Assert.Equal(0, repository.RemoveCallCount);
+        Assert.Empty(viewModel.Items);
+    }
+
     private static ClipboardEntry Entry(string preview, int captureCount, long order) => new(
         Guid.NewGuid(),
         ClipboardContentKind.Text,
@@ -182,6 +240,29 @@ public sealed class ClipboardViewModelTests
         {
             CallCount++;
             return Task.FromResult(new ClipboardFilePresentation(null, availability));
+        }
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class FakeImageAssetService : IClipboardImageAssetService
+    {
+        public int RemoveCallCount { get; private set; }
+
+        public Task<ClipboardImageThumbnailResult?> LoadThumbnailAsync(
+            string assetHash,
+            long expectedRevision,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<ClipboardImageThumbnailResult?>(null);
+
+        public Task<bool> RemoveAsync(
+            Guid entryId,
+            CancellationToken cancellationToken = default)
+        {
+            RemoveCallCount++;
+            return Task.FromResult(true);
         }
 
         public void Dispose()

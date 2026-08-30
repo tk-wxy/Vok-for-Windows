@@ -13,6 +13,8 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
     private const int PageSize = 64;
     private readonly IClipboardHistoryRepository _repository;
     private readonly IClipboardFilePresentationService? _filePresentation;
+    private readonly IClipboardThumbnailCache? _thumbnailCache;
+    private readonly IClipboardImageAssetService? _imageAssets;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly Queue<ClipboardItemViewModel> _pendingFilePresentations = new();
     private ClipboardPageCursor? _nextCursor;
@@ -28,16 +30,35 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
     [ObservableProperty] private int _totalCount;
 
     public ClipboardViewModel(IClipboardHistoryRepository repository)
-        : this(repository, filePresentation: null)
+        : this(
+            repository,
+            filePresentation: null,
+            thumbnailCache: null,
+            imageAssets: null)
     {
     }
 
     public ClipboardViewModel(
         IClipboardHistoryRepository repository,
         IClipboardFilePresentationService? filePresentation)
+        : this(
+            repository,
+            filePresentation,
+            thumbnailCache: null,
+            imageAssets: null)
+    {
+    }
+
+    internal ClipboardViewModel(
+        IClipboardHistoryRepository repository,
+        IClipboardFilePresentationService? filePresentation,
+        IClipboardThumbnailCache? thumbnailCache,
+        IClipboardImageAssetService? imageAssets)
     {
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         _filePresentation = filePresentation;
+        _thumbnailCache = thumbnailCache;
+        _imageAssets = imageAssets;
     }
 
     public ObservableCollection<ClipboardItemViewModel> Items { get; } = [];
@@ -132,15 +153,67 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
         StatusText = message;
     }
 
+    internal Task<ClipboardThumbnailPresentation>? LoadThumbnailAsync(
+        ClipboardItemViewModel item,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(item);
+        var thumbnail = item.Entry.Image?.ThumbnailPng;
+        if (!item.IsImage ||
+            thumbnail is null ||
+            thumbnail.State is not ClipboardAssetState.Ready ||
+            _thumbnailCache is null)
+        {
+            return null;
+        }
+
+        return LoadThumbnailCoreAsync(
+            thumbnail.Hash,
+            thumbnail.Revision,
+            cancellationToken);
+    }
+
+    private async Task<ClipboardThumbnailPresentation> LoadThumbnailCoreAsync(
+        string assetHash,
+        long assetRevision,
+        CancellationToken cancellationToken)
+    {
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _lifetime.Token);
+        return await _thumbnailCache!
+            .LoadAsync(assetHash, assetRevision, linkedCancellation.Token)
+            .ConfigureAwait(true);
+    }
+
     public async Task RemoveAsync(ClipboardItemViewModel item)
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(item);
         try
         {
-            if (await _repository
+            bool removed;
+            if (item.IsImage)
+            {
+                if (_imageAssets is null)
+                {
+                    StatusText = "图片资产服务尚未启用，无法安全删除此条历史。";
+                    return;
+                }
+
+                removed = await _imageAssets
                     .RemoveAsync(item.Id, _lifetime.Token)
-                    .ConfigureAwait(true))
+                    .ConfigureAwait(true);
+            }
+            else
+            {
+                removed = await _repository
+                    .RemoveAsync(item.Id, _lifetime.Token)
+                    .ConfigureAwait(true);
+            }
+
+            if (removed)
             {
                 Items.Remove(item);
                 TotalCount = Math.Max(0, TotalCount - 1);

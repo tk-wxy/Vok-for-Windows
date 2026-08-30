@@ -161,8 +161,13 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                 new SettingsViewModel(appearance, hotkeys));
             var launcherLayouts = CreateLauncherLayouts(620, 900);
             using var launcherViewModel = CreateLauncherViewModel(itemCount: 40);
+            var thumbnailCache = new StaticClipboardThumbnailCache(
+                CreateClipboardThumbnail());
             using var clipboardViewModel = new ClipboardViewModel(
-                new NoopClipboardRepository());
+                new NoopClipboardRepository(),
+                filePresentation: null,
+                thumbnailCache,
+                imageAssets: null);
             for (var index = 0; index < 80; index++)
             {
                 clipboardViewModel.ApplyCaptured(new ClipboardEntry(
@@ -190,6 +195,31 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                 1,
                 ClipboardFileTransferIntent.Move,
                 2));
+            clipboardViewModel.ApplyCaptured(new ClipboardEntry(
+                Guid.NewGuid(),
+                ClipboardContentKind.Image,
+                new string('e', 64),
+                string.Empty,
+                DateTimeOffset.UtcNow,
+                DateTimeOffset.UtcNow,
+                82,
+                1,
+                false,
+                1,
+                Image: new ClipboardImageMetadata(
+                    1920,
+                    1080,
+                    true,
+                    96000,
+                    96000,
+                    new ClipboardAssetReference(
+                        new string('d', 64),
+                        ClipboardAssetState.Ready,
+                        1),
+                    new ClipboardAssetReference(
+                        new string('c', 64),
+                        ClipboardAssetState.Ready,
+                        1))));
             var window = new MainWindow(
                 viewModel,
                 launcherLayouts,
@@ -301,10 +331,32 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                 Assert.Equal(
                     VirtualizationMode.Recycling,
                     VirtualizingPanel.GetVirtualizationMode(clipboardList));
-                Assert.Equal(81, clipboardList.Items.Count);
+                Assert.Equal(82, clipboardList.Items.Count);
                 Assert.True(
-                    FindVisualDescendants<ListBoxItem>(clipboardList).Count() < 81,
+                    FindVisualDescendants<ListBoxItem>(clipboardList).Count() < 82,
                     "The clipboard list realized every card instead of virtualizing its viewport.");
+                Assert.True(PumpDispatcherUntil(
+                    window.Dispatcher,
+                    () => FindVisualDescendants<Image>(clipboardList).Any(image =>
+                        string.Equals(image.Name, "ThumbnailImage", StringComparison.Ordinal) &&
+                        image.Source is not null),
+                    TimeSpan.FromSeconds(1)));
+                var thumbnailImage = FindVisualDescendants<Image>(clipboardList)
+                    .First(image =>
+                        string.Equals(image.Name, "ThumbnailImage", StringComparison.Ordinal) &&
+                        image.Source is not null);
+                Assert.Equal(Stretch.Uniform, thumbnailImage.Stretch);
+                Assert.Equal(StretchDirection.DownOnly, thumbnailImage.StretchDirection);
+                var transparencyBackground = Assert.IsType<Border>(thumbnailImage.Parent);
+                var checkerboard = Assert.IsType<DrawingBrush>(transparencyBackground.Background);
+                Assert.Equal(TileMode.Tile, checkerboard.TileMode);
+                var imagePasteButton = FindVisualDescendants<Button>(clipboardList)
+                    .First(button =>
+                        button.DataContext is ClipboardItemViewModel { IsImage: true } &&
+                        Equals(button.Command, clipboardViewModel.PasteCommand));
+                Assert.Contains(
+                    "图片剪贴板，1920×1080",
+                    System.Windows.Automation.AutomationProperties.GetName(imagePasteButton));
                 var filePasteButton = FindVisualDescendants<Button>(clipboardList)
                     .First(button =>
                         button.DataContext is ClipboardItemViewModel { IsFileList: true } &&
@@ -764,6 +816,33 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
         timer.Stop();
     }
 
+    private static BitmapSource CreateClipboardThumbnail()
+    {
+        const int width = 16;
+        const int height = 9;
+        var pixels = new byte[width * height * 4];
+        for (var index = 0; index < pixels.Length; index += 4)
+        {
+            var pixel = index / 4;
+            pixels[index] = (byte)(40 + pixel % width * 6);
+            pixels[index + 1] = (byte)(80 + pixel / width * 12);
+            pixels[index + 2] = 210;
+            pixels[index + 3] = pixel % 3 == 0 ? (byte)110 : (byte)255;
+        }
+
+        var image = BitmapSource.Create(
+            width,
+            height,
+            96,
+            96,
+            PixelFormats.Bgra32,
+            palette: null,
+            pixels,
+            width * 4);
+        image.Freeze();
+        return image;
+    }
+
     private static void CaptureLauncherHoverIfRequested(
         Window window,
         ListBox launcherList,
@@ -984,6 +1063,23 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
         {
             _ = PressChanged;
             _ = Faulted;
+        }
+    }
+
+    private sealed class StaticClipboardThumbnailCache(BitmapSource image)
+        : IClipboardThumbnailCache
+    {
+        public Task<ClipboardThumbnailPresentation> LoadAsync(
+            string assetHash,
+            long expectedRevision,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(new ClipboardThumbnailPresentation(
+                assetHash,
+                ClipboardAssetState.Ready,
+                expectedRevision,
+                image));
         }
     }
 

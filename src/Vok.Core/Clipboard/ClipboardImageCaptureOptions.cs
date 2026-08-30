@@ -12,6 +12,7 @@ public sealed class ClipboardImageCaptureOptions
     public const long DefaultMaximumReservedBytes = 384L * 1024 * 1024;
     public const int DefaultThumbnailMaximumEdgePixels = 512;
     public const long DefaultThumbnailCacheBytes = 32L * 1024 * 1024;
+    public const int DefaultThumbnailEncodedOverheadBytes = 1024 * 1024;
 
     public ClipboardImageCaptureOptions(
         long maximumInputBytes = DefaultMaximumInputBytes,
@@ -23,7 +24,8 @@ public sealed class ClipboardImageCaptureOptions
         int imageWorkerCapacity = DefaultImageWorkerCapacity,
         long maximumReservedBytes = DefaultMaximumReservedBytes,
         int thumbnailMaximumEdgePixels = DefaultThumbnailMaximumEdgePixels,
-        long thumbnailCacheBytes = DefaultThumbnailCacheBytes)
+        long thumbnailCacheBytes = DefaultThumbnailCacheBytes,
+        int thumbnailEncodedOverheadBytes = DefaultThumbnailEncodedOverheadBytes)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(maximumInputBytes, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(maximumInputBytes, int.MaxValue);
@@ -38,6 +40,7 @@ public sealed class ClipboardImageCaptureOptions
         ArgumentOutOfRangeException.ThrowIfLessThan(maximumReservedBytes, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(thumbnailMaximumEdgePixels, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(thumbnailCacheBytes, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(thumbnailEncodedOverheadBytes, 1);
 
         MaximumInputBytes = maximumInputBytes;
         MaximumDimensionPixels = maximumDimensionPixels;
@@ -49,6 +52,7 @@ public sealed class ClipboardImageCaptureOptions
         MaximumReservedBytes = maximumReservedBytes;
         ThumbnailMaximumEdgePixels = thumbnailMaximumEdgePixels;
         ThumbnailCacheBytes = thumbnailCacheBytes;
+        ThumbnailEncodedOverheadBytes = thumbnailEncodedOverheadBytes;
     }
 
     public long MaximumInputBytes { get; }
@@ -70,6 +74,8 @@ public sealed class ClipboardImageCaptureOptions
     public int ThumbnailMaximumEdgePixels { get; }
 
     public long ThumbnailCacheBytes { get; }
+
+    public int ThumbnailEncodedOverheadBytes { get; }
 
     public bool TryCalculateReservationBytes(
         long inputByteLength,

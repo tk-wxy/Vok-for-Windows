@@ -30,6 +30,7 @@
 | R20 | 文件剪贴板意图必须按 DROPEFFECT 掩码解析，模糊值不得成为 MOVE | 剪贴板文件 | 是 |
 | R21 | CF_BITMAP 不按 HGLOBAL 读取，优先复制系统合成 DIB/DIBV5 | 剪贴板图片 | 是 |
 | R22 | 图片像素格式与 CF_HDROP 同现时不得仅凭 HDROP 判为文件 | 剪贴板图片 | 是 |
+| R23 | 图片缩略图只按稳定展示槽可见性加载并以版本化容器门禁落地 | 剪贴板图片 UI | 是 |
 
 ## 规则
 
@@ -167,6 +168,12 @@
   - 最后验证：2026-08-29。
   - 状态：active；Image/FileList/Text 精确路由已接入产品，合法单候选已可规范化并由独立 asset/schema 5 coordinator 提交；产品 Controller 仍在 M2.3.7 前保持不提交 Image 历史。
 
+- [ ] R23：图片缩略图不得按分页条目或空 `Image` 自身尺寸预加载。只有 Recycling 容器已实现、展示槽与真实 ScrollViewer viewport 相交且工作台可见时才能请求；离开视口、Unloaded、CleanUp、DataContext/entry revision 变化、删除、隐藏或退出必须先撤销当前绑定身份，再取消请求并清空容器 `Source`。迟到结果只有 entry id、thumbnail hash、entry/asset revision 与当前容器数据项全部匹配才可落地。ViewModel 不持有原图或 thumbnail `ImageSource`；UI cache 只按 asset hash 保存已 `OnLoad`/`Freeze()` 的缩略图，并按解码字节硬限制 32 MiB。
+  - 范围：M2.3.5 图片卡、WPF Recycling、缩略图读取/缓存、隐藏与退出生命周期。
+  - 证据：2026-08-31 真实 WPF 测试复现无 Source 的 `Image` 即使声明 Width/Height，初次布局 `ActualWidth/Height` 仍为 0；若以其自身尺寸作为加载门禁，会形成“有图才有尺寸、有尺寸才读图”的永久空卡。改用固定展示槽的已布局矩形后，80 条 Image 列表只加载视口容器；滚动回收前一条绑定并故意迟到完成时不串图，隐藏后所有已实现 `Source` 清空。32 MiB LRU 按 `width × height × 4` 淘汰，损坏 decode 不入缓存；定向生命周期测试连续五轮通过。
+  - 最后验证：2026-08-31。
+  - 状态：active；隔离 Release 62/62 + 310/310 共 372/372、浅/深当前 DPI 真实渲染和 win-x64 自包含发布通过。产品组合根仍未启用 Image；150%/200% 物理跨屏与真实图片卡长期曲线保留 M2.3.7/M2.4。
+
 ### 存储与规模
 
 - [ ] R5：不得在 UI Dispatcher 上执行 Microsoft.Data.Sqlite；数据库写入由显式执行器串行化并使用 WAL。数据库升级必须同时核验版本号与真实表结构，在单事务内迁移并让未知结构原样回滚；`CREATE TABLE IF NOT EXISTS` 只能建新表，不能冒充已有表迁移。大集合必须同时实施 SQL 分页和 WPF 容器虚拟化，不能把 UI 虚拟化当作数据虚拟化。
@@ -214,6 +221,7 @@
 - Explorer 文件只出现路径文本、文件卡完全不生成或 COPY 全部漏记 → 检查 R20；先读取真实 `Preferred DropEffect`，不要恢复精确 0/1/2 比较。
 - 纯 Bitmap 来源漏图、GDI 句柄越界或把 `CF_BITMAP` 当普通字节读取 → 检查 R21；优先观察同次快照中的系统合成 DIB/DIBV5。
 - 截图或聊天图片被记成临时文件、图片格式存在却走 FileList → 检查 R22；不要仅按 `CF_HDROP` 是否存在分类。
+- 图片卡一直空白、滚动后串图、隐藏后缩略图仍驻留或图片越多内存越高 → 检查 R23；不要用空 `Image.ActualWidth` 判可见、分页预加载或只凭异步完成顺序绑定。
 - 条目增加导致 UI/内存线性增长 → 检查 R5。
 - Debug 正常但发布版互操作失败 → 检查 R6。
 - 测试命令成功但显示 0 项测试 → 检查 R7。

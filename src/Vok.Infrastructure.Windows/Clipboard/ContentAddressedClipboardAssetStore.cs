@@ -170,6 +170,61 @@ public sealed class ContentAddressedClipboardAssetStore :
             cancellationToken);
     }
 
+    public byte[] ReadPng(
+        ClipboardPreparedAsset asset,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(
+            Volatile.Read(ref _disposed) != 0,
+            this);
+        ArgumentNullException.ThrowIfNull(asset);
+        if (!string.Equals(asset.MediaType, "image/png", StringComparison.Ordinal) ||
+            asset.ByteLength is < 1 or > int.MaxValue)
+        {
+            throw new InvalidDataException(
+                "The clipboard image asset cannot be read as a bounded PNG.");
+        }
+
+        var path = ResolvePath(asset.Hash, asset.RelativePath);
+        using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 64 * 1024,
+            FileOptions.SequentialScan);
+        if (stream.Length != asset.ByteLength)
+        {
+            throw new InvalidDataException(
+                "The clipboard PNG asset length does not match its descriptor.");
+        }
+
+        var bytes = new byte[checked((int)asset.ByteLength)];
+        var offset = 0;
+        while (offset < bytes.Length)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var read = stream.Read(bytes, offset, bytes.Length - offset);
+            if (read == 0)
+            {
+                throw new InvalidDataException(
+                    "The clipboard PNG asset ended before its declared length.");
+            }
+
+            offset += read;
+        }
+
+        using var payload = new MemoryStream(bytes, writable: false);
+        _ = VerifyPngStream(
+            payload,
+            asset.ByteLength,
+            asset.PixelWidth,
+            asset.PixelHeight,
+            asset.Hash,
+            cancellationToken);
+        return bytes;
+    }
+
     public void Delete(ClipboardAssetDeleteClaim claim)
     {
         ObjectDisposedException.ThrowIf(
@@ -244,6 +299,23 @@ public sealed class ContentAddressedClipboardAssetStore :
             FileShare.Read,
             bufferSize: 64 * 1024,
             FileOptions.SequentialScan);
+        return VerifyPngStream(
+            stream,
+            expectedLength,
+            expectedPixelWidth,
+            expectedPixelHeight,
+            expectedHash,
+            cancellationToken);
+    }
+
+    private string VerifyPngStream(
+        Stream stream,
+        long expectedLength,
+        int expectedPixelWidth,
+        int expectedPixelHeight,
+        string? expectedHash,
+        CancellationToken cancellationToken)
+    {
         if (stream.Length != expectedLength)
         {
             throw new InvalidDataException(
@@ -448,6 +520,10 @@ internal interface IClipboardContentAssetStore : IDisposable
         CancellationToken cancellationToken = default);
 
     void ValidatePng(
+        ClipboardPreparedAsset asset,
+        CancellationToken cancellationToken = default);
+
+    byte[] ReadPng(
         ClipboardPreparedAsset asset,
         CancellationToken cancellationToken = default);
 
