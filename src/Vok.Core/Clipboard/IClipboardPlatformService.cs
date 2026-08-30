@@ -12,6 +12,13 @@ public interface IClipboardPlatformService : IDisposable
         Guid operationId,
         CancellationToken cancellationToken = default);
 
+    Task<ClipboardWriteReceipt> WriteImageAsync(
+        ClipboardImageReplayMaterialization materialization,
+        Guid operationId,
+        CancellationToken cancellationToken = default) =>
+        Task.FromException<ClipboardWriteReceipt>(
+            new NotSupportedException("Clipboard image replay is not available."));
+
     Task<bool> IsCurrentAsync(
         ClipboardWriteReceipt receipt,
         CancellationToken cancellationToken = default);

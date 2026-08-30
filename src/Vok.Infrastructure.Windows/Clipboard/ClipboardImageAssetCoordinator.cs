@@ -6,7 +6,9 @@ using Vok.Infrastructure.Windows.Persistence;
 
 namespace Vok.Infrastructure.Windows.Clipboard;
 
-public sealed class ClipboardImageAssetCoordinator : IClipboardImageAssetService
+public sealed class ClipboardImageAssetCoordinator :
+    IClipboardImageAssetService,
+    IClipboardImageReplayMaterializer
 {
     private static readonly TimeSpan DefaultShutdownWatchdog =
         TimeSpan.FromSeconds(5);
@@ -21,6 +23,8 @@ public sealed class ClipboardImageAssetCoordinator : IClipboardImageAssetService
     private readonly int _maximumJobs;
     private readonly int _thumbnailMaximumEdgePixels;
     private readonly int _thumbnailEncodedOverheadBytes;
+    private readonly ClipboardImageReplayEncoder _replayEncoder;
+    private ClipboardImageTemporaryStore? _replayTemporaryStore;
     private Exception? _terminalFailure;
     private int _outstandingJobs;
     private int _workerManagedThreadId;
@@ -52,7 +56,8 @@ public sealed class ClipboardImageAssetCoordinator : IClipboardImageAssetService
         IClipboardContentAssetStore assetStore,
         ClipboardImageCaptureOptions options,
         TimeSpan shutdownWatchdog,
-        Action<Exception>? diagnosticFault = null)
+        Action<Exception>? diagnosticFault = null,
+        ClipboardImageTemporaryStore? replayTemporaryStore = null)
     {
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         _assetStore = assetStore ?? throw new ArgumentNullException(nameof(assetStore));
@@ -65,6 +70,8 @@ public sealed class ClipboardImageAssetCoordinator : IClipboardImageAssetService
         _maximumJobs = options.ImageWorkerCapacity;
         _thumbnailMaximumEdgePixels = options.ThumbnailMaximumEdgePixels;
         _thumbnailEncodedOverheadBytes = options.ThumbnailEncodedOverheadBytes;
+        _replayEncoder = new ClipboardImageReplayEncoder(options);
+        _replayTemporaryStore = replayTemporaryStore;
         _shutdownWatchdog = shutdownWatchdog;
         _diagnosticFault = diagnosticFault;
         _queue = new BlockingCollection<AssetWorkItem>(_maximumJobs);
@@ -83,6 +90,9 @@ public sealed class ClipboardImageAssetCoordinator : IClipboardImageAssetService
         Volatile.Read(ref _workerManagedThreadId);
 
     internal bool IsWorkerThreadAlive => _thread.IsAlive;
+
+    internal int OutstandingReplayLeaseCount =>
+        _replayTemporaryStore?.OutstandingLeaseCount ?? 0;
 
     /// <summary>
     /// Transfers ownership of <paramref name="result"/> on every non-null call.
@@ -137,6 +147,17 @@ public sealed class ClipboardImageAssetCoordinator : IClipboardImageAssetService
         return Enqueue(new LoadThumbnailWorkItem(
             assetHash,
             expectedRevision,
+            cancellationToken,
+            ReleaseJobSlot));
+    }
+
+    public Task<ClipboardImageReplayMaterialization> MaterializeAsync(
+        ClipboardReplayPayload descriptor,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(descriptor);
+        return Enqueue(new MaterializeReplayWorkItem(
+            descriptor,
             cancellationToken,
             ReleaseJobSlot));
     }
@@ -438,6 +459,108 @@ public sealed class ClipboardImageAssetCoordinator : IClipboardImageAssetService
         }
     }
 
+    private ClipboardImageReplayMaterialization MaterializeReplayCore(
+        ClipboardReplayPayload descriptor,
+        CancellationToken cancellationToken)
+    {
+        if (descriptor.Kind is not ClipboardContentKind.Image ||
+            descriptor.Image?.PrimaryPng is not
+            {
+                State: ClipboardAssetState.Ready,
+                Revision: >= 1,
+            } primary)
+        {
+            throw new InvalidDataException(
+                "The clipboard image replay descriptor has no Ready primary asset.");
+        }
+
+        var stored = _repository.LoadAssetAsync(primary.Hash, cancellationToken)
+            .GetAwaiter()
+            .GetResult();
+        if (stored is null ||
+            stored.Revision != primary.Revision ||
+            stored.State is not ClipboardAssetState.Ready)
+        {
+            throw new InvalidDataException(
+                "The clipboard image primary asset changed before replay.");
+        }
+
+
+        if (descriptor.Image is not { } image ||
+            stored.Asset.PixelWidth != image.PixelWidth ||
+            stored.Asset.PixelHeight != image.PixelHeight)
+        {
+            throw new InvalidDataException(
+                "The clipboard image replay descriptor dimensions do not match its primary asset.");
+        }
+
+        IClipboardPayloadLease canonicalPng;
+        try
+        {
+            canonicalPng = _assetStore.OpenVerifiedPng(
+                stored.Asset,
+                cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            QuarantineReplayAsset(primary, exception);
+            throw new InvalidDataException(
+                "The clipboard image primary asset failed replay validation.",
+                exception);
+        }
+
+        IClipboardPayloadLease? ownedCanonical = canonicalPng;
+        try
+        {
+            var temporaryStore = GetReplayTemporaryStore();
+            var transferredCanonical = ownedCanonical;
+            ownedCanonical = null;
+            return _replayEncoder.Materialize(
+                descriptor,
+                transferredCanonical,
+                temporaryStore,
+                cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (ClipboardImageReplayIntegrityException exception)
+        {
+            QuarantineReplayAsset(primary, exception);
+            throw new InvalidDataException(
+                "The clipboard image primary pixels failed replay validation.",
+                exception);
+        }
+        finally
+        {
+            ownedCanonical?.Dispose();
+        }
+    }
+
+    private ClipboardImageTemporaryStore GetReplayTemporaryStore() =>
+        _replayTemporaryStore ??= ClipboardImageTemporaryStore.CreateDefault(
+            ReportFault);
+
+    private void QuarantineReplayAsset(
+        ClipboardAssetReference primary,
+        Exception exception)
+    {
+        ReportFault(new InvalidDataException(
+            "A clipboard image primary asset failed replay integrity validation and was quarantined.",
+            exception));
+        _ = _repository.MarkAssetQuarantinedAsync(
+                primary.Hash,
+                primary.Revision,
+                CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+    }
+
     private static ClipboardImageThumbnailResult CreateThumbnailResult(
         ClipboardStoredAsset stored,
         byte[]? pngBytes) =>
@@ -567,11 +690,20 @@ public sealed class ClipboardImageAssetCoordinator : IClipboardImageAssetService
         Exception? failure = null;
         try
         {
-            _assetStore.Dispose();
+            _replayTemporaryStore?.Dispose();
         }
         catch (Exception exception)
         {
             failure = exception;
+        }
+
+        try
+        {
+            _assetStore.Dispose();
+        }
+        catch (Exception exception)
+        {
+            failure ??= exception;
         }
 
         try
@@ -790,7 +922,7 @@ public sealed class ClipboardImageAssetCoordinator : IClipboardImageAssetService
 
         public Task<T> Task => _completion.Task;
 
-        protected void PublishSuccess(T result) =>
+        protected bool PublishSuccess(T result) =>
             _completion.TrySetResult(result);
 
         protected override void PublishFailure(Exception exception)
@@ -873,5 +1005,27 @@ public sealed class ClipboardImageAssetCoordinator : IClipboardImageAssetService
                 assetHash,
                 expectedRevision,
                 cancellationToken));
+    }
+
+    private sealed class MaterializeReplayWorkItem(
+        ClipboardReplayPayload descriptor,
+        CancellationToken callerCancellation,
+        Action releaseSlot)
+        : AssetWorkItem<ClipboardImageReplayMaterialization>(
+            callerCancellation,
+            releaseSlot)
+    {
+        protected override void ExecuteCore(
+            ClipboardImageAssetCoordinator owner,
+            CancellationToken cancellationToken)
+        {
+            var materialization = owner.MaterializeReplayCore(
+                descriptor,
+                cancellationToken);
+            if (!PublishSuccess(materialization))
+            {
+                materialization.Dispose();
+            }
+        }
     }
 }

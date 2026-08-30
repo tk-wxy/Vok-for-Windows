@@ -225,6 +225,51 @@ public sealed class ContentAddressedClipboardAssetStore :
         return bytes;
     }
 
+    public IClipboardPayloadLease OpenVerifiedPng(
+        ClipboardPreparedAsset asset,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(
+            Volatile.Read(ref _disposed) != 0,
+            this);
+        ArgumentNullException.ThrowIfNull(asset);
+        if (!string.Equals(asset.MediaType, "image/png", StringComparison.Ordinal) ||
+            asset.ByteLength is < 1 or >
+                ClipboardImageCaptureOptions.DefaultMaximumInputBytes)
+        {
+            throw new InvalidDataException(
+                "The clipboard image asset cannot be opened as a bounded PNG.");
+        }
+
+        var path = ResolvePath(asset.Hash, asset.RelativePath);
+        FileStream? anchor = null;
+        try
+        {
+            anchor = new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 64 * 1024,
+                FileOptions.SequentialScan);
+            _ = VerifyPngStream(
+                anchor,
+                asset.ByteLength,
+                asset.PixelWidth,
+                asset.PixelHeight,
+                asset.Hash,
+                cancellationToken);
+            anchor.Position = 0;
+            var lease = new ContentAssetLease(path, anchor, asset.ByteLength);
+            anchor = null;
+            return lease;
+        }
+        finally
+        {
+            anchor?.Dispose();
+        }
+    }
+
     public void Delete(ClipboardAssetDeleteClaim claim)
     {
         ObjectDisposedException.ThrowIf(
@@ -508,6 +553,33 @@ public sealed class ContentAddressedClipboardAssetStore :
             // Diagnostic reporting cannot change asset ownership or cleanup.
         }
     }
+
+    private sealed class ContentAssetLease(
+        string path,
+        FileStream anchor,
+        long length) : IClipboardPayloadLease
+    {
+        private FileStream? _anchor = anchor;
+
+        public long Length { get; } = length;
+
+        public Stream OpenRead()
+        {
+            ObjectDisposedException.ThrowIf(
+                Volatile.Read(ref _anchor) is null,
+                this);
+            return new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 64 * 1024,
+                FileOptions.SequentialScan);
+        }
+
+        public void Dispose() =>
+            Interlocked.Exchange(ref _anchor, null)?.Dispose();
+    }
 }
 
 internal interface IClipboardContentAssetStore : IDisposable
@@ -524,6 +596,10 @@ internal interface IClipboardContentAssetStore : IDisposable
         CancellationToken cancellationToken = default);
 
     byte[] ReadPng(
+        ClipboardPreparedAsset asset,
+        CancellationToken cancellationToken = default);
+
+    IClipboardPayloadLease OpenVerifiedPng(
         ClipboardPreparedAsset asset,
         CancellationToken cancellationToken = default);
 

@@ -11,6 +11,7 @@ public sealed class ClipboardPasteController : IDisposable
     private readonly IWorkspaceCommands _workspace;
     private readonly IPasteInputService _input;
     private readonly IClipboardFilePresentationService? _filePresentation;
+    private readonly IClipboardImageReplayMaterializer? _imageReplayMaterializer;
     private readonly ClipboardPasteStateMachine _stateMachine = new();
     private readonly SemaphoreSlim _actionGate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
@@ -22,7 +23,14 @@ public sealed class ClipboardPasteController : IDisposable
         IClipboardPlatformService platform,
         IWorkspaceCommands workspace,
         IPasteInputService input)
-        : this(viewModel, repository, platform, workspace, input, filePresentation: null)
+        : this(
+            viewModel,
+            repository,
+            platform,
+            workspace,
+            input,
+            filePresentation: null,
+            imageReplayMaterializer: null)
     {
     }
 
@@ -33,6 +41,25 @@ public sealed class ClipboardPasteController : IDisposable
         IWorkspaceCommands workspace,
         IPasteInputService input,
         IClipboardFilePresentationService? filePresentation)
+        : this(
+            viewModel,
+            repository,
+            platform,
+            workspace,
+            input,
+            filePresentation,
+            imageReplayMaterializer: null)
+    {
+    }
+
+    public ClipboardPasteController(
+        ClipboardViewModel viewModel,
+        IClipboardHistoryRepository repository,
+        IClipboardPlatformService platform,
+        IWorkspaceCommands workspace,
+        IPasteInputService input,
+        IClipboardFilePresentationService? filePresentation,
+        IClipboardImageReplayMaterializer? imageReplayMaterializer)
     {
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
@@ -40,6 +67,7 @@ public sealed class ClipboardPasteController : IDisposable
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _input = input ?? throw new ArgumentNullException(nameof(input));
         _filePresentation = filePresentation;
+        _imageReplayMaterializer = imageReplayMaterializer;
         _viewModel.PasteActionAsync = PasteAsync;
         _viewModel.CopyFileActionAsync = CopyFileAsync;
     }
@@ -92,6 +120,7 @@ public sealed class ClipboardPasteController : IDisposable
         var generation = transition.Generation;
         ClipboardWriteReceipt? receipt = null;
         ClipboardFileTransferIntent? actualIntent = null;
+        ClipboardImageReplayMaterialization? imageMaterialization = null;
         try
         {
             var payload = await _repository
@@ -144,14 +173,37 @@ public sealed class ClipboardPasteController : IDisposable
                 Finish(generation, ClipboardPasteState.Failed, "只有文件历史支持强制复制。");
                 return;
             }
+            else if (payload.Kind is ClipboardContentKind.Image)
+            {
+                if (_imageReplayMaterializer is null)
+                {
+                    Finish(
+                        generation,
+                        ClipboardPasteState.Failed,
+                        "图片原图回放尚未启用。");
+                    return;
+                }
+
+                imageMaterialization = await _imageReplayMaterializer
+                    .MaterializeAsync(payload, cancellationToken)
+                    .ConfigureAwait(true);
+            }
 
             RequireAdvance(
                 generation,
                 ClipboardPasteState.Materializing,
                 ClipboardPasteState.WritingClipboard);
-            receipt = await _platform
-                .WriteAsync(payload, Guid.NewGuid(), cancellationToken)
-                .ConfigureAwait(true);
+            var operationId = Guid.NewGuid();
+            receipt = imageMaterialization is null
+                ? await _platform
+                    .WriteAsync(payload, operationId, cancellationToken)
+                    .ConfigureAwait(true)
+                : await _platform
+                    .WriteImageAsync(
+                        imageMaterialization,
+                        operationId,
+                        cancellationToken)
+                    .ConfigureAwait(true);
 
             if (forceCopyOnly)
             {
@@ -242,7 +294,14 @@ public sealed class ClipboardPasteController : IDisposable
         }
         finally
         {
-            _actionGate.Release();
+            try
+            {
+                imageMaterialization?.Dispose();
+            }
+            finally
+            {
+                _actionGate.Release();
+            }
         }
     }
 

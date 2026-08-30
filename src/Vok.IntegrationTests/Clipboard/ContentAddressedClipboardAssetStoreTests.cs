@@ -51,6 +51,17 @@ public sealed class ContentAddressedClipboardAssetStoreTests
             Assert.Equal(
                 png,
                 store.ReadPng(first, TestContext.Current.CancellationToken));
+            using (var lease = store.OpenVerifiedPng(
+                       first,
+                       TestContext.Current.CancellationToken))
+            {
+                Assert.Equal(png, ReadAll(lease.OpenRead()));
+                Assert.Equal(png, ReadAll(lease.OpenRead()));
+                Assert.Throws<IOException>(() =>
+                    File.Delete(GetAssetPath(directory, first.Hash)));
+            }
+
+            Assert.True(File.Exists(GetAssetPath(directory, first.Hash)));
         }
         finally
         {
@@ -165,6 +176,16 @@ public sealed class ContentAddressedClipboardAssetStoreTests
         using var output = new MemoryStream();
         encoder.Save(output);
         return output.ToArray();
+    }
+
+    private static byte[] ReadAll(Stream stream)
+    {
+        using (stream)
+        using (var output = new MemoryStream())
+        {
+            stream.CopyTo(output);
+            return output.ToArray();
+        }
     }
 
     private static string GetAssetPath(string root, string hash) =>

@@ -263,6 +263,36 @@ internal static class Program
                 normalizedDib.SemanticHash,
                 StringComparison.Ordinal);
 
+            var canonicalPng = ReadAll(normalizedPng.OpenCanonicalPngReadStream());
+            using var imageReplay = new ClipboardImageReplayMaterialization(
+                normalizedPng.SemanticHash,
+                normalizedPng.PixelWidth,
+                normalizedPng.PixelHeight,
+                normalizedPng.HasAlpha,
+                normalizedPng.DpiXMilli,
+                normalizedPng.DpiYMilli,
+                new ProbeLease(canonicalPng),
+                new ProbeLease(ControlledImagePayloads.CreateDibV5()));
+            var imageReceipt = await service.WriteImageAsync(
+                imageReplay,
+                Guid.NewGuid(),
+                timeout.Token);
+            var imageReceiptWasCurrent = await service.IsCurrentAsync(
+                imageReceipt,
+                timeout.Token);
+            var imageSelfWrite = captures.Track(
+                await ReadNextAsync(snapshots, timeout.Token));
+
+            await producer.WriteImmediateAsync(
+                [new ProducerFormat(
+                    UnicodeText,
+                    Encoding.Unicode.GetBytes("image-external-overwrite\0"))],
+                timeout.Token);
+            var imageReceiptAfterExternalWrite = await service.IsCurrentAsync(
+                imageReceipt,
+                timeout.Token);
+            _ = captures.Track(await ReadNextAsync(snapshots, timeout.Token));
+
             var success =
                 immediate.Disposition is ClipboardCaptureDisposition.Captured &&
                 immediate.Formats.Any(format =>
@@ -327,6 +357,9 @@ internal static class Program
                 normalizedDib.HasAlpha &&
                 !normalizedBitmap.HasAlpha &&
                 controlledPixelsEquivalent &&
+                imageReceiptWasCurrent &&
+                imageSelfWrite.Disposition is ClipboardCaptureDisposition.SelfWrite &&
+                !imageReceiptAfterExternalWrite &&
                 malformedImageCapture.Disposition is ClipboardCaptureDisposition.Unsupported &&
                 malformedImageCapture.Formats.Any(format =>
                     format.RepresentationKind is
@@ -336,8 +369,8 @@ internal static class Program
                 malformedImageContent is null;
             var report = new
             {
-                schema = 4,
-                reportVersion = 4,
+                schema = 5,
+                reportVersion = 5,
                 isolatedWindowStation = true,
                 immediate = Summarize(immediate),
                 delayed = Summarize(delayed),
@@ -404,6 +437,15 @@ internal static class Program
                         dibV5HasAlpha = normalizedDib.HasAlpha,
                         bitmapSynthesisHasAlpha = normalizedBitmap.HasAlpha,
                     },
+                    replay = new
+                    {
+                        imageReceipt.RuntimeSequence,
+                        imageReceiptWasCurrent,
+                        selfWriteDisposition = imageSelfWrite.Disposition.ToString(),
+                        imageReceiptAfterExternalWrite,
+                        canonicalBytes = canonicalPng.Length,
+                        dibV5Bytes = imageReplay.DibV5ByteLength,
+                    },
                     malformedDib = Summarize(malformedImageCapture),
                     malformedRouterRejected = malformedImageContent is null,
                 },
@@ -458,6 +500,31 @@ internal static class Program
             format.RepresentationKind == kind &&
             format.CaptureState is ClipboardFormatCaptureState.Captured &&
             format.PayloadByteLength > 0);
+
+    private static byte[] ReadAll(Stream stream)
+    {
+        using (stream)
+        using (var output = new MemoryStream())
+        {
+            stream.CopyTo(output);
+            return output.ToArray();
+        }
+    }
+
+    private sealed class ProbeLease(byte[] bytes) : IClipboardPayloadLease
+    {
+        private int _disposed;
+
+        public long Length => bytes.LongLength;
+
+        public Stream OpenRead()
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            return new MemoryStream(bytes, writable: false);
+        }
+
+        public void Dispose() => Interlocked.Exchange(ref _disposed, 1);
+    }
 
     private sealed class OwnedCaptures : IDisposable
     {

@@ -1,3 +1,4 @@
+using System.IO;
 using Vok.Core.Clipboard;
 using Vok.Core.Platform;
 using Vok.Core.Workspace;
@@ -247,6 +248,91 @@ public sealed class ClipboardPasteControllerTests
             platform.LastPayload?.SemanticHash);
     }
 
+    [Fact]
+    public async Task ImagePasteMaterializesOriginalBeforeWriteAndReusesSafePasteSequence()
+    {
+        var log = new List<string>();
+        var entry = ImageEntry();
+        var repository = new FakeRepository(entry, log, ImagePayload(entry));
+        var viewModel = new ClipboardViewModel(repository);
+        var platform = new FakePlatform(log);
+        using var materializer = new FakeImageMaterializer(log);
+        using var controller = new ClipboardPasteController(
+            viewModel,
+            repository,
+            platform,
+            new FakeWorkspace(log, CanInjectHide()),
+            new FakeInput(log, succeeds: true),
+            filePresentation: null,
+            materializer);
+
+        await viewModel.PasteCommand.ExecuteAsync(new ClipboardItemViewModel(entry));
+
+        Assert.Equal(
+            ["materialize", "materialize-image", "write", "hide", "verify", "inject"],
+            log);
+        Assert.Equal(0, platform.WriteCount);
+        Assert.Equal(1, platform.ImageWriteCount);
+        Assert.True(materializer.LastCanonicalLease?.IsDisposed is true);
+        Assert.True(materializer.LastDibLease?.IsDisposed is true);
+        Assert.Equal("已粘贴到呼出前目标。", viewModel.StatusText);
+    }
+
+    [Fact]
+    public async Task ImageMaterializationFailureKeepsWorkspaceVisibleAndDoesNotWrite()
+    {
+        var log = new List<string>();
+        var entry = ImageEntry();
+        var repository = new FakeRepository(entry, log, ImagePayload(entry));
+        var viewModel = new ClipboardViewModel(repository);
+        var platform = new FakePlatform(log);
+        using var materializer = new FakeImageMaterializer(log) { Fail = true };
+        using var controller = new ClipboardPasteController(
+            viewModel,
+            repository,
+            platform,
+            new FakeWorkspace(log, CanInjectHide()),
+            new FakeInput(log, succeeds: true),
+            filePresentation: null,
+            materializer);
+
+        await viewModel.PasteCommand.ExecuteAsync(new ClipboardItemViewModel(entry));
+
+        Assert.Equal(["materialize", "materialize-image"], log);
+        Assert.Equal(0, platform.WriteCount);
+        Assert.Equal(0, platform.ImageWriteCount);
+        Assert.Contains("无法写入剪贴板", viewModel.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DisposeCancelsActiveImageMaterializationBeforeClipboardWrite()
+    {
+        var log = new List<string>();
+        var entry = ImageEntry();
+        var repository = new FakeRepository(entry, log, ImagePayload(entry));
+        var viewModel = new ClipboardViewModel(repository);
+        var platform = new FakePlatform(log);
+        using var materializer = new FakeImageMaterializer(log) { Hold = true };
+        var controller = new ClipboardPasteController(
+            viewModel,
+            repository,
+            platform,
+            new FakeWorkspace(log, CanInjectHide()),
+            new FakeInput(log, succeeds: true),
+            filePresentation: null,
+            materializer);
+
+        var action = viewModel.PasteCommand.ExecuteAsync(
+            new ClipboardItemViewModel(entry));
+        await materializer.Started.Task.WaitAsync(
+            TestContext.Current.CancellationToken);
+        controller.Dispose();
+        await action;
+
+        Assert.Equal(["materialize", "materialize-image"], log);
+        Assert.Equal(0, platform.ImageWriteCount);
+    }
+
     private static ClipboardEntry Entry() => new(
         Guid.NewGuid(),
         ClipboardContentKind.Text,
@@ -277,6 +363,37 @@ public sealed class ClipboardPasteControllerTests
             files.Count);
     }
 
+    private static ClipboardEntry ImageEntry()
+    {
+        var primary = new ClipboardAssetReference(
+            new string('e', 64),
+            ClipboardAssetState.Ready,
+            3);
+        var thumbnail = new ClipboardAssetReference(
+            new string('f', 64),
+            ClipboardAssetState.Ready,
+            4);
+        return new ClipboardEntry(
+            Guid.NewGuid(),
+            ClipboardContentKind.Image,
+            new string('a', 64),
+            "1×1",
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            1,
+            1,
+            false,
+            1,
+            Image: new ClipboardImageMetadata(
+                1,
+                1,
+                HasAlpha: false,
+                DpiXMilli: null,
+                DpiYMilli: null,
+                primary,
+                thumbnail));
+    }
+
     private static ClipboardReplayPayload Payload(ClipboardEntry entry) => new(
         ClipboardContentKind.Text,
         entry.SemanticHash,
@@ -298,6 +415,12 @@ public sealed class ClipboardPasteControllerTests
             intent,
             files);
     }
+
+    private static ClipboardReplayPayload ImagePayload(ClipboardEntry entry) => new(
+        ClipboardContentKind.Image,
+        entry.SemanticHash,
+        [],
+        Image: entry.Image);
 
     private static IReadOnlyList<ClipboardFileReference> FileReferences() =>
         [new ClipboardFileReference(0, @"C:\A.txt", @"C:\A.txt", "A.txt")];
@@ -363,6 +486,8 @@ public sealed class ClipboardPasteControllerTests
 
         public int WriteCount { get; private set; }
 
+        public int ImageWriteCount { get; private set; }
+
         public ClipboardReplayPayload? LastPayload { get; private set; }
 
         public TaskCompletionSource WriteStarted { get; } = new(
@@ -396,6 +521,25 @@ public sealed class ClipboardPasteControllerTests
             }
 
             return new ClipboardWriteReceipt(10, operationId, payload.SemanticHash);
+        }
+
+        public async Task<ClipboardWriteReceipt> WriteImageAsync(
+            ClipboardImageReplayMaterialization materialization,
+            Guid operationId,
+            CancellationToken cancellationToken = default)
+        {
+            log.Add("write");
+            ImageWriteCount++;
+            WriteStarted.TrySetResult();
+            if (HoldWrite)
+            {
+                await ReleaseWrite.Task.WaitAsync(cancellationToken);
+            }
+
+            return new ClipboardWriteReceipt(
+                10,
+                operationId,
+                materialization.SemanticHash);
         }
 
         public Task<bool> IsCurrentAsync(
@@ -494,5 +638,70 @@ public sealed class ClipboardPasteControllerTests
         public void Dispose()
         {
         }
+    }
+
+    private sealed class FakeImageMaterializer(List<string> log)
+        : IClipboardImageReplayMaterializer
+    {
+        public bool Fail { get; init; }
+
+        public bool Hold { get; init; }
+
+        public TaskCompletionSource Started { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TrackingLease? LastCanonicalLease { get; private set; }
+
+        public TrackingLease? LastDibLease { get; private set; }
+
+        public async Task<ClipboardImageReplayMaterialization> MaterializeAsync(
+            ClipboardReplayPayload descriptor,
+            CancellationToken cancellationToken = default)
+        {
+            log.Add("materialize-image");
+            Started.TrySetResult();
+            if (Hold)
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+
+            if (Fail)
+            {
+                throw new InvalidDataException("broken image");
+            }
+
+            LastCanonicalLease = new TrackingLease([1, 2, 3, 4]);
+            LastDibLease = new TrackingLease(new byte[128]);
+            return new ClipboardImageReplayMaterialization(
+                descriptor.SemanticHash,
+                1,
+                1,
+                hasAlpha: false,
+                dpiXMilli: null,
+                dpiYMilli: null,
+                LastCanonicalLease,
+                LastDibLease);
+        }
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class TrackingLease(byte[] bytes) : IClipboardPayloadLease
+    {
+        private int _disposed;
+
+        public long Length => bytes.LongLength;
+
+        public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
+
+        public Stream OpenRead()
+        {
+            ObjectDisposedException.ThrowIf(IsDisposed, this);
+            return new MemoryStream(bytes, writable: false);
+        }
+
+        public void Dispose() => Interlocked.Exchange(ref _disposed, 1);
     }
 }

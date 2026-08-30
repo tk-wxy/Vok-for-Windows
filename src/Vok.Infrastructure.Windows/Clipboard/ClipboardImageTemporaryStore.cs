@@ -9,6 +9,7 @@ internal sealed class ClipboardImageTemporaryStore : IDisposable
     [
         "normalized-*.png",
         "thumbnail-*.png",
+        "replay-*.dibv5",
         "encoding-*.tmp",
     ];
 
@@ -118,7 +119,7 @@ internal sealed class ClipboardImageTemporaryStore : IDisposable
                 _outstanding.Add(path);
             }
 
-            return new TemporaryPngLease(this, path, length);
+            return new TemporaryBlobLease(this, path, length);
         }
         catch
         {
@@ -128,6 +129,51 @@ internal sealed class ClipboardImageTemporaryStore : IDisposable
         finally
         {
             TryDelete(encodingPath);
+        }
+    }
+
+    public IClipboardPayloadLease CreateDibV5(
+        long expectedLength,
+        Action<Stream> write)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(expectedLength, 125);
+        ArgumentNullException.ThrowIfNull(write);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var path = Path.Combine(
+            _rootPath,
+            $"replay-{Guid.NewGuid():N}.dibv5");
+        try
+        {
+            using (var stream = new FileStream(
+                       path,
+                       FileMode.CreateNew,
+                       FileAccess.Write,
+                       FileShare.Read,
+                       bufferSize: 64 * 1024,
+                       FileOptions.SequentialScan))
+            {
+                write(stream);
+                if (stream.Position != expectedLength)
+                {
+                    throw new InvalidDataException(
+                        "The replay DIBV5 length does not match its declared size.");
+                }
+
+                stream.Flush(flushToDisk: false);
+            }
+
+            lock (_gate)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                _outstanding.Add(path);
+            }
+
+            return new TemporaryBlobLease(this, path, expectedLength);
+        }
+        catch
+        {
+            TryDelete(path);
+            throw;
         }
     }
 
@@ -159,7 +205,7 @@ internal sealed class ClipboardImageTemporaryStore : IDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (!_outstanding.Contains(path))
             {
-                throw new ObjectDisposedException(nameof(TemporaryPngLease));
+                throw new ObjectDisposedException(nameof(TemporaryBlobLease));
             }
         }
 
@@ -231,7 +277,7 @@ internal sealed class ClipboardImageTemporaryStore : IDisposable
         }
     }
 
-    private sealed class TemporaryPngLease(
+    private sealed class TemporaryBlobLease(
         ClipboardImageTemporaryStore owner,
         string path,
         long length) : IClipboardPayloadLease

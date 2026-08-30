@@ -444,7 +444,7 @@ clipboard_files
 - 完成 PNG + 兼容位图多表示写回；
 - 以 Snipping Tool、Print Screen、浏览器图片、聊天软件和透明 PNG 完成真机往返。
 
-状态：详细实施规划与 M2.3.0–M2.3.5 已完成。产品 reader 已取得一份有界图片载荷，隔离图片 worker 已生成规范 canonical/thumbnail，内容寻址 store 与 schema 5 已能以独立串行 coordinator 提交、删除、隔离和重启恢复；图片卡、可见容器加载、32 MiB 解码缓存和迟到门禁也已在隔离 WPF 切片闭环。图片链路仍未注册到产品组合根，系统写回尚未接入。下一步是 M2.3.6 image replay + writer/paste，不能提前启用半条产品链。
+状态：详细实施规划与 M2.3.0–M2.3.6 已完成。产品 reader 已取得一份有界图片载荷，隔离图片 worker 已生成规范 canonical/thumbnail，内容寻址 store 与 schema 5 已能以独立串行 coordinator 提交、删除、隔离和重启恢复；图片卡、可见容器加载、32 MiB 解码缓存、primary replay、PNG+DIBV5+marker 写回和既有安全粘贴状态机均已在隔离切片闭环。图片链路仍未注册到产品组合根。下一步是 M2.3.7 一次接线、发布门禁与真实来源×目标验收，不能提前启用半条产品链。
 
 #### M2.3.0 实施前基线、语料与交付边界
 
@@ -617,6 +617,8 @@ Windows 已定义 DIBV5→DIB/Bitmap 的按需转换，因此基线不额外发�
 
 图片主动作复用现有 `Materialize→Write→Hide/Restore→Verify→Inject` 和 generation/state machine，不新增第二套焦点逻辑。materialize/asset 验证/写入失败时窗口保持可见；写入成功但隐藏、恢复、焦点或注入失败时明确降级为“已复制图片，可手动粘贴”；外部覆盖令 receipt 失效，不注入第三方内容。双击、取消、退出和旧代完成仍只能认领一次写回/注入。
 
+实现状态（2026-08-31）：M2.3.6 已完成为仍未注册产品组合根的隔离 replay 切片。Core materialization 独占 canonical PNG 与 DIBV5 两个只读 lease；asset coordinator MTA 复核 primary Ready/revision、内容寻址 SHA、严格 PNG/WIC、尺寸/Alpha 和 `Vok.Image.Pixel.v1`，仅内容完整性失败 quarantine，stale/cancel/staging/write 故障不污染 Ready asset。DIBV5 为 124-byte V5 header、32bpp bottom-up BGRA8、显式 RGBA masks、`LCS_sRGB`、无 profile，并按 nullable DPI 写 pixels-per-meter；临时文件与 asset lease 在 Controller 单一 `finally` 收口。Clipboard STA 按已知长度用 1 MiB buffer 写 PNG→CF_DIBV5→marker，部分失败清空半份剪贴板且不重复释放已转移 HGLOBAL。图片动作复用既有 generation/receipt/hide/restore/focus/inject 门禁。隔离 Release 62/62 + 322/322 共 384/384、33 项高风险定向五轮和 Window Station `reportVersion=5, success=true` 通过；真实产品接线、来源×目标、150%/200% 和长期资源曲线仍待 M2.3.7。
+
 #### M2.3.7 实施顺序与自动门禁
 
 按下列顺序一次只打开一条新风险链；步骤 6 前不把半成品图片卡注册到产品组合根：
@@ -626,7 +628,7 @@ Windows 已定义 DIBV5→DIB/Bitmap 的按需转换，因此基线不额外发�
 3. **decoder + pixel identity（已完成）**：严格 PNG/DIB preflight、WIC sRGB/BGRA8 规范化、方向/Alpha、分带 hash、canonical/thumbnail PNG 和有界 worker；当前只输出临时结果，不写数据库；
 4. **asset + schema 5（已完成）**：完成内容寻址 store、4→5 单事务迁移、图片 upsert/replay descriptor、重复回顶、固定、删除/tombstone、损坏隔离和重启恢复；
 5. **thumbnail + UI（已完成）**：增加异构图片卡、可见性驱动加载、字节缓存、迟到结果门禁和可访问名称；产品能力文案延后到完整接入时切换，当前 DPI 的真实 WPF Recycling/浅深渲染已通过，150%/200% 物理跨屏保留最终矩阵；
-6. **writer + paste**：加入 image replay materializer、PNG/DIBV5/marker 写回、receipt 与既有粘贴门禁；覆盖部分句柄转移、外部覆盖、取消、双击、旧代和退出；
+6. **writer + paste（已完成）**：加入 image replay materializer、PNG/DIBV5/marker 写回、receipt 与既有粘贴门禁；覆盖部分句柄转移、外部覆盖、取消、双击、旧代和退出；
 7. **产品接入与发布**：组合根一次启用完整切片，跑 Release 全量测试、0 警告构建、win-x64 自包含发布、PowerShell AST、隔离 Window Station 图片往返和长期资源曲线后再做真机验收。
 
 自动测试最低矩阵：

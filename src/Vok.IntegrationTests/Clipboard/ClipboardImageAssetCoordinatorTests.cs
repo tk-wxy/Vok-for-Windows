@@ -888,6 +888,11 @@ public sealed class ClipboardImageAssetCoordinatorTests
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
+        public IClipboardPayloadLease OpenVerifiedPng(
+            ClipboardPreparedAsset asset,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
         public void Delete(ClipboardAssetDeleteClaim claim)
         {
         }
@@ -938,6 +943,11 @@ public sealed class ClipboardImageAssetCoordinatorTests
         }
 
         public byte[] ReadPng(
+            ClipboardPreparedAsset asset,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public IClipboardPayloadLease OpenVerifiedPng(
             ClipboardPreparedAsset asset,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();

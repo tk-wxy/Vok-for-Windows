@@ -2,6 +2,12 @@
 
 > 归档超过滚动窗口的 `memory.md §0A` 完整会话。默认不读取，仅在取证时搜索；按时间从新到旧排列。
 
+### 会话 2026-08-29 - M2.3.2–3 严格图片规范化与有界 worker
+
+- 严格 PNG inspector 流式校验 chunk/CRC、拒绝 APNG；packed DIB parser 以 checked layout 覆盖 1/4/8/16/24/32 bpp、方向、palette、bitfields、profile 与总长，linked profile/RLE/内嵌编码/非法 mask/截断整条拒绝。WIC 规范为 sRGB straight-alpha BGRA8，`BI_RGB` 孤立 Alpha mask 强制不透明，显式 bitfields Alpha 保留。
+- `Vok.Image.Pixel.v1` 用固定前缀、尺寸、BGRA8 tag 和 top-down row bands 计算，无完整像素复制；canonical/thumbnail PNG 编码后流式剥离 `pHYs/iCCP/text/EXIF`。隔离探针发现 Windows 合成 V5 会重复 12-byte RGB masks，现只在逐 mask 等于 header 时接受，任意尾随仍拒绝。
+- 独立 MTA worker 只接受精确 `input+canonical` reservation，成功前释放输入，结果只拥有两份临时 PNG；取消、容量、codec 失败、shutdown/drain 竞态和 5 秒 watchdog 后延迟归零均有门禁。Release 62/62 + 286/286 共 348/348；探针 `reportVersion=4, success=true`、staging 0。下一步 M2.3.4 asset/schema 5。
+
 ### 会话 2026-08-29 - M2.3.1 单候选图片载荷所有权
 
 - Core 新增精确默认图片容量、`Inline | LeasedBlob`、只读流、header 尺寸和 reservation 所有权；结果与格式均幂等释放。Clipboard STA 先按完整目录决定 Image，再只复制 PNG 或一个 DIB 家族候选；大载荷以 1 MiB 缓冲写入同卷 `.staging`，按 `input + width × height × 4` 同时受 4 jobs/384 MiB 限制。

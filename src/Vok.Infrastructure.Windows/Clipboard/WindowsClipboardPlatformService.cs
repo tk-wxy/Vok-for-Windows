@@ -133,6 +133,24 @@ public sealed class WindowsClipboardPlatformService : IClipboardPlatformService
             .ConfigureAwait(false);
     }
 
+    public async Task<ClipboardWriteReceipt> WriteImageAsync(
+        ClipboardImageReplayMaterialization materialization,
+        Guid operationId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(materialization);
+        ArgumentOutOfRangeException.ThrowIfEqual(operationId, Guid.Empty);
+        await StartAsync(cancellationToken).ConfigureAwait(false);
+        return await EnqueueCommand(
+                () => _writer!.WriteImage(
+                    _listenerWindow,
+                    materialization,
+                    operationId,
+                    cancellationToken),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     public async Task<bool> IsCurrentAsync(
         ClipboardWriteReceipt receipt,
         CancellationToken cancellationToken = default)

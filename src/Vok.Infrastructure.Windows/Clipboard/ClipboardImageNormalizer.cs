@@ -1,9 +1,5 @@
-using System.Buffers;
-using System.Buffers.Binary;
 using System.Collections.ObjectModel;
 using System.IO;
-using System.Security.Cryptography;
-using System.Text;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -13,13 +9,6 @@ namespace Vok.Infrastructure.Windows.Clipboard;
 
 internal sealed class ClipboardImageNormalizer : IClipboardImageNormalizationEngine
 {
-    private static ReadOnlySpan<byte> PixelIdentityVersion =>
-        "Vok.Image.Pixel.v1"u8;
-
-    private static ReadOnlySpan<byte> PixelFormatTag =>
-        "BGRA8.STRAIGHT.TOPDOWN"u8;
-
-    private const int PixelBandBytes = 1024 * 1024;
     private readonly ClipboardImageCaptureOptions _options;
 
     public ClipboardImageNormalizer(ClipboardImageCaptureOptions options)
@@ -54,7 +43,9 @@ internal sealed class ClipboardImageNormalizer : IClipboardImageNormalizationEng
             payloadInfo,
             cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
-        var identity = ComputePixelIdentity(normalized, cancellationToken);
+        var identity = ClipboardImagePixelIdentity.Compute(
+            normalized,
+            cancellationToken);
         var thumbnail = CreateThumbnail(normalized);
 
         IClipboardPayloadLease? canonicalLease = null;
@@ -288,54 +279,6 @@ internal sealed class ClipboardImageNormalizer : IClipboardImageNormalizationEng
         return converted;
     }
 
-    private static PixelIdentity ComputePixelIdentity(
-        BitmapSource source,
-        CancellationToken cancellationToken)
-    {
-        var stride = checked(source.PixelWidth * 4);
-        var rowsPerBand = Math.Max(1, PixelBandBytes / stride);
-        var buffer = ArrayPool<byte>.Shared.Rent(
-            checked(stride * Math.Min(rowsPerBand, source.PixelHeight)));
-        try
-        {
-            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            hash.AppendData(PixelIdentityVersion);
-            Span<byte> dimensions = stackalloc byte[8];
-            BinaryPrimitives.WriteInt32LittleEndian(dimensions, source.PixelWidth);
-            BinaryPrimitives.WriteInt32LittleEndian(dimensions[4..], source.PixelHeight);
-            hash.AppendData(dimensions);
-            hash.AppendData(PixelFormatTag);
-
-            var hasAlpha = false;
-            for (var y = 0; y < source.PixelHeight; y += rowsPerBand)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var rowCount = Math.Min(rowsPerBand, source.PixelHeight - y);
-                var byteCount = checked(stride * rowCount);
-                source.CopyPixels(
-                    new Int32Rect(0, y, source.PixelWidth, rowCount),
-                    buffer,
-                    stride,
-                    offset: 0);
-                var pixels = buffer.AsSpan(0, byteCount);
-                for (var index = 3; index < pixels.Length; index += 4)
-                {
-                    hasAlpha |= pixels[index] != byte.MaxValue;
-                }
-
-                hash.AppendData(pixels);
-            }
-
-            return new PixelIdentity(
-                Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant(),
-                hasAlpha);
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(buffer);
-        }
-    }
-
     private BitmapSource CreateThumbnail(BitmapSource source)
     {
         var maximumEdge = Math.Max(source.PixelWidth, source.PixelHeight);
@@ -396,5 +339,4 @@ internal sealed class ClipboardImageNormalizer : IClipboardImageNormalizationEng
         encoder.Save(output);
     }
 
-    private sealed record PixelIdentity(string SemanticHash, bool HasAlpha);
 }

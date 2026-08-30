@@ -31,6 +31,7 @@
 | R21 | CF_BITMAP 不按 HGLOBAL 读取，优先复制系统合成 DIB/DIBV5 | 剪贴板图片 | 是 |
 | R22 | 图片像素格式与 CF_HDROP 同现时不得仅凭 HDROP 判为文件 | 剪贴板图片 | 是 |
 | R23 | 图片缩略图只按稳定展示槽可见性加载并以版本化容器门禁落地 | 剪贴板图片 UI | 是 |
+| R24 | 图片 replay 必须区分资产完整性失败与暂存/写入环境失败 | 剪贴板图片写回 | 是 |
 
 ## 规则
 
@@ -174,6 +175,12 @@
   - 最后验证：2026-08-31。
   - 状态：active；隔离 Release 62/62 + 310/310 共 372/372、浅/深当前 DPI 真实渲染和 win-x64 自包含发布通过。产品组合根仍未启用 Image；150%/200% 物理跨屏与真实图片卡长期曲线保留 M2.3.7/M2.4。
 
+- [ ] R24：Image replay 的仓储查询只能返回 semantic hash、主资产引用与尺寸/Alpha/DPI descriptor；物化阶段必须以有生命周期的只读 lease 重新校验 Ready/revision、SHA-256、严格 PNG/WIC 和 `Vok.Image.Pixel.v1`，不得把路径或完整原图 `byte[]` 交给 App/VM。只有内容/像素完整性失败可按 `(hash, revision)` quarantine；取消、暂存目录不可用、DIB 生成或剪贴板写入失败不得污染 Ready 资产。writer 只在单一 Clipboard STA 一次 `EmptyClipboard` 后按 PNG→CF_DIBV5→marker 分块写入；成功转移的 HGLOBAL 归系统，失败只释放未转移句柄并清除半份内容。Controller 必须在物化成功后才隐藏，并在所有终态释放 materialization，继续复用 receipt/generation/focus 门禁。
+  - 范围：M2.3.6 primary replay、DIBV5、WindowsClipboardWriter、ClipboardPasteController、取消与退出清理。
+  - 证据：2026-08-31 隔离测试验证 semantic mismatch 会 quarantine，而预取消、过期 revision 和已关闭 replay staging store 均不改变 Ready primary；生成的 124-byte V5 header、bottom-up BGRA8、RGBA masks、sRGB、DPI 与严格 DIB parser 一致。writer 的 marker 失败、流长度不符和分块中取消均清除已转移格式、只显式释放未转移句柄。33 项 materializer/writer/paste/asset 定向测试连续五轮通过；独立 Window Station `reportVersion=5, success=true` 真实验证 PNG+DIBV5+marker receipt、自写抑制与外部覆盖失效。
+  - 最后验证：2026-08-31。
+  - 状态：active；M2.3.6 隔离切片已闭环，产品组合根仍留到 M2.3.7 一次接入。
+
 ### 存储与规模
 
 - [ ] R5：不得在 UI Dispatcher 上执行 Microsoft.Data.Sqlite；数据库写入由显式执行器串行化并使用 WAL。数据库升级必须同时核验版本号与真实表结构，在单事务内迁移并让未知结构原样回滚；`CREATE TABLE IF NOT EXISTS` 只能建新表，不能冒充已有表迁移。大集合必须同时实施 SQL 分页和 WPF 容器虚拟化，不能把 UI 虚拟化当作数据虚拟化。
@@ -222,6 +229,7 @@
 - 纯 Bitmap 来源漏图、GDI 句柄越界或把 `CF_BITMAP` 当普通字节读取 → 检查 R21；优先观察同次快照中的系统合成 DIB/DIBV5。
 - 截图或聊天图片被记成临时文件、图片格式存在却走 FileList → 检查 R22；不要仅按 `CF_HDROP` 是否存在分类。
 - 图片卡一直空白、滚动后串图、隐藏后缩略图仍驻留或图片越多内存越高 → 检查 R23；不要用空 `Image.ActualWidth` 判可见、分页预加载或只凭异步完成顺序绑定。
+- 图片原图无法回放、资产无故被隔离、粘贴失败后剩半份格式或句柄/临时文件不回落 → 检查 R24；先区分内容完整性、环境故障和 HGLOBAL 是否已转移。
 - 条目增加导致 UI/内存线性增长 → 检查 R5。
 - Debug 正常但发布版互操作失败 → 检查 R6。
 - 测试命令成功但显示 0 项测试 → 检查 R7。

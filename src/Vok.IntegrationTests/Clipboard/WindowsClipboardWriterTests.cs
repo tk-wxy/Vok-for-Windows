@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using Vok.Core.Clipboard;
@@ -162,6 +163,134 @@ public sealed class WindowsClipboardWriterTests
         Assert.Empty(native.TransferredFormats);
     }
 
+    [Fact]
+    public void ImageWriteStreamsPngDibV5AndMarkerInCompatibilityOrder()
+    {
+        using var native = new WriteFakeWindowsClipboardNativeApi(sequence: 100);
+        var known = new ClipboardKnownFormats(native);
+        var instanceId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+        var writer = new WindowsClipboardWriter(
+            native,
+            known,
+            instanceId,
+            copyBufferBytes: 3);
+        var png = Enumerable.Range(0, 17).Select(static value => (byte)value).ToArray();
+        var dib = Enumerable.Range(0, 140).Select(static value => (byte)value).ToArray();
+        using var materialization = new ClipboardImageReplayMaterialization(
+            new string('b', 64),
+            2,
+            2,
+            hasAlpha: true,
+            dpiXMilli: 96_000,
+            dpiYMilli: 96_000,
+            new ByteLease(png),
+            new ByteLease(dib));
+
+        var receipt = writer.WriteImage(
+            0,
+            materialization,
+            operationId,
+            CancellationToken.None);
+
+        Assert.Equal(
+            [
+                known.Png.Id,
+                ClipboardKnownFormats.DibV5,
+                known.InternalWriteMarker.Id,
+            ],
+            native.TransferredFormats);
+        Assert.Equal(png, native.ReadBytes(known.Png.Id));
+        Assert.Equal(dib, native.ReadBytes(ClipboardKnownFormats.DibV5));
+        Assert.Equal(materialization.SemanticHash, receipt.SemanticHash);
+        Assert.True(ClipboardInternalWriteMarker.TryDecode(
+            native.ReadBytes(known.InternalWriteMarker.Id),
+            out var marker));
+        Assert.True(marker.Matches(instanceId, receipt));
+        Assert.True(writer.IsCurrent(0, receipt));
+    }
+
+    [Fact]
+    public void ImageMarkerFailureClearsTransferredPngAndDibWithoutDoubleFree()
+    {
+        using var native = new WriteFakeWindowsClipboardNativeApi(sequence: 110);
+        var known = new ClipboardKnownFormats(native);
+        native.FailFormat = known.InternalWriteMarker.Id;
+        var writer = new WindowsClipboardWriter(native, known, Guid.NewGuid());
+        using var materialization = ImageMaterialization();
+
+        Assert.Throws<InvalidOperationException>(() => writer.WriteImage(
+            0,
+            materialization,
+            Guid.NewGuid(),
+            CancellationToken.None));
+
+        Assert.Equal(1, native.FreedHandleCount);
+        Assert.Empty(native.TransferredFormats);
+        Assert.False(native.IsOpen);
+    }
+
+    [Fact]
+    public void ImageCancellationDuringChunkCopyClearsClipboardAndFreesUntransferredHandle()
+    {
+        using var native = new WriteFakeWindowsClipboardNativeApi(sequence: 120);
+        var known = new ClipboardKnownFormats(native);
+        var writer = new WindowsClipboardWriter(
+            native,
+            known,
+            Guid.NewGuid(),
+            copyBufferBytes: 4);
+        using var cancellation = new CancellationTokenSource();
+        using var materialization = new ClipboardImageReplayMaterialization(
+            new string('c', 64),
+            1,
+            1,
+            hasAlpha: false,
+            dpiXMilli: null,
+            dpiYMilli: null,
+            new ByteLease(
+                Enumerable.Range(0, 16).Select(static value => (byte)value).ToArray(),
+                cancellation.Cancel),
+            new ByteLease(new byte[128]));
+
+        Assert.Throws<OperationCanceledException>(() => writer.WriteImage(
+            0,
+            materialization,
+            Guid.NewGuid(),
+            cancellation.Token));
+
+        Assert.Equal(1, native.FreedHandleCount);
+        Assert.Empty(native.TransferredFormats);
+        Assert.False(native.IsOpen);
+    }
+
+    [Fact]
+    public void ImageStreamLengthMismatchClearsClipboardAndFreesUntransferredHandle()
+    {
+        using var native = new WriteFakeWindowsClipboardNativeApi(sequence: 130);
+        var known = new ClipboardKnownFormats(native);
+        var writer = new WindowsClipboardWriter(native, known, Guid.NewGuid());
+        using var materialization = new ClipboardImageReplayMaterialization(
+            new string('e', 64),
+            1,
+            1,
+            hasAlpha: false,
+            dpiXMilli: null,
+            dpiYMilli: null,
+            new ByteLease([1, 2, 3, 4], declaredLength: 8),
+            new ByteLease(new byte[128]));
+
+        Assert.Throws<InvalidDataException>(() => writer.WriteImage(
+            0,
+            materialization,
+            Guid.NewGuid(),
+            CancellationToken.None));
+
+        Assert.Equal(1, native.FreedHandleCount);
+        Assert.Empty(native.TransferredFormats);
+        Assert.False(native.IsOpen);
+    }
+
     private static ClipboardReplayPayload RichPayload() => new(
         ClipboardContentKind.Text,
         new string('a', 64),
@@ -199,6 +328,54 @@ public sealed class WindowsClipboardWriterTests
             files);
     }
 
+    private static ClipboardImageReplayMaterialization ImageMaterialization() => new(
+        new string('d', 64),
+        1,
+        1,
+        hasAlpha: false,
+        dpiXMilli: null,
+        dpiYMilli: null,
+        new ByteLease([1, 2, 3, 4]),
+        new ByteLease(new byte[128]));
+
+    private sealed class ByteLease(
+        byte[] bytes,
+        Action? onFirstRead = null,
+        long? declaredLength = null)
+        : IClipboardPayloadLease
+    {
+        private int _disposed;
+
+        public long Length => declaredLength ?? bytes.LongLength;
+
+        public Stream OpenRead()
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            return onFirstRead is null
+                ? new MemoryStream(bytes, writable: false)
+                : new CallbackMemoryStream(bytes, onFirstRead);
+        }
+
+        public void Dispose() => Interlocked.Exchange(ref _disposed, 1);
+    }
+
+    private sealed class CallbackMemoryStream(byte[] bytes, Action callback)
+        : MemoryStream(bytes, writable: false)
+    {
+        private int _called;
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var read = base.Read(buffer, offset, count);
+            if (read > 0 && Interlocked.Exchange(ref _called, 1) == 0)
+            {
+                callback();
+            }
+
+            return read;
+        }
+    }
+
     private sealed class WriteFakeWindowsClipboardNativeApi(uint sequence)
         : IWindowsClipboardNativeApi, IDisposable
     {
@@ -214,6 +391,8 @@ public sealed class WindowsClipboardWriterTests
         public string? FailFormatName { get; init; }
 
         public bool FailClose { get; init; }
+
+        public uint? FailFormat { get; set; }
 
         public bool IsOpen { get; private set; }
 
@@ -293,7 +472,8 @@ public sealed class WindowsClipboardWriterTests
         {
             if (FailFormatName is not null &&
                 _registered.TryGetValue(FailFormatName, out var failedFormat) &&
-                format == failedFormat)
+                format == failedFormat ||
+                FailFormat == format)
             {
                 _lastError = 5;
                 return 0;

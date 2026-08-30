@@ -1,4 +1,6 @@
+using System.Buffers;
 using System.Buffers.Binary;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using Vok.Core.Clipboard;
@@ -17,12 +19,15 @@ internal sealed class WindowsClipboardWriter
     private readonly IWindowsClipboardNativeApi _native;
     private readonly ClipboardKnownFormats _knownFormats;
     private readonly Guid _instanceId;
+    private readonly int _copyBufferBytes;
     private ClipboardWriteReceipt? _lastReceipt;
 
     public WindowsClipboardWriter(
         IWindowsClipboardNativeApi native,
         ClipboardKnownFormats knownFormats,
-        Guid instanceId)
+        Guid instanceId,
+        int copyBufferBytes =
+            ClipboardImageCaptureOptions.DefaultLeaseCopyBufferBytes)
     {
         _native = native ?? throw new ArgumentNullException(nameof(native));
         _knownFormats = knownFormats ?? throw new ArgumentNullException(nameof(knownFormats));
@@ -31,7 +36,10 @@ internal sealed class WindowsClipboardWriter
             throw new ArgumentOutOfRangeException(nameof(instanceId));
         }
 
+        ArgumentOutOfRangeException.ThrowIfLessThan(copyBufferBytes, 1);
+
         _instanceId = instanceId;
+        _copyBufferBytes = copyBufferBytes;
     }
 
     public ClipboardWriteReceipt Write(
@@ -42,6 +50,39 @@ internal sealed class WindowsClipboardWriter
         ArgumentNullException.ThrowIfNull(payload);
         ArgumentOutOfRangeException.ThrowIfEqual(operationId, Guid.Empty);
         var formats = CreateFormats(payload, operationId);
+        return WriteFormats(
+            ownerWindow,
+            formats,
+            operationId,
+            payload.SemanticHash,
+            CancellationToken.None);
+    }
+
+    public ClipboardWriteReceipt WriteImage(
+        nint ownerWindow,
+        ClipboardImageReplayMaterialization materialization,
+        Guid operationId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(materialization);
+        ArgumentOutOfRangeException.ThrowIfEqual(operationId, Guid.Empty);
+        var formats = CreateImageFormats(materialization, operationId);
+        return WriteFormats(
+            ownerWindow,
+            formats,
+            operationId,
+            materialization.SemanticHash,
+            cancellationToken);
+    }
+
+    private ClipboardWriteReceipt WriteFormats(
+        nint ownerWindow,
+        IReadOnlyList<WriteFormat> formats,
+        Guid operationId,
+        string semanticHash,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!_native.Open(ownerWindow))
         {
             throw new InvalidOperationException(
@@ -59,10 +100,11 @@ internal sealed class WindowsClipboardWriter
             }
 
             clipboardEmptied = true;
+            _lastReceipt = null;
 
             foreach (var format in formats)
             {
-                Transfer(format.Id, format.Bytes);
+                Transfer(format, cancellationToken);
             }
         }
         catch (Exception exception)
@@ -95,7 +137,7 @@ internal sealed class WindowsClipboardWriter
         var receipt = new ClipboardWriteReceipt(
             _native.GetSequenceNumber(),
             operationId,
-            payload.SemanticHash);
+            semanticHash);
         _lastReceipt = receipt;
         return receipt;
     }
@@ -191,6 +233,26 @@ internal sealed class WindowsClipboardWriter
         return formats;
     }
 
+    private IReadOnlyList<WriteFormat> CreateImageFormats(
+        ClipboardImageReplayMaterialization materialization,
+        Guid operationId) =>
+    [
+        new WriteFormat(
+            _knownFormats.Png.Id,
+            materialization.CanonicalPngByteLength,
+            materialization.OpenCanonicalPngReadStream),
+        new WriteFormat(
+            ClipboardKnownFormats.DibV5,
+            materialization.DibV5ByteLength,
+            materialization.OpenDibV5ReadStream),
+        new WriteFormat(
+            _knownFormats.InternalWriteMarker.Id,
+            new ClipboardInternalWriteMarker(
+                _instanceId,
+                operationId,
+                materialization.SemanticHash).Encode()),
+    ];
+
     private IReadOnlyList<WriteFormat> CreateFileFormats(
         ClipboardReplayPayload payload,
         Guid operationId)
@@ -232,9 +294,19 @@ internal sealed class WindowsClipboardWriter
         ];
     }
 
-    private void Transfer(uint format, byte[] bytes)
+    private void Transfer(
+        WriteFormat format,
+        CancellationToken cancellationToken)
     {
-        var handle = _native.AllocateGlobal((nuint)bytes.Length);
+        if (format.Length is < 1 ||
+            (ulong)format.Length > (ulong)nuint.MaxValue)
+        {
+            throw new InvalidDataException(
+                "The clipboard write format has an invalid byte length.");
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var handle = _native.AllocateGlobal(checked((nuint)format.Length));
         if (handle == 0)
         {
             throw new InvalidOperationException(
@@ -251,19 +323,49 @@ internal sealed class WindowsClipboardWriter
                     $"GlobalLock failed with Win32 error {_native.GetLastError()}.");
             }
 
+            var buffer = ArrayPool<byte>.Shared.Rent(_copyBufferBytes);
             try
             {
-                Marshal.Copy(bytes, 0, pointer, bytes.Length);
+                using var stream = format.OpenRead();
+                var offset = 0L;
+                while (offset < format.Length)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var requested = (int)Math.Min(
+                        format.Length - offset,
+                        buffer.Length);
+                    var read = stream.Read(buffer, 0, requested);
+                    if (read == 0)
+                    {
+                        throw new InvalidDataException(
+                            "The clipboard write payload ended before its declared length.");
+                    }
+
+                    Marshal.Copy(
+                        buffer,
+                        0,
+                        pointer + checked((nint)offset),
+                        read);
+                    offset += read;
+                }
+
+                if (stream.ReadByte() != -1)
+                {
+                    throw new InvalidDataException(
+                        "The clipboard write payload exceeds its declared length.");
+                }
             }
             finally
             {
+                ArrayPool<byte>.Shared.Return(buffer);
                 _native.UnlockGlobal(handle);
             }
 
-            if (_native.SetData(format, handle) == 0)
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_native.SetData(format.Id, handle) == 0)
             {
                 throw new InvalidOperationException(
-                    $"SetClipboardData failed for format {format} with Win32 error {_native.GetLastError()}.");
+                    $"SetClipboardData failed for format {format.Id} with Win32 error {_native.GetLastError()}.");
             }
 
             transferred = true;
@@ -317,5 +419,40 @@ internal sealed class WindowsClipboardWriter
         return result;
     }
 
-    private sealed record WriteFormat(uint Id, byte[] Bytes);
+    private sealed class WriteFormat
+    {
+        private readonly Func<Stream> _openRead;
+
+        public WriteFormat(uint id, byte[] bytes)
+            : this(
+                id,
+                bytes?.LongLength ?? throw new ArgumentNullException(nameof(bytes)),
+                () => new MemoryStream(bytes, writable: false))
+        {
+        }
+
+        public WriteFormat(uint id, long length, Func<Stream> openRead)
+        {
+            Id = id;
+            Length = length;
+            _openRead = openRead ?? throw new ArgumentNullException(nameof(openRead));
+        }
+
+        public uint Id { get; }
+
+        public long Length { get; }
+
+        public Stream OpenRead()
+        {
+            var stream = _openRead();
+            if (stream is null || !stream.CanRead)
+            {
+                stream?.Dispose();
+                throw new InvalidDataException(
+                    "The clipboard write payload did not provide a readable stream.");
+            }
+
+            return stream;
+        }
+    }
 }
