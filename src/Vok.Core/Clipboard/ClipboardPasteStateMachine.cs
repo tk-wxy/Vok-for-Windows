@@ -12,6 +12,7 @@ public enum ClipboardPasteState
     CopiedOnly = 7,
     Failed = 8,
     Cancelled = 9,
+    CreatingFile = 10,
 }
 public readonly record struct ClipboardPasteTransition(
     bool Accepted,
@@ -77,6 +78,8 @@ public sealed class ClipboardPasteStateMachine
     private static bool CanAdvance(ClipboardPasteState current, ClipboardPasteState next) =>
         (current, next) is
             (ClipboardPasteState.Materializing, ClipboardPasteState.WritingClipboard) or
+            (ClipboardPasteState.Materializing, ClipboardPasteState.CreatingFile) or
+            (ClipboardPasteState.CreatingFile, ClipboardPasteState.HidingWorkspace) or
             (ClipboardPasteState.WritingClipboard, ClipboardPasteState.VerifyingCurrent) or
             (ClipboardPasteState.WritingClipboard, ClipboardPasteState.HidingWorkspace) or
             (ClipboardPasteState.HidingWorkspace, ClipboardPasteState.VerifyingCurrent) or

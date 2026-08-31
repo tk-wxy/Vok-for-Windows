@@ -26,6 +26,8 @@ public sealed class ClipboardCompositionRootTests
             service.ServiceType == typeof(ClipboardController));
         Assert.Single(services, static service =>
             service.ServiceType == typeof(ClipboardPasteController));
+        Assert.Single(services, static service =>
+            service.ServiceType == typeof(IClipboardImageDestinationService));
 
         using var provider = services.BuildServiceProvider();
         var imageOptions = provider.GetRequiredService<ClipboardImageCaptureOptions>();

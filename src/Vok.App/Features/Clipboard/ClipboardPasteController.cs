@@ -1,5 +1,6 @@
 using Vok.Core.Clipboard;
 using Vok.Hosting;
+using System.Globalization;
 
 namespace Vok.Features.Clipboard;
 
@@ -12,6 +13,8 @@ public sealed class ClipboardPasteController : IDisposable
     private readonly IPasteInputService _input;
     private readonly IClipboardFilePresentationService? _filePresentation;
     private readonly IClipboardImageReplayMaterializer? _imageReplayMaterializer;
+    private readonly IClipboardImageExportMaterializer? _imageExportMaterializer;
+    private readonly IClipboardImageDestinationService? _imageDestinationService;
     private readonly ClipboardPasteStateMachine _stateMachine = new();
     private readonly SemaphoreSlim _actionGate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
@@ -30,7 +33,9 @@ public sealed class ClipboardPasteController : IDisposable
             workspace,
             input,
             filePresentation: null,
-            imageReplayMaterializer: null)
+            imageReplayMaterializer: null,
+            imageExportMaterializer: null,
+            imageDestinationService: null)
     {
     }
 
@@ -48,7 +53,9 @@ public sealed class ClipboardPasteController : IDisposable
             workspace,
             input,
             filePresentation,
-            imageReplayMaterializer: null)
+            imageReplayMaterializer: null,
+            imageExportMaterializer: null,
+            imageDestinationService: null)
     {
     }
 
@@ -59,7 +66,9 @@ public sealed class ClipboardPasteController : IDisposable
         IWorkspaceCommands workspace,
         IPasteInputService input,
         IClipboardFilePresentationService? filePresentation,
-        IClipboardImageReplayMaterializer? imageReplayMaterializer)
+        IClipboardImageReplayMaterializer? imageReplayMaterializer,
+        IClipboardImageExportMaterializer? imageExportMaterializer = null,
+        IClipboardImageDestinationService? imageDestinationService = null)
     {
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
@@ -68,6 +77,8 @@ public sealed class ClipboardPasteController : IDisposable
         _input = input ?? throw new ArgumentNullException(nameof(input));
         _filePresentation = filePresentation;
         _imageReplayMaterializer = imageReplayMaterializer;
+        _imageExportMaterializer = imageExportMaterializer;
+        _imageDestinationService = imageDestinationService;
         _viewModel.PasteActionAsync = PasteAsync;
         _viewModel.CopyFileActionAsync = CopyFileAsync;
     }
@@ -121,6 +132,11 @@ public sealed class ClipboardPasteController : IDisposable
         ClipboardWriteReceipt? receipt = null;
         ClipboardFileTransferIntent? actualIntent = null;
         ClipboardImageReplayMaterialization? imageMaterialization = null;
+        ClipboardImageExportMaterialization? imageExportMaterialization = null;
+        WorkspacePasteTargetClaim? workspaceTargetClaim = null;
+        IClipboardImageDestinationClaim? imageDestinationClaim = null;
+        var imageFileBranchSelected = false;
+        string? createdImageFileName = null;
         try
         {
             var payload = await _repository
@@ -175,6 +191,92 @@ public sealed class ClipboardPasteController : IDisposable
             }
             else if (payload.Kind is ClipboardContentKind.Image)
             {
+                if (_imageExportMaterializer is not null &&
+                    _imageDestinationService is not null)
+                {
+                    workspaceTargetClaim = await _workspace
+                        .AcquirePasteTargetClaimAsync(cancellationToken)
+                        .ConfigureAwait(true);
+                    if (workspaceTargetClaim is not null)
+                    {
+                        imageDestinationClaim = await _imageDestinationService
+                            .ResolveAsync(
+                                workspaceTargetClaim.Target,
+                                cancellationToken)
+                            .ConfigureAwait(true);
+                    }
+
+                    if (workspaceTargetClaim is not null &&
+                        imageDestinationClaim is not null)
+                    {
+                        imageFileBranchSelected = true;
+                        imageExportMaterialization = await _imageExportMaterializer
+                            .MaterializeForExportAsync(payload, cancellationToken)
+                            .ConfigureAwait(true);
+                        RequireAdvance(
+                            generation,
+                            ClipboardPasteState.Materializing,
+                            ClipboardPasteState.CreatingFile);
+                        var creation = await _imageDestinationService
+                            .CreateAsync(
+                                imageDestinationClaim,
+                                imageExportMaterialization,
+                                CreateImageFileName(item.Entry.LastCapturedUtc),
+                                workspaceTargetClaim,
+                                cancellationToken)
+                            .ConfigureAwait(true);
+                        if (!creation.Created ||
+                            string.IsNullOrWhiteSpace(creation.CreatedFileName))
+                        {
+                            Finish(
+                                generation,
+                                ClipboardPasteState.Failed,
+                                "目标文件夹已变化，未创建图片文件。Vok 保持可见。");
+                            return;
+                        }
+
+                        createdImageFileName = creation.CreatedFileName;
+                        RequireAdvance(
+                            generation,
+                            ClipboardPasteState.CreatingFile,
+                            ClipboardPasteState.HidingWorkspace);
+                        WorkspaceActionHideResult imageHide;
+                        try
+                        {
+                            imageHide = await _workspace
+                                .HideAfterImageFileCreatedAsync(
+                                    workspaceTargetClaim,
+                                    cancellationToken)
+                                .ConfigureAwait(true);
+                        }
+                        catch (Exception exception)
+                        {
+                            Finish(
+                                generation,
+                                ClipboardPasteState.Completed,
+                                ImageCreatedButNotHiddenStatus(
+                                    createdImageFileName,
+                                    exception.Message));
+                            return;
+                        }
+
+                        Finish(
+                            generation,
+                            ClipboardPasteState.Completed,
+                            imageHide.Hidden
+                                ? $"已创建图片文件“{createdImageFileName}”。"
+                                : ImageCreatedButNotHiddenStatus(
+                                    createdImageFileName,
+                                    "Vok 未能自动隐藏"));
+                        return;
+                    }
+
+                    imageDestinationClaim?.Dispose();
+                    imageDestinationClaim = null;
+                    workspaceTargetClaim?.Dispose();
+                    workspaceTargetClaim = null;
+                }
+
                 if (_imageReplayMaterializer is null)
                 {
                     Finish(
@@ -279,24 +381,63 @@ public sealed class ClipboardPasteController : IDisposable
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            _stateMachine.Cancel(generation);
+            if (workspaceTargetClaim?.IsFileCreationAuthorized == true)
+            {
+                Finish(
+                    generation,
+                    ClipboardPasteState.Completed,
+                    createdImageFileName is null
+                        ? "图片文件创建操作已经提交，但应用正在退出；请检查目标目录，且不要重复创建。"
+                        : ImageCreatedButNotHiddenStatus(
+                            createdImageFileName,
+                            "应用正在退出，Vok 未能自动隐藏"));
+            }
+            else
+            {
+                _stateMachine.Cancel(generation);
+            }
         }
         catch (Exception exception)
         {
-            Finish(
-                generation,
-                receipt is null ? ClipboardPasteState.Failed : ClipboardPasteState.CopiedOnly,
-                receipt is null
-                    ? $"无法写入剪贴板：{exception.Message}"
-                    : actualIntent is ClipboardFileTransferIntent.Move
-                        ? $"已写入剪切，但自动粘贴未完成：{exception.Message}；手动粘贴将移动源文件。"
-                        : $"内容已复制，但自动粘贴未完成：{exception.Message}");
+            if (createdImageFileName is not null ||
+                workspaceTargetClaim?.IsFileCreationAuthorized == true)
+            {
+                Finish(
+                    generation,
+                    ClipboardPasteState.Completed,
+                    createdImageFileName is null
+                        ? "图片文件创建操作已经提交，但结果未能确认；请先检查目标目录，避免重复创建。"
+                        : ImageCreatedButNotHiddenStatus(
+                            createdImageFileName,
+                            exception.Message));
+            }
+            else if (imageFileBranchSelected)
+            {
+                Finish(
+                    generation,
+                    ClipboardPasteState.Failed,
+                    $"无法创建图片文件：{exception.Message}；Vok 保持可见。");
+            }
+            else
+            {
+                Finish(
+                    generation,
+                    receipt is null ? ClipboardPasteState.Failed : ClipboardPasteState.CopiedOnly,
+                    receipt is null
+                        ? $"无法写入剪贴板：{exception.Message}"
+                        : actualIntent is ClipboardFileTransferIntent.Move
+                            ? $"已写入剪切，但自动粘贴未完成：{exception.Message}；手动粘贴将移动源文件。"
+                            : $"内容已复制，但自动粘贴未完成：{exception.Message}");
+            }
         }
         finally
         {
             try
             {
-                imageMaterialization?.Dispose();
+                DisposeSafely(imageDestinationClaim);
+                DisposeSafely(workspaceTargetClaim);
+                DisposeSafely(imageExportMaterialization);
+                DisposeSafely(imageMaterialization);
             }
             finally
             {
@@ -310,6 +451,38 @@ public sealed class ClipboardPasteController : IDisposable
         string reason) => intent is ClipboardFileTransferIntent.Move
         ? $"已写入剪切；{reason}，请手动粘贴，粘贴将移动源文件。"
         : $"已复制到系统剪贴板；{reason}，请手动粘贴。";
+
+    private static string CreateImageFileName(DateTimeOffset capturedUtc) =>
+        string.Create(
+            CultureInfo.InvariantCulture,
+            $"Vok 图片 {capturedUtc.ToLocalTime():yyyy-MM-dd HHmmss}.png");
+
+    private static string ImageCreatedButNotHiddenStatus(
+        string fileName,
+        string reason) =>
+        $"图片文件“{fileName}”已创建，但 {reason}；不会重复创建。";
+
+    private void DisposeSafely(IDisposable? resource)
+    {
+        try
+        {
+            resource?.Dispose();
+        }
+        catch (Exception exception)
+        {
+            try
+            {
+                if (!_disposed)
+                {
+                    _workspace.ReportFault(exception);
+                }
+            }
+            catch
+            {
+                // Resource cleanup must continue even if diagnostics are unavailable.
+            }
+        }
+    }
 
     private void RequireAdvance(
         long generation,

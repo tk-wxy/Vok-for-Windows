@@ -15,6 +15,15 @@ public interface IWorkspaceCommands
         CancellationToken cancellationToken = default) =>
         Task.FromResult(WorkspaceActionHideResult.NotHidden);
 
+    Task<WorkspacePasteTargetClaim?> AcquirePasteTargetClaimAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<WorkspacePasteTargetClaim?>(null);
+
+    Task<WorkspaceActionHideResult> HideAfterImageFileCreatedAsync(
+        WorkspacePasteTargetClaim claim,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(WorkspaceActionHideResult.NotHidden);
+
     void EnsureVisible(
         ForegroundTarget foregroundTarget,
         long requestedTimestamp,

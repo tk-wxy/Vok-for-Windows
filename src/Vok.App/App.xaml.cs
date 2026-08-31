@@ -139,6 +139,9 @@ public partial class App : Application
         services.AddSingleton<ILauncherShellService, WindowsLauncherShellService>();
         services.AddSingleton<IClipboardFilePresentationService,
             WindowsClipboardFilePresentationService>();
+        services.AddSingleton<IClipboardImageDestinationService>(provider =>
+            new WindowsClipboardImageDestinationService(
+                provider.GetRequiredService<WindowsShellStaExecutor>()));
         services.AddSingleton(provider => ClipboardImageFeature.Create(
             provider.GetRequiredService<SqliteClipboardHistoryRepository>(),
             Current.Dispatcher,
@@ -178,7 +181,9 @@ public partial class App : Application
                 provider.GetRequiredService<IWorkspaceCommands>(),
                 provider.GetRequiredService<IPasteInputService>(),
                 provider.GetRequiredService<IClipboardFilePresentationService>(),
-                images.ReplayMaterializer);
+                images.ReplayMaterializer,
+                images.ExportMaterializer,
+                provider.GetRequiredService<IClipboardImageDestinationService>());
         });
         services.AddSingleton(provider =>
         {

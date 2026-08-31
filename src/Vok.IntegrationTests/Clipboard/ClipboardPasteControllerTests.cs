@@ -333,6 +333,236 @@ public sealed class ClipboardPasteControllerTests
         Assert.Equal(0, platform.ImageWriteCount);
     }
 
+    [Fact]
+    public async Task ImageFolderBranchCreatesPngWithoutTouchingClipboardOrInput()
+    {
+        var log = new List<string>();
+        var capturedUtc = new DateTimeOffset(2026, 8, 31, 12, 34, 56, TimeSpan.Zero);
+        var entry = ImageEntry(capturedUtc);
+        var repository = new FakeRepository(entry, log, ImagePayload(entry));
+        var viewModel = new ClipboardViewModel(repository);
+        var platform = new FakePlatform(log);
+        var workspace = new FakeWorkspace(log, CanInjectHide())
+        {
+            SupportsImageTarget = true,
+        };
+        using var replay = new FakeImageMaterializer(log);
+        using var export = new FakeImageExportMaterializer(log);
+        using var destination = new FakeImageDestinationService(log);
+        using var controller = new ClipboardPasteController(
+            viewModel,
+            repository,
+            platform,
+            workspace,
+            new FakeInput(log, succeeds: true),
+            filePresentation: null,
+            replay,
+            export,
+            destination);
+
+        await viewModel.PasteCommand.ExecuteAsync(new ClipboardItemViewModel(entry));
+
+        Assert.Equal(
+            ["materialize", "claim-target", "resolve-destination", "materialize-export", "create-file", "hide-created"],
+            log);
+        Assert.Equal(0, platform.WriteCount);
+        Assert.Equal(0, platform.ImageWriteCount);
+        Assert.Equal(
+            $"Vok 图片 {capturedUtc.ToLocalTime():yyyy-MM-dd HHmmss}.png",
+            destination.RequestedFileName);
+        Assert.True(export.LastLease?.IsDisposed is true);
+        Assert.Contains("已创建图片文件", viewModel.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task UnsupportedImageDestinationFallsBackToExistingSafePaste()
+    {
+        var log = new List<string>();
+        var entry = ImageEntry();
+        var repository = new FakeRepository(entry, log, ImagePayload(entry));
+        var viewModel = new ClipboardViewModel(repository);
+        var platform = new FakePlatform(log);
+        var workspace = new FakeWorkspace(log, CanInjectHide())
+        {
+            SupportsImageTarget = true,
+        };
+        using var replay = new FakeImageMaterializer(log);
+        using var export = new FakeImageExportMaterializer(log);
+        using var destination = new FakeImageDestinationService(log)
+        {
+            ResolveSupported = false,
+        };
+        using var controller = new ClipboardPasteController(
+            viewModel,
+            repository,
+            platform,
+            workspace,
+            new FakeInput(log, succeeds: true),
+            filePresentation: null,
+            replay,
+            export,
+            destination);
+
+        await viewModel.PasteCommand.ExecuteAsync(new ClipboardItemViewModel(entry));
+
+        Assert.Equal(
+            ["materialize", "claim-target", "resolve-destination", "materialize-image", "write", "hide", "verify", "inject"],
+            log);
+        Assert.Equal(1, platform.ImageWriteCount);
+        Assert.Null(export.LastLease);
+    }
+
+    [Fact]
+    public async Task StaleImageDestinationCreatesNothingAndKeepsWorkspaceVisible()
+    {
+        var log = new List<string>();
+        var entry = ImageEntry();
+        var repository = new FakeRepository(entry, log, ImagePayload(entry));
+        var viewModel = new ClipboardViewModel(repository);
+        var platform = new FakePlatform(log);
+        var workspace = new FakeWorkspace(log, CanInjectHide())
+        {
+            SupportsImageTarget = true,
+        };
+        using var replay = new FakeImageMaterializer(log);
+        using var export = new FakeImageExportMaterializer(log);
+        using var destination = new FakeImageDestinationService(log)
+        {
+            CreationStatus = ClipboardImageFileCreationStatus.StaleTarget,
+        };
+        using var controller = new ClipboardPasteController(
+            viewModel,
+            repository,
+            platform,
+            workspace,
+            new FakeInput(log, succeeds: true),
+            filePresentation: null,
+            replay,
+            export,
+            destination);
+
+        await viewModel.PasteCommand.ExecuteAsync(new ClipboardItemViewModel(entry));
+
+        Assert.DoesNotContain("hide-created", log);
+        Assert.DoesNotContain("write", log);
+        Assert.Contains("目标文件夹已变化", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.False(workspace.LastImageClaim?.IsFileCreationAuthorized);
+        Assert.True(export.LastLease?.IsDisposed is true);
+    }
+
+    [Fact]
+    public async Task CreatedImageIsReportedOnceWhenWorkspaceHideFails()
+    {
+        var log = new List<string>();
+        var entry = ImageEntry();
+        var repository = new FakeRepository(entry, log, ImagePayload(entry));
+        var viewModel = new ClipboardViewModel(repository);
+        var platform = new FakePlatform(log);
+        var workspace = new FakeWorkspace(log, WorkspaceActionHideResult.NotHidden)
+        {
+            SupportsImageTarget = true,
+            ThrowWhenHidingCreatedImage = true,
+        };
+        using var replay = new FakeImageMaterializer(log);
+        using var export = new FakeImageExportMaterializer(log);
+        using var destination = new FakeImageDestinationService(log);
+        using var controller = new ClipboardPasteController(
+            viewModel,
+            repository,
+            platform,
+            workspace,
+            new FakeInput(log, succeeds: true),
+            filePresentation: null,
+            replay,
+            export,
+            destination);
+
+        await viewModel.PasteCommand.ExecuteAsync(new ClipboardItemViewModel(entry));
+
+        Assert.Equal(1, destination.CreateCount);
+        Assert.DoesNotContain("write", log);
+        Assert.Contains("已创建", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.Contains("不会重复创建", viewModel.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RepeatedInvocationWhileImageCreateIsActiveCreatesOnlyOnce()
+    {
+        var log = new List<string>();
+        var entry = ImageEntry();
+        var repository = new FakeRepository(entry, log, ImagePayload(entry));
+        var viewModel = new ClipboardViewModel(repository);
+        var workspace = new FakeWorkspace(log, CanInjectHide())
+        {
+            SupportsImageTarget = true,
+        };
+        using var replay = new FakeImageMaterializer(log);
+        using var export = new FakeImageExportMaterializer(log);
+        using var destination = new FakeImageDestinationService(log)
+        {
+            HoldCreate = true,
+        };
+        using var controller = new ClipboardPasteController(
+            viewModel,
+            repository,
+            new FakePlatform(log),
+            workspace,
+            new FakeInput(log, succeeds: true),
+            filePresentation: null,
+            replay,
+            export,
+            destination);
+        var item = new ClipboardItemViewModel(entry);
+
+        var first = viewModel.PasteCommand.ExecuteAsync(item);
+        await destination.CreateStarted.Task.WaitAsync(
+            TestContext.Current.CancellationToken);
+        await viewModel.PasteCommand.ExecuteAsync(item);
+        destination.ReleaseCreate.TrySetResult();
+        await first;
+
+        Assert.Equal(1, destination.CreateCount);
+        Assert.Equal(1, log.Count(value => value == "materialize-export"));
+    }
+
+    [Fact]
+    public async Task FailureAfterFileAuthorizationNeverFallsBackToClipboard()
+    {
+        var log = new List<string>();
+        var entry = ImageEntry();
+        var repository = new FakeRepository(entry, log, ImagePayload(entry));
+        var viewModel = new ClipboardViewModel(repository);
+        var platform = new FakePlatform(log);
+        var workspace = new FakeWorkspace(log, CanInjectHide())
+        {
+            SupportsImageTarget = true,
+        };
+        using var replay = new FakeImageMaterializer(log);
+        using var export = new FakeImageExportMaterializer(log);
+        using var destination = new FakeImageDestinationService(log)
+        {
+            ThrowAfterAuthorization = true,
+        };
+        using var controller = new ClipboardPasteController(
+            viewModel,
+            repository,
+            platform,
+            workspace,
+            new FakeInput(log, succeeds: true),
+            filePresentation: null,
+            replay,
+            export,
+            destination);
+
+        await viewModel.PasteCommand.ExecuteAsync(new ClipboardItemViewModel(entry));
+
+        Assert.Equal(1, destination.CreateCount);
+        Assert.Equal(0, platform.ImageWriteCount);
+        Assert.DoesNotContain("hide-created", log);
+        Assert.Contains("请先检查目标目录", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.Contains("避免重复创建", viewModel.StatusText, StringComparison.Ordinal);
+    }
+
     private static ClipboardEntry Entry() => new(
         Guid.NewGuid(),
         ClipboardContentKind.Text,
@@ -363,8 +593,9 @@ public sealed class ClipboardPasteControllerTests
             files.Count);
     }
 
-    private static ClipboardEntry ImageEntry()
+    private static ClipboardEntry ImageEntry(DateTimeOffset? capturedUtc = null)
     {
+        var timestamp = capturedUtc ?? DateTimeOffset.UtcNow;
         var primary = new ClipboardAssetReference(
             new string('e', 64),
             ClipboardAssetState.Ready,
@@ -378,8 +609,8 @@ public sealed class ClipboardPasteControllerTests
             ClipboardContentKind.Image,
             new string('a', 64),
             "1×1",
-            DateTimeOffset.UtcNow,
-            DateTimeOffset.UtcNow,
+            timestamp,
+            timestamp,
             1,
             1,
             false,
@@ -580,6 +811,12 @@ public sealed class ClipboardPasteControllerTests
         List<string> log,
         WorkspaceActionHideResult result) : IWorkspaceCommands
     {
+        public bool SupportsImageTarget { get; init; }
+
+        public bool ThrowWhenHidingCreatedImage { get; init; }
+
+        public WorkspacePasteTargetClaim? LastImageClaim { get; private set; }
+
         public event EventHandler? ShutdownRequested;
 
         public Task StartAsync() => Task.CompletedTask;
@@ -591,6 +828,34 @@ public sealed class ClipboardPasteControllerTests
             CancellationToken cancellationToken = default)
         {
             log.Add("hide");
+            return Task.FromResult(result);
+        }
+
+        public Task<WorkspacePasteTargetClaim?> AcquirePasteTargetClaimAsync(
+            CancellationToken cancellationToken = default)
+        {
+            if (!SupportsImageTarget)
+            {
+                return Task.FromResult<WorkspacePasteTargetClaim?>(null);
+            }
+
+            log.Add("claim-target");
+            LastImageClaim = new WorkspacePasteTargetClaim(
+                7,
+                CanInjectHide().Target);
+            return Task.FromResult<WorkspacePasteTargetClaim?>(LastImageClaim);
+        }
+
+        public Task<WorkspaceActionHideResult> HideAfterImageFileCreatedAsync(
+            WorkspacePasteTargetClaim claim,
+            CancellationToken cancellationToken = default)
+        {
+            log.Add("hide-created");
+            if (ThrowWhenHidingCreatedImage)
+            {
+                throw new InvalidOperationException("hide failed");
+            }
+
             return Task.FromResult(result);
         }
 
@@ -685,6 +950,110 @@ public sealed class ClipboardPasteControllerTests
 
         public void Dispose()
         {
+        }
+    }
+
+    private sealed class FakeImageExportMaterializer(List<string> log)
+        : IClipboardImageExportMaterializer
+    {
+        public TrackingLease? LastLease { get; private set; }
+
+        public Task<ClipboardImageExportMaterialization> MaterializeForExportAsync(
+            ClipboardReplayPayload descriptor,
+            CancellationToken cancellationToken = default)
+        {
+            log.Add("materialize-export");
+            LastLease = new TrackingLease([1, 2, 3, 4]);
+            return Task.FromResult(new ClipboardImageExportMaterialization(
+                new string('e', 64),
+                descriptor.SemanticHash,
+                1,
+                1,
+                hasAlpha: false,
+                LastLease));
+        }
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class FakeImageDestinationService(List<string> log)
+        : IClipboardImageDestinationService
+    {
+        public bool ResolveSupported { get; init; } = true;
+
+        public ClipboardImageFileCreationStatus CreationStatus { get; init; } =
+            ClipboardImageFileCreationStatus.Created;
+
+        public bool HoldCreate { get; init; }
+
+        public bool ThrowAfterAuthorization { get; init; }
+
+        public int CreateCount { get; private set; }
+
+        public string? RequestedFileName { get; private set; }
+
+        public TaskCompletionSource CreateStarted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ReleaseCreate { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<IClipboardImageDestinationClaim?> ResolveAsync(
+            ForegroundTarget target,
+            CancellationToken cancellationToken = default)
+        {
+            log.Add("resolve-destination");
+            return Task.FromResult<IClipboardImageDestinationClaim?>(
+                ResolveSupported ? new FakeDestinationClaim() : null);
+        }
+
+        public async Task<ClipboardImageFileCreationResult> CreateAsync(
+            IClipboardImageDestinationClaim destination,
+            ClipboardImageExportMaterialization materialization,
+            string requestedFileName,
+            IClipboardImageFileCreationAuthorization authorization,
+            CancellationToken cancellationToken = default)
+        {
+            log.Add("create-file");
+            CreateCount++;
+            RequestedFileName = requestedFileName;
+            CreateStarted.TrySetResult();
+            if (HoldCreate)
+            {
+                await ReleaseCreate.Task.WaitAsync(cancellationToken);
+            }
+
+            if (CreationStatus is ClipboardImageFileCreationStatus.StaleTarget)
+            {
+                return ClipboardImageFileCreationResult.StaleTarget;
+            }
+
+            Assert.True(authorization.TryClaimFileCreation());
+            if (ThrowAfterAuthorization)
+            {
+                throw new InvalidOperationException("post-copy evidence unavailable");
+            }
+
+            return new ClipboardImageFileCreationResult(
+                ClipboardImageFileCreationStatus.Created,
+                requestedFileName,
+                TemporaryFilesCleaned: true);
+        }
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class FakeDestinationClaim : IClipboardImageDestinationClaim
+        {
+            public ClipboardImageDestinationKind Kind =>
+                ClipboardImageDestinationKind.FileSystemFolder;
+
+            public void Dispose()
+            {
+            }
         }
     }
 

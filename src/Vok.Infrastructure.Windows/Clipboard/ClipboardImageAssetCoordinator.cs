@@ -8,7 +8,8 @@ namespace Vok.Infrastructure.Windows.Clipboard;
 
 public sealed class ClipboardImageAssetCoordinator :
     IClipboardImageAssetService,
-    IClipboardImageReplayMaterializer
+    IClipboardImageReplayMaterializer,
+    IClipboardImageExportMaterializer
 {
     private static readonly TimeSpan DefaultShutdownWatchdog =
         TimeSpan.FromSeconds(5);
@@ -157,6 +158,17 @@ public sealed class ClipboardImageAssetCoordinator :
     {
         ArgumentNullException.ThrowIfNull(descriptor);
         return Enqueue(new MaterializeReplayWorkItem(
+            descriptor,
+            cancellationToken,
+            ReleaseJobSlot));
+    }
+
+    public Task<ClipboardImageExportMaterialization> MaterializeForExportAsync(
+        ClipboardReplayPayload descriptor,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(descriptor);
+        return Enqueue(new MaterializeExportWorkItem(
             descriptor,
             cancellationToken,
             ReleaseJobSlot));
@@ -534,6 +546,86 @@ public sealed class ClipboardImageAssetCoordinator :
             QuarantineReplayAsset(primary, exception);
             throw new InvalidDataException(
                 "The clipboard image primary pixels failed replay validation.",
+                exception);
+        }
+        finally
+        {
+            ownedCanonical?.Dispose();
+        }
+    }
+
+    private ClipboardImageExportMaterialization MaterializeExportCore(
+        ClipboardReplayPayload descriptor,
+        CancellationToken cancellationToken)
+    {
+        if (descriptor.Kind is not ClipboardContentKind.Image ||
+            descriptor.Image?.PrimaryPng is not
+            {
+                State: ClipboardAssetState.Ready,
+                Revision: >= 1,
+            } primary)
+        {
+            throw new InvalidDataException(
+                "The clipboard image export descriptor has no Ready primary asset.");
+        }
+
+        var stored = _repository.LoadAssetAsync(primary.Hash, cancellationToken)
+            .GetAwaiter()
+            .GetResult();
+        if (stored is null ||
+            stored.Revision != primary.Revision ||
+            stored.State is not ClipboardAssetState.Ready)
+        {
+            throw new InvalidDataException(
+                "The clipboard image primary asset changed before export.");
+        }
+
+        if (descriptor.Image is not { } image ||
+            stored.Asset.PixelWidth != image.PixelWidth ||
+            stored.Asset.PixelHeight != image.PixelHeight)
+        {
+            throw new InvalidDataException(
+                "The clipboard image export descriptor dimensions do not match its primary asset.");
+        }
+
+        IClipboardPayloadLease canonicalPng;
+        try
+        {
+            canonicalPng = _assetStore.OpenVerifiedPng(
+                stored.Asset,
+                cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            QuarantineReplayAsset(primary, exception);
+            throw new InvalidDataException(
+                "The clipboard image primary asset failed export validation.",
+                exception);
+        }
+
+        IClipboardPayloadLease? ownedCanonical = canonicalPng;
+        try
+        {
+            var transferredCanonical = ownedCanonical;
+            ownedCanonical = null;
+            return _replayEncoder.MaterializeForExport(
+                descriptor,
+                transferredCanonical,
+                cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (ClipboardImageReplayIntegrityException exception)
+        {
+            QuarantineReplayAsset(primary, exception);
+            throw new InvalidDataException(
+                "The clipboard image primary pixels failed export validation.",
                 exception);
         }
         finally
@@ -1020,6 +1112,28 @@ public sealed class ClipboardImageAssetCoordinator :
             CancellationToken cancellationToken)
         {
             var materialization = owner.MaterializeReplayCore(
+                descriptor,
+                cancellationToken);
+            if (!PublishSuccess(materialization))
+            {
+                materialization.Dispose();
+            }
+        }
+    }
+
+    private sealed class MaterializeExportWorkItem(
+        ClipboardReplayPayload descriptor,
+        CancellationToken callerCancellation,
+        Action releaseSlot)
+        : AssetWorkItem<ClipboardImageExportMaterialization>(
+            callerCancellation,
+            releaseSlot)
+    {
+        protected override void ExecuteCore(
+            ClipboardImageAssetCoordinator owner,
+            CancellationToken cancellationToken)
+        {
+            var materialization = owner.MaterializeExportCore(
                 descriptor,
                 cancellationToken);
             if (!PublishSuccess(materialization))

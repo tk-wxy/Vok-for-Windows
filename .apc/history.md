@@ -2,6 +2,12 @@
 
 > 归档超过滚动窗口的 `memory.md §0A` 完整会话。默认不读取，仅在取证时搜索；按时间从新到旧排列。
 
+### 会话 2026-08-31 - M2.3.5 可见图片卡与解码缓存
+
+- Core 新增不暴露路径的缩略图资产契约；asset coordinator 在单一串行工作项内核验 hash/state/revision、512 px 与编码 envelope，读取后重做 SHA-256、严格 PNG/WIC 解码，损坏只 quarantine thumbnail。图片删除若未注入资产服务会安全拒绝，避免只删数据库引用。
+- App 在现有 Recycling ListBox 加入等比不放大图片卡、主题棋盘透明背景、尺寸/状态/可访问名称；32 MiB LRU 按 `width × height × 4` 计费，UI 以 `OnLoad` 解码、关流、Freeze，ViewModel 不持有图片源。无 Source 的 Image 实测布局为 0，现以固定展示槽真实 viewport 判定；滚动、回收、换项、revision 变化、隐藏和退出先撤销绑定再取消，四维迟到门禁阻断串图。
+- 隔离 Release 62/62 + 310/310 共 372/372，生命周期/缓存定向五轮、win-x64 自包含发布和浅/深当前 DPI 快照通过；PID 23964 未替换。150%/200% 物理跨屏与真实产品卡仍待 M2.3.7，下一步 M2.3.6 图片 replay/write/paste。
+
 ### 会话 2026-08-30 - M2.3.4 内容寻址资产与 schema 5
 
 - `ContentAddressedClipboardAssetStore` 在同卷 staging 只拥有 `asset-*.tmp`，流式写入并 `Flush(true)` 后重新计算 PNG 文件 SHA-256、严格检查 chunk/CRC 并强制 WIC 分带像素解码；最终路径由小写 hash 唯一生成，同名目标只有完整复核通过才复用，未知内容绝不覆盖。

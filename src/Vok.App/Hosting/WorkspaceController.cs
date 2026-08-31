@@ -41,6 +41,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
     private long _pendingDragDeactivationGeneration;
     private long _pendingDragHotkeyHideGeneration;
     private ActiveHotkeyPress? _activeHotkeyPress;
+    private WorkspacePasteTargetClaim? _pendingPasteTargetClaim;
     private ForegroundRestoreStatus _lastRestoreStatus = ForegroundRestoreStatus.InvalidTarget;
     private WorkspaceRestoreDiagnosticSnapshot _restoreDiagnostic = WorkspaceRestoreDiagnosticSnapshot.None;
     private WorkspacePresentationObservation _lastObservation;
@@ -123,6 +124,139 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
     public Task<WorkspaceActionHideResult> HideForPasteActionAsync(
         CancellationToken cancellationToken = default) =>
         HideForActionAsync(WorkspaceHideReason.ClipboardPaste, cancellationToken);
+
+    public Task<WorkspacePasteTargetClaim?> AcquirePasteTargetClaimAsync(
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+        var completion = new TaskCompletionSource<WorkspacePasteTargetClaim?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var transactionClaim = 0;
+        var registration = cancellationToken.Register(() =>
+        {
+            if (Interlocked.CompareExchange(ref transactionClaim, 2, 0) == 0)
+            {
+                completion.TrySetCanceled(cancellationToken);
+            }
+        });
+        try
+        {
+            _window.PostNormal(() =>
+            {
+                if (Interlocked.CompareExchange(ref transactionClaim, 1, 0) != 0)
+                {
+                    return;
+                }
+
+                try
+                {
+                    if (_disposed ||
+                        Volatile.Read(ref _exitRequested) != 0 ||
+                        _stateMachine.State is not (WorkspaceState.Revealing or WorkspaceState.Visible) ||
+                        _stateMachine.Current is not { } session)
+                    {
+                        completion.TrySetResult(null);
+                        return;
+                    }
+
+                    InvalidatePasteTargetClaim();
+                    var claim = new WorkspacePasteTargetClaim(
+                        session.Generation,
+                        session.Target);
+                    _pendingPasteTargetClaim = claim;
+                    completion.TrySetResult(claim);
+                }
+                catch (Exception exception)
+                {
+                    completion.TrySetException(exception);
+                }
+            });
+        }
+        catch (Exception exception)
+        {
+            if (Interlocked.CompareExchange(ref transactionClaim, 2, 0) == 0)
+            {
+                completion.TrySetException(exception);
+            }
+        }
+
+        return AwaitPasteTargetClaimAsync(completion.Task, registration);
+    }
+
+    public Task<WorkspaceActionHideResult> HideAfterImageFileCreatedAsync(
+        WorkspacePasteTargetClaim claim,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(claim);
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+        var completion = new TaskCompletionSource<WorkspaceActionHideResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var transactionClaim = 0;
+        var registration = cancellationToken.Register(() =>
+        {
+            if (Interlocked.CompareExchange(ref transactionClaim, 2, 0) == 0)
+            {
+                completion.TrySetCanceled(cancellationToken);
+            }
+        });
+        try
+        {
+            _window.PostNormal(() =>
+            {
+                if (Interlocked.CompareExchange(ref transactionClaim, 1, 0) != 0)
+                {
+                    return;
+                }
+
+                try
+                {
+                    if (_disposed ||
+                        Volatile.Read(ref _exitRequested) != 0 ||
+                        !ReferenceEquals(_pendingPasteTargetClaim, claim) ||
+                        !claim.IsFileCreationAuthorized ||
+                        !_stateMachine.IsCurrentSession(claim.Generation) ||
+                        _stateMachine.State is not (WorkspaceState.Revealing or WorkspaceState.Visible))
+                    {
+                        completion.TrySetResult(WorkspaceActionHideResult.NotHidden);
+                        return;
+                    }
+
+                    _pendingPasteTargetClaim = null;
+                    completion.TrySetResult(Hide(
+                        WorkspaceHidePolicy.For(WorkspaceHideReason.ClipboardPaste)));
+                }
+                catch (Exception exception)
+                {
+                    completion.TrySetException(exception);
+                }
+            });
+        }
+        catch (Exception exception)
+        {
+            if (Interlocked.CompareExchange(ref transactionClaim, 2, 0) == 0)
+            {
+                completion.TrySetException(exception);
+            }
+        }
+
+        return AwaitActionHideCompletionAsync(completion.Task, registration);
+    }
+
+    private static async Task<WorkspacePasteTargetClaim?> AwaitPasteTargetClaimAsync(
+        Task<WorkspacePasteTargetClaim?> completion,
+        CancellationTokenRegistration cancellationRegistration)
+    {
+        try
+        {
+            return await completion.ConfigureAwait(false);
+        }
+        finally
+        {
+            cancellationRegistration.Dispose();
+        }
+    }
 
     private Task<WorkspaceActionHideResult> HideForActionAsync(
         WorkspaceHideReason reason,
@@ -240,6 +374,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         DetachPendingInputFocus();
         _pendingFenceGeneration = 0;
         _activeHotkeyPress = null;
+        InvalidatePasteTargetClaim();
         _hotkeyService.PressChanged -= OnHotkeyPressChanged;
         _hotkeyService.Faulted -= OnHotkeyFaulted;
         _window.HideRequested -= OnHideRequested;
@@ -575,6 +710,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
     private void Show(HotkeyInvocation invocation)
     {
         ClearExternalDragLease();
+        InvalidatePasteTargetClaim();
         var foregroundTarget = invocation.ForegroundTarget.ProcessId == Environment.ProcessId
             ? _foregroundWindowService.Capture()
             : invocation.ForegroundTarget;
@@ -631,6 +767,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         ForegroundTarget currentForeground = default)
     {
         ClearExternalDragLease();
+        InvalidatePasteTargetClaim();
         var session = _stateMachine.Current;
         var transition = _stateMachine.BeginHide(policy.Reason);
         if (!transition.Accepted || session is null)
@@ -746,6 +883,8 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         {
             return;
         }
+
+        InvalidatePasteTargetClaim();
 
         CancelRevealWatchdog();
         DetachPendingFirstFrame();
@@ -1517,6 +1656,13 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         {
             _viewModel.RecordFault(exception);
         }
+    }
+
+    private void InvalidatePasteTargetClaim()
+    {
+        var claim = _pendingPasteTargetClaim;
+        _pendingPasteTargetClaim = null;
+        claim?.Invalidate();
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);

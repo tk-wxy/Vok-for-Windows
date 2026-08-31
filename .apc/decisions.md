@@ -25,6 +25,7 @@
 - §19 启动台点击反馈、内部排序与外部拖放终态闭环 — 单击动画完成后启动，内部拖动先内存预览后单次持久化，外部 OLE 热路径不读取数据且所有终态先认领清理。
 - §20 文件剪贴板 DROPEFFECT 掩码与 MOVE 安全边界 — 兼容 Explorer 的 COPY 附加位，但 COPY/MOVE 歧义不得归一为移动。
 - §21 图片剪贴板 Gate 0 路由、单候选与容量边界 — 像素格式优先分类，每次只拥有 PNG 或一个 DIB 候选，以 8K 实测锁定 lease/worker 预算。
+- §22 图片卡的正向目录导出与代次提交边界 — 仅活动 Explorer 文件系统 View/Desktop 直接创建 canonical PNG，写前复核同一目标并在 Shell STA 认领工作区代次。
 
 ## 详情
 
@@ -232,4 +233,14 @@
 - **否决方案**：HDROP 绝对优先；同时复制 PNG 与 DIB 作为无条件后备；把 HBITMAP 当 HGLOBAL 或跨关闭持有；信任 `BI_RGB` 的孤立 Alpha mask；把 DPI 放进像素哈希；沿用 64 MiB 单格式/16 项纯计数队列；无上限接受任意维度、profile 或图片 burst；分页后预载全部缩略图；App 拼 asset path；用空 Image 自身尺寸判可见；把 ImageSource 常驻 ViewModel；把原图读成大 `byte[]`；显式发布 CF_BITMAP；所有 replay 错误一律 quarantine；另建一套图片焦点/注入状态机。
 - **新增失败模式**：合法 PNG header 仍可能在关闭剪贴板后 codec 失败，此时因单候选策略没有 DIB 后备；一个最坏 DIB job 会占大部分 384 MiB 预留，后续 burst 将明确过载丢弃；超过 8192 单边但总像素较小的超宽图也会拒绝；同像素不同 DPI 去重后 replay 物理尺寸不构成身份。文件已提交而数据库失败会留下无引用资产，等待同内容复用或 M2.4 清理；物理删除或最终 DB row 删除失败会留下 PendingDelete tombstone，启动重试；损坏文件保留为 Quarantined 证据。实现必须让这些结果可诊断，所有 reject/drop/cancel/exit 都释放 lease 与 reservation，且不得用提高上限、覆盖未知文件或跨类回退掩盖。
 - **决定 / 最后验证**：2026-08-28 / 2026-08-31。
-- **状态**：active；M2.3.1–6 的捕获/规范化/双资产/schema 5/缩略图 UI/replay 已由 M2.3.7 的单一图片功能所有者接入产品组合根，Controller 通过显式所有权接口转交 Image capture，缩略图、删除和 replay 共用同一 coordinator，资产根启动失败只降级图片功能。Release 62/62 + 330/330 共 392/392、61 项高风险定向五轮、Window Station `reportVersion=5, success=true`、PowerShell AST 和自包含发布通过；最终发布已替换旧 PID 4680，新 PID 12368 响应正常且已打开真实库 WAL。150%/200% 跨屏、真实图片来源×目标、4K/8K 长期资源曲线和真实用户库 schema/双引用核验仍未完成。
+- **状态**：active；M2.3.1–6 的捕获/规范化/双资产/schema 5/缩略图 UI/replay 已由 M2.3.7 的单一图片功能所有者接入产品组合根，Controller 通过显式所有权接口转交 Image capture，缩略图、删除和 replay 共用同一 coordinator，资产根启动失败只降级图片功能。Release 392/392、61 项高风险定向五轮、Window Station `reportVersion=5, success=true`、PowerShell AST 和自包含发布通过。真实库已验证 schema 5、6 条 Image/12 条双角色引用/11 个 Ready 资产与文件完整性；OS 进程终止后离线可读，重启前后状态摘要一致。重启后真实目标粘贴、150%/200% 跨屏、真实图片来源×目标以及 4K/8K 长期资源曲线仍未完成。
+
+### §22 图片卡的正向目录导出与代次提交边界
+
+- **最终方案**：图片卡主动作先取得绑定当前 Workspace generation 与呼出前 `ForegroundTarget` 的一次性声明。Windows 目标服务在共享 Shell/COM STA 中，仅以匹配顶层 HWND 的 `IShellWindows→QueryActiveShellView→IFolderView→IShellItem` 正向确认 Explorer 当前文件系统目录，或以 Shell 进程内的 Desktop Folder View 加 `FOLDERID_Desktop` 确认桌面；Automation、标题、地址栏和单纯进程名都不能授权。正向目标使用 asset coordinator 提供的 canonical PNG export lease，写前再次解析同一 HWND 身份、目标类型和路径，并在 Shell STA 紧邻 `IFileOperation` 副作用前原子消费工作区声明。目录分支不写剪贴板、不验证 receipt、不注入 `Ctrl+V`；其他、虚拟、歧义或无法确认的目标完整复用既有安全粘贴。默认名称来自条目 `LastCapturedUtc`，重名由 Shell 改名且不得覆盖。创建以整体 HRESULT、未 aborted、单项 `PostCopyItem/psiNewlyCreated`、目标目录归属及 SHA/长度共同确认；只有确认创建后才请求同代隐藏，隐藏失败仍报告文件已创建且当前动作不得重试。
+- **范围**：M2.3.8 图片卡点击、Explorer/Desktop 目标解析、Shell 文件创建、工作区 generation、资产 lease 与失败提示；首版覆盖全部 Image，因为当前模型没有可信截图来源。非文件系统 namespace、ZIP/库/搜索、第三方文件管理器、文件选择对话框、批量/格式/命名设置、新文件自动选中、公共桌面/UAC 和网络目录专项均后置。
+- **证据与根因**：同一 Explorer 顶层 HWND 的多标签会在 `IShellWindows` 出现多个候选，只有捕获焦点所在活动 View 能唯一选择真实目标；窗口标题、Automation 路径或 `explorer.exe` 进程名都可能在虚拟目录给出误导。真机 Gate 0 已通过 Explorer 目录、Desktop、同窗双标签切换、Terminal 反例与“此电脑”虚拟目录拒绝。IFileOperation report v2 证明整体 `PerformOperations` 成功仍需单项回调和 `psiNewlyCreated` 才能确认碰撞后的实际文件。文件创建与 WPF 隐藏跨两个所有者，若先隐藏或在 UI 排队时提前消费声明，会让旧代落盘或让“已创建但隐藏失败”被误当可重试失败；因此认领点放在 Shell STA 的最终目标复核之后、文件副作用之前，隐藏只接受同一已消费声明。Release 406/406 自动测试覆盖目录分支零 clipboard/input、非目标回退、旧代/未授权零副作用、双击一次、创建后隐藏失败、授权后结果不明不回退、export 完整性/取消，以及真实临时目录的 Unicode/碰撞/单项结果/字节/清理。
+- **否决方案**：按窗口标题、地址栏、Automation 或进程名猜路径；在 App/VM 暴露 CAS 路径或完整图片字节；先写临时文件再取得代次权限；目录分支仍写剪贴板并发送 `Ctrl+V`；用 `File.Copy` 覆盖同名文件；只看 `PerformOperations` 而不看单项结果；创建后隐藏失败自动重试；把虚拟 Shell namespace 强行转成本地路径。
+- **新增失败模式**：目标在物化或 Shell 排队期间换标签/关闭/复用 HWND；工作区隐藏、换代或退出先于文件认领；IFileOperation 已产生文件但回调、Unadvise 或后验校验失败；临时暂存清理失败；创建完成后新工作区已出现。实现以两次目标解析、私有一次性 destination claim、generation-scoped authorization、动作 gate、紧邻副作用认领、唯一临时目录、单项回调、目标 hash/length、同代隐藏和“已提交/已创建”保守终态限制影响；一旦 authorization 被消费，异常和取消都不得回退到剪贴板分支。
+- **决定 / 最后验证**：2026-08-31 / 2026-08-31。
+- **状态**：active；用户确认方案并授权实施，Gate 0、产品组合根、406/406 自动测试和新版物理交互全部通过。Explorer/桌面生成文件的 SHA 与 canonical 资产一致，碰撞保留原文件并改名；“此电脑”只推进 clipboard sequence 且不落盘，Paint 回退成功显示图片。M2.3.8 范围完成。

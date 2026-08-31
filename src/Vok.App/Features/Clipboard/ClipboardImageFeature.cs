@@ -38,6 +38,8 @@ internal sealed class ClipboardImageFeature : IDisposable
 
     public IClipboardImageReplayMaterializer? ReplayMaterializer => _assets;
 
+    public IClipboardImageExportMaterializer? ExportMaterializer => _assets;
+
     public IClipboardThumbnailCache? ThumbnailCache => _thumbnailCache;
 
     public static ClipboardImageFeature Create(

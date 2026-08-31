@@ -103,6 +103,65 @@ internal sealed class ClipboardImageReplayEncoder
         }
     }
 
+    public ClipboardImageExportMaterialization MaterializeForExport(
+        ClipboardReplayPayload descriptor,
+        IClipboardPayloadLease canonicalPng,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(descriptor);
+        ArgumentNullException.ThrowIfNull(canonicalPng);
+        var image = ValidateDescriptor(descriptor, canonicalPng.Length);
+        var primary = image.PrimaryPng!;
+
+        IClipboardPayloadLease? ownedCanonical = canonicalPng;
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            BitmapSource normalized;
+            try
+            {
+                normalized = DecodeCanonicalPng(
+                    canonicalPng,
+                    image.PixelWidth,
+                    image.PixelHeight,
+                    cancellationToken);
+            }
+            catch (InvalidDataException exception)
+            {
+                throw new ClipboardImageReplayIntegrityException(
+                    "The canonical clipboard PNG failed pixel export validation.",
+                    exception);
+            }
+
+            var identity = ClipboardImagePixelIdentity.Compute(
+                normalized,
+                cancellationToken);
+            if (!string.Equals(
+                    identity.SemanticHash,
+                    descriptor.SemanticHash,
+                    StringComparison.Ordinal) ||
+                identity.HasAlpha != image.HasAlpha)
+            {
+                throw new ClipboardImageReplayIntegrityException(
+                    "The canonical clipboard image pixels do not match their export descriptor.");
+            }
+
+            var materialization = new ClipboardImageExportMaterialization(
+                primary.Hash,
+                descriptor.SemanticHash,
+                image.PixelWidth,
+                image.PixelHeight,
+                image.HasAlpha,
+                ownedCanonical);
+            ownedCanonical = null;
+            return materialization;
+        }
+        finally
+        {
+            ownedCanonical?.Dispose();
+        }
+    }
+
     private ClipboardImageMetadata ValidateDescriptor(
         ClipboardReplayPayload descriptor,
         long canonicalPngLength)

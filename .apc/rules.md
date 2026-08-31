@@ -32,6 +32,7 @@
 | R22 | 图片像素格式与 CF_HDROP 同现时不得仅凭 HDROP 判为文件 | 剪贴板图片 | 是 |
 | R23 | 图片缩略图只按稳定展示槽可见性加载并以版本化容器门禁落地 | 剪贴板图片 UI | 是 |
 | R24 | 图片 replay 必须区分资产完整性失败与暂存/写入环境失败 | 剪贴板图片写回 | 是 |
+| R25 | 图片目录导出必须双重正向确认目标并在文件副作用前认领工作区代次 | 剪贴板图片写回 | 是 |
 
 ## 规则
 
@@ -181,13 +182,19 @@
   - 最后验证：2026-08-31。
   - 状态：active；M2.3.6 replay 切片已通过 M2.3.7 单一图片功能所有者接入产品，缩略图/删除/replay 共用同一 coordinator；自动门禁通过，真实目标粘贴仍待新版真机。
 
+- [ ] R25：图片直接落盘只允许正向识别的 Explorer 当前文件系统 View 或当前用户 Desktop。解析必须绑定已捕获顶层 HWND/进程/线程与焦点活动 View，拒绝虚拟、歧义和失效目标，并在写入前于共享 Shell STA 再次确认同一目标；Automation、标题、地址栏和进程名不能授权。工作区 generation 声明只能在最终复核后、`IFileOperation` 副作用前原子消费；未消费声明被隐藏、换代、退出或取消后不得落盘。目录分支不得修改剪贴板或注入输入；创建成功后隐藏失败、回调结果不明或取消都不得回退/重试，必须按“已创建”或“已提交待确认”报告。App/VM 不能取得资产路径或完整原图，目标文件须经单项回调、目录归属、SHA/长度和碰撞改名确认。
+  - 范围：M2.3.8 图片目标分流、Workspace generation、Shell/COM STA、IFileOperation、资产 export lease 与控制器终态。
+  - 证据：2026-08-31 真机 Gate 0 通过 Explorer、Desktop、同窗双标签、Terminal 与“此电脑”虚拟目录；双标签证明同一顶层 HWND 可有多个 Shell 候选，虚拟目录证明 `explorer.exe` 不能代表文件系统路径。IFileOperation report v2 通过单项 `PostCopyItem/psiNewlyCreated`、Unicode、连续碰撞、预取消、字节与清理。产品自动测试覆盖零 clipboard/input、非目标回退、旧代/未授权零副作用、双击一次、创建后隐藏失败与授权后结果不明；真实临时目录测试使用产品 COM ABI 验证碰撞和每项结果。
+  - 最后验证：2026-08-31。
+  - 状态：active；Gate 0、产品接线、0 警告 Release、406/406 自动测试及 Explorer/Desktop/碰撞/虚拟目录/Paint 新版物理交互全部通过。
+
 ### 存储与规模
 
 - [ ] R5：不得在 UI Dispatcher 上执行 Microsoft.Data.Sqlite；数据库写入由显式执行器串行化并使用 WAL。数据库升级必须同时核验版本号与真实表结构，在单事务内迁移并让未知结构原样回滚；`CREATE TABLE IF NOT EXISTS` 只能建新表，不能冒充已有表迁移。大集合必须同时实施 SQL 分页和 WPF 容器虚拟化，不能把 UI 虚拟化当作数据虚拟化。
   - 范围：SQLite、启动台、剪贴板历史、图片与后续大列表。
   - 证据：https://learn.microsoft.com/dotnet/standard/data/sqlite/async 说明 Async 方法实际同步；https://learn.microsoft.com/dotnet/desktop/wpf/advanced/optimizing-performance-controls 说明 WPF 没有内建数据虚拟化。2026-08-28 真机旧库因已有 `launcher_items` 使 `CREATE TABLE IF NOT EXISTS` 静默跳过，但代码仍写入版本并查询新列，复现 `no such column: target_kind`；schema 2 改为列集合识别和单事务迁移。M2.1–2 形成 schema 3/4。M2.3.4 以同一事务增加五个 nullable 图片列、`content_assets`、`clipboard_asset_refs`、CASCADE/RESTRICT 外键及引用/状态索引；fresh、schema 3、schema 4 与完整 schema 5 均按真实列/FK/index 识别，半迁移列和损坏 asset FK 原样拒绝。迁移定向验证 Text/FileList replay 均保留，图片分页只 LEFT JOIN 两个轻量引用，不读取 PNG。
-  - 最后验证：2026-08-30。
-  - 状态：active；设置、启动台与剪贴板共享串行所有权，schema 1→2→3→4→5、失败回滚、SQL 分页、WPF 虚拟化、重启持久化、去重/排序和取消一致性均有自动测试；真实用户库仍由用户运行中的旧实例占用，本轮未启动新默认实例或迁移该库。
+  - 最后验证：2026-08-31。
+  - 状态：active；设置、启动台与剪贴板共享串行所有权，schema 1→2→3→4→5、失败回滚、SQL 分页、WPF 虚拟化、去重/排序和取消一致性均有自动测试；真实用户库已迁移到 schema 5，并在 OS 进程终止后离线读取、新进程重开及前后状态摘要一致性中通过持久化核验。
 
 ### 发布与互操作
 
@@ -230,6 +237,7 @@
 - 截图或聊天图片被记成临时文件、图片格式存在却走 FileList → 检查 R22；不要仅按 `CF_HDROP` 是否存在分类。
 - 图片卡一直空白、滚动后串图、隐藏后缩略图仍驻留或图片越多内存越高 → 检查 R23；不要用空 `Image.ActualWidth` 判可见、分页预加载或只凭异步完成顺序绑定。
 - 图片原图无法回放、资产无故被隔离、粘贴失败后剩半份格式或句柄/临时文件不回落 → 检查 R24；先区分内容完整性、环境故障和 HGLOBAL 是否已转移。
+- 图片点入错误 Explorer 标签、虚拟目录误落盘、双击生成两份、创建成功却提示重试或目录分支改了剪贴板 → 检查 R25；不要用标题/Automation/进程名授权，也不要在最终 Shell 复核前消费代次声明。
 - 条目增加导致 UI/内存线性增长 → 检查 R5。
 - Debug 正常但发布版互操作失败 → 检查 R6。
 - 测试命令成功但显示 0 项测试 → 检查 R7。

@@ -515,6 +515,71 @@ public sealed class WorkspaceControllerTests
     }
 
     [Fact]
+    public async Task ImageTargetClaimMustAuthorizeCreationBeforeItCanHideWorkspace()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        var claim = await rig.Controller.AcquirePasteTargetClaimAsync(
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(claim);
+        Assert.Equal(ExternalTarget, claim.Target);
+        var rejected = await rig.Controller.HideAfterImageFileCreatedAsync(
+            claim,
+            TestContext.Current.CancellationToken);
+
+        Assert.False(rejected.Hidden);
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.DoesNotContain("window.hide", rig.Log);
+
+        Assert.True(claim.TryClaimFileCreation());
+        var hidden = await rig.Controller.HideAfterImageFileCreatedAsync(
+            claim,
+            TestContext.Current.CancellationToken);
+
+        Assert.True(hidden.Hidden);
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.Equal(1, rig.Log.Count(entry => entry == "window.hide"));
+    }
+
+    [Fact]
+    public async Task OrdinaryHideInvalidatesUnconsumedImageTargetClaim()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        var claim = await rig.Controller.AcquirePasteTargetClaimAsync(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(claim);
+
+        rig.Window.RaiseHideRequested(WorkspaceHideReason.Escape);
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.False(claim.TryClaimFileCreation());
+    }
+
+    [Fact]
+    public async Task AuthorizedOldImageClaimCannotHideNewWorkspaceGeneration()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        var claim = await rig.Controller.AcquirePasteTargetClaimAsync(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(claim);
+        Assert.True(claim.TryClaimFileCreation());
+
+        rig.Window.RaiseHideRequested(WorkspaceHideReason.Escape);
+        rig.Hotkey.Raise(NewSessionTarget);
+        var newGeneration = rig.StateMachine.Current!.Generation;
+        rig.Log.Clear();
+
+        var result = await rig.Controller.HideAfterImageFileCreatedAsync(
+            claim,
+            TestContext.Current.CancellationToken);
+
+        Assert.False(result.Hidden);
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.Equal(newGeneration, rig.StateMachine.Current!.Generation);
+        Assert.DoesNotContain("window.hide", rig.Log);
+    }
+
+    [Fact]
     public async Task ApplicationDeactivationStillHidesWhenForegroundObservationFails()
     {
         using var rig = await TestRig.CreateVisibleAsync();

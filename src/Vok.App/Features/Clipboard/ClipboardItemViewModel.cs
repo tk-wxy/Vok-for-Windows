@@ -71,7 +71,9 @@ public sealed partial class ClipboardItemViewModel : ObservableObject
 
     public string PasteToolTip => Entry.FileIntent is ClipboardFileTransferIntent.Move
         ? "剪切粘贴到呼出前目标；可能移动源文件"
-        : "粘贴到呼出前目标";
+        : IsImage
+            ? "粘贴到呼出前目标；文件夹或桌面将保存 PNG"
+            : "粘贴到呼出前目标";
 
     public string CapturedAtText => Entry.LastCapturedUtc
         .ToLocalTime()

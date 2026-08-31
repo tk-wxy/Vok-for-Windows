@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.IO;
+using System.Security.Cryptography;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Vok.Core.Clipboard;
@@ -180,6 +181,66 @@ public sealed class ClipboardImageReplayMaterializerTests
         Assert.Equal(ClipboardAssetState.Ready, stored.State);
         Assert.Equal(primary.Revision, stored.Revision);
         Assert.Equal(0, fixture.Coordinator.OutstandingReplayLeaseCount);
+    }
+
+    [Fact]
+    public async Task ExportMaterializationRevalidatesPixelsWithoutCreatingDibLease()
+    {
+        using var fixture = new ReplayFixture();
+        var entry = await fixture.CommitAsync();
+        var descriptor = await fixture.Repository.GetReplayPayloadAsync(
+            entry.Id,
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(descriptor);
+        var primary = Assert.IsType<ClipboardAssetReference>(
+            descriptor.Image?.PrimaryPng);
+
+        using var materialization = await fixture.Coordinator
+            .MaterializeForExportAsync(
+                descriptor,
+                TestContext.Current.CancellationToken);
+
+        Assert.Equal(primary.Hash, materialization.AssetHash);
+        Assert.Equal(entry.SemanticHash, materialization.SemanticHash);
+        Assert.Equal(2, materialization.PixelWidth);
+        Assert.Equal(2, materialization.PixelHeight);
+        Assert.True(materialization.HasAlpha);
+        using var stream = materialization.OpenCanonicalPngReadStream();
+        Assert.Equal(
+            primary.Hash,
+            Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant());
+        Assert.Equal(0, fixture.Coordinator.OutstandingReplayLeaseCount);
+
+        materialization.Dispose();
+        Assert.Throws<ObjectDisposedException>(
+            materialization.OpenCanonicalPngReadStream);
+    }
+
+    [Fact]
+    public async Task PreCanceledExportLeavesPrimaryReady()
+    {
+        using var fixture = new ReplayFixture();
+        var entry = await fixture.CommitAsync();
+        var descriptor = await fixture.Repository.GetReplayPayloadAsync(
+            entry.Id,
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(descriptor);
+        var primary = Assert.IsType<ClipboardAssetReference>(
+            descriptor.Image?.PrimaryPng);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            fixture.Coordinator.MaterializeForExportAsync(
+                descriptor,
+                cancellation.Token));
+
+        var stored = await fixture.Repository.LoadAssetAsync(
+            primary.Hash,
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(stored);
+        Assert.Equal(ClipboardAssetState.Ready, stored.State);
+        Assert.Equal(primary.Revision, stored.Revision);
     }
 
     private static byte[] DecodeBgra32(

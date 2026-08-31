@@ -47,6 +47,29 @@ public sealed class ClipboardPasteStateMachineTests
     }
 
     [Fact]
+    public void ImageFilePathRequiresCreateBeforeHide()
+    {
+        var machine = new ClipboardPasteStateMachine();
+        var started = machine.Begin(Guid.NewGuid());
+
+        Assert.True(machine.Advance(
+            started.Generation,
+            ClipboardPasteState.Materializing,
+            ClipboardPasteState.CreatingFile));
+        Assert.False(machine.Advance(
+            started.Generation,
+            ClipboardPasteState.CreatingFile,
+            ClipboardPasteState.VerifyingCurrent));
+        Assert.True(machine.Advance(
+            started.Generation,
+            ClipboardPasteState.CreatingFile,
+            ClipboardPasteState.HidingWorkspace));
+        Assert.True(machine.Finish(
+            started.Generation,
+            ClipboardPasteState.Completed));
+    }
+
+    [Fact]
     public void StaleGenerationCannotFinishNewAction()
     {
         var machine = new ClipboardPasteStateMachine();

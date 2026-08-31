@@ -444,7 +444,7 @@ clipboard_files
 - 完成 PNG + 兼容位图多表示写回；
 - 以 Snipping Tool、Print Screen、浏览器图片、聊天软件和透明 PNG 完成真机往返。
 
-状态：详细实施规划与 M2.3.0–M2.3.6 已完成，M2.3.7 的产品接线和基础自动门禁已完成。组合根现以单一图片功能所有者共享捕获参数、normalizer、资产 coordinator、缩略图缓存与 replay；Controller 已提交 Image 历史，产品能力文案只在该链成功初始化时声明图片，资产根启动失败会释放部分 worker 并只降级图片能力。Release 62/62 + 330/330 共 392/392、61 项高风险定向连续五轮、win-x64 自包含发布、PowerShell AST 与隔离 Window Station `reportVersion=5, success=true` 通过。真实来源×目标、150%/200% 物理跨屏、4K/8K 长期资源曲线和真实用户库 schema 5 迁移仍待新版产品真机验收，M2.3 尚未宣布完成。
+状态：详细实施规划与 M2.3.0–M2.3.6 已完成，M2.3.7 的产品接线和基础自动门禁已完成。组合根现以单一图片功能所有者共享捕获参数、normalizer、资产 coordinator、缩略图缓存与 replay；Controller 已提交 Image 历史，产品能力文案只在该链成功初始化时声明图片，资产根启动失败会释放部分 worker 并只降级图片能力。Release 392/392、61 项高风险定向连续五轮、win-x64 自包含发布、PowerShell AST 与隔离 Window Station `reportVersion=5, success=true` 通过。真实用户库 schema 5、6 条 Image/12 条双角色引用/11 个 Ready 资产已通过完整性核验；OS 进程终止后离线可读，重启前后状态摘要一致。真实来源×目标、重启后可见原图粘贴、150%/200% 物理跨屏和 4K/8K 长期资源曲线仍待验收，M2.3 尚未宣布完成。
 
 #### M2.3.0 实施前基线、语料与交付边界
 
@@ -631,7 +631,7 @@ Windows 已定义 DIBV5→DIB/Bitmap 的按需转换，因此基线不额外发�
 6. **writer + paste（已完成）**：加入 image replay materializer、PNG/DIBV5/marker 写回、receipt 与既有粘贴门禁；覆盖部分句柄转移、外部覆盖、取消、双击、旧代和退出；
 7. **产品接入与发布（接线和基础自动门禁已完成）**：组合根一次启用完整切片，跑 Release 全量测试、0 警告构建、win-x64 自包含发布、PowerShell AST、隔离 Window Station 图片往返和长期资源曲线后再做真机验收。
 
-实现状态（2026-08-31）：组合根通过单一 `ClipboardImageFeature` 显式拥有并按缩略图缓存→资产 coordinator→normalizer 的顺序释放完整图片链；同一 coordinator 同时服务双资产提交、缩略图读取、图片删除和 primary replay，没有重复 worker/store。`ClipboardController` 以窄所有权接口把 Image capture 转交 `Normalize→Commit`，单条图片失败只发布可观察降级并继续下一条监听，取消和退出仍由既有 5 秒 watchdog 收口。图片链初始化失败时释放已启动的部分资源，产品继续提供文本/文件并明确显示图片暂不可用；成功时空状态才声明文本、文件和图片。新增真实 normalization→双资产→schema 5 集成、组合根单例参数、连续失败、取消、部分启动失败和退出归零门禁；Release 392/392、61 项高风险五轮、自包含发布、7 个脚本 AST 与隔离 probe 通过。用户授权后已停止旧 PID 4680，并以最终自包含发布启动 PID 12368；进程 `Responding=True`，真实库 WAL 与 SHM 已由新进程打开，owned staging 文件为 0。交互产品验收、真实库 schema/双引用核验、物理 DPI 和长期资源曲线仍未验证。
+实现状态（2026-08-31）：组合根通过单一 `ClipboardImageFeature` 显式拥有并按缩略图缓存→资产 coordinator→normalizer 的顺序释放完整图片链；同一 coordinator 同时服务双资产提交、缩略图读取、图片删除和 primary replay，没有重复 worker/store。`ClipboardController` 以窄所有权接口把 Image capture 转交 `Normalize→Commit`，单条图片失败只发布可观察降级并继续下一条监听，取消和退出仍由既有 5 秒 watchdog 收口。图片链初始化失败时释放已启动的部分资源，产品继续提供文本/文件并明确显示图片暂不可用；成功时空状态才声明文本、文件和图片。新增真实 normalization→双资产→schema 5 集成、组合根单例参数、连续失败、取消、部分启动失败和退出归零门禁；Release 392/392、61 项高风险五轮、自包含发布、7 个脚本 AST 与隔离 probe 通过。真实库的 schema 5、6 条 Image/12 条双角色引用/11 个 Ready 资产已通过 SHA/长度/尺寸/外键核验；用 OS 进程终止模拟异常退出后离线库可读，重启前后状态摘要一致，新进程响应正常且 staging 为 0。重启后可见原图粘贴、完整来源×目标、物理 DPI 和长期资源曲线仍未验证。
 
 自动测试最低矩阵：
 
@@ -644,6 +644,22 @@ Windows 已定义 DIBV5→DIB/Bitmap 的按需转换，因此基线不额外发�
 - 4K/8K 与连续截图下 queue/reserved bytes/cache 始终不超命名预算，第二轮 burst 不出现单调增长，空闲后 job/lease/staging/句柄/线程归零或回到固定缓存上限。
 
 真机验收按来源×目标而不是只看 Vok 卡片：Snipping Tool、Print Screen、浏览器、Office、聊天软件和透明 PNG 各确认“捕获→卡片→重启→写回→目标粘贴”；目标至少覆盖 Paint、Office、浏览器可编辑区和一种聊天软件。核对方向、长宽比、色彩、透明 Alpha、像素尺寸、DPI/物理粘贴尺寸、重复回顶和 4K/8K 清晰度；快速连续截图时 UI/热键/文本文件监听仍响应。删除历史后 asset refs 与文件一致，不改变系统剪贴板；损坏主图、只损坏缩略图、目录只读/空间不足分别明确降级。验收后只读确认真实用户库 schema 5、Image 行、两个 asset refs 与对应文件，再宣布 M2.3 完成。
+
+#### M2.3.8 图片目标分流（已完成）
+
+图片卡主动作按呼出前目标分流：只有目标被正向确认成 Explorer 当前文件系统目录或 Windows Desktop 时，才把已复核的 canonical PNG 作为新文件复制到该目录；该分支不改写系统剪贴板、不注入 `Ctrl+V`。其他应用、虚拟目录和无法确认的目标继续走现有 `Materialize→Write→Hide/Restore→Verify→Inject`，不得仅凭 `explorer.exe` 进程名、窗口标题或地址栏文本猜测目录。当前数据模型没有可信“截图”来源，因此首版覆盖全部 Image，默认名使用 `Vok 图片 yyyy-MM-dd HHmmss.png` 和条目 `LastCapturedUtc`，重名必须改名而非覆盖。
+
+Windows 平台以既有共享 Shell/COM STA 拥有目标解析和 Shell 文件操作。Explorer 候选按已捕获的顶层 HWND 匹配 `IShellWindows`，再从活动 Shell View 取得 folder item；只有 `SFGAO_FOLDER | SFGAO_FILESYSTEM` 且实际目录存在时才可提交。Desktop 必须先证明捕获目标属于桌面 Folder View，再通过 `FOLDERID_Desktop` 取得当前用户的实际路径。资产 coordinator 继续拥有 primary Ready/revision、内容 SHA、严格 PNG/WIC 和像素身份复核；App/VM 不取得资产路径或完整原图 `byte[]`。复制期间以 lease/pin 阻止历史删除竞争，`IFileOperation.CopyItem` 负责新名称、碰撞改名和最终结果，只有 `PerformOperations`、未 aborted 及单项完成结果共同成功才算已创建。
+
+正式接线前先完成两个隔离 Gate 0：一是用显式全局热键记录 Windows 11 单窗口、多窗口、多标签页、Desktop 与虚拟目录的 HWND、活动 View 和路径一致性，不持久化原始路径；二是只在工具自建临时目录验证 Unicode 名称、连续碰撞、源字节不变、目标字节相等、预取消无副作用及失败清理。Gate 0 通过后才增加 generation-scoped 目标快照/动作认领和目录分支状态；文件创建前失败保持 Vok 可见，创建成功后才隐藏/恢复，创建成功但隐藏失败必须报告“文件已创建”且不得重试。自动验收还要证明目录分支剪贴板 sequence 不变、双击只创建一次、旧代不写文件、普通编辑区图片粘贴无回归。
+
+首版明确后置：非文件系统 Shell namespace、ZIP/库/搜索、第三方文件管理器、文件选择对话框、OLE 虚拟文件、批量导出、格式与命名设置、新文件自动选中、公共桌面/UAC，以及慢速网络目录是否需要独立执行器。
+
+Gate 0 与产品状态（2026-08-31）：隔离 `Vok.ImageDestinationProbe` 和 `Probe-M2ImageDestination.ps1` 已完整通过。IFileOperation 临时目录 report v2 及双实例并发验证 Shell/COM STA、预取消零副作用、Unicode 名称、连续碰撞改名、扩展名保留、源/目标字节相等、未 aborted、临时目录清理，以及每项恰好一次 `PreCopyItem/PostCopyItem`、一组 `Start/FinishOperations`、成功 HRESULT、有效 `psiNewlyCreated` 和 `Unadvise`。显式热键真机捕获已通过 Windows Terminal 安全反例、Explorer 文件系统目录、Desktop、同窗双标签切换及“此电脑”虚拟目录拒绝；最后一项保持 `Unsupported`，活动 View 与 Automation 均不产生文件系统路径。
+
+正式产品现已接线：asset coordinator 新增仅持有 canonical PNG 的 export materialization，继续复核 Ready/revision、内容 SHA、严格 PNG/WIC 与像素身份；Windows 目标服务在共享 Shell/COM STA 上只使用活动 Shell View/桌面 known folder 作授权，写入前重新解析同一 HWND 身份与目录，并在 generation-scoped 工作区声明被消费后才执行 `IFileOperation`。目录分支不调用 Clipboard writer、receipt 或输入注入；不支持目标完整退回既有图片安全粘贴。单项回调、目标 SHA/长度、碰撞改名和临时清理共同验证结果；创建成功后隐藏失败仍明确报告文件已创建，不重试。Release 构建 0 警告，Core 63/63 与 Windows/WPF 343/343 共 406/406 自动测试通过。
+
+新版自包含产品真机验收亦已通过：普通 Explorer 目录从空基线只生成一份 60,338-byte PNG，文件 SHA 与 CAS canonical 资产一致；Desktop 从空基线生成 2,749,130-byte PNG，再点同一条目得到保留原文件的“`- 副本.png`”，两份 SHA 相同；“此电脑”操作使 clipboard sequence `1959→1965` 而桌面/测试目录计数不变，证明虚拟目录安全回退；Paint 操作由用户确认图片显示，sequence `1965→1971` 且目录计数仍不变。PID 18136 全程响应正常。M2.3.8 范围完成；更广的来源×目标、Alpha、DPI、4K/8K 与长期资源矩阵仍阻止整个 M2.3 收口。
 
 ### M2.4：规模与故障门禁
 
