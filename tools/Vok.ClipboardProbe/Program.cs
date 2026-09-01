@@ -8,6 +8,7 @@ namespace Vok.ClipboardProbe;
 
 internal static class Program
 {
+    private const int DefaultExtendedImageRounds = 2;
     private const uint UnicodeText = 13;
     private const uint Dib = 8;
     private const uint DibV5 = 17;
@@ -20,9 +21,14 @@ internal static class Program
     private const string FileGroupDescriptorWName = "FileGroupDescriptorW";
     private const string FileContentsName = "FileContents";
 
-    public static async Task<int> Main()
+    public static async Task<int> Main(string[] args)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var extendedImageRounds = ReadExtendedImageRounds(args);
+        var runExtendedImageMatrix = extendedImageRounds is not null;
+        using var timeout = new CancellationTokenSource(
+            runExtendedImageMatrix
+                ? TimeSpan.FromMinutes(10)
+                : TimeSpan.FromSeconds(20));
         try
         {
             using var station = IsolatedWindowStation.Create();
@@ -293,6 +299,17 @@ internal static class Program
                 timeout.Token);
             _ = captures.Track(await ReadNextAsync(snapshots, timeout.Token));
 
+            ExtendedImageMatrixReport? extendedImageMatrix = null;
+            if (extendedImageRounds is int rounds)
+            {
+                extendedImageMatrix = await ExtendedImageMatrixProbe.RunAsync(
+                    producer,
+                    png,
+                    snapshots,
+                    rounds,
+                    timeout.Token);
+            }
+
             var success =
                 immediate.Disposition is ClipboardCaptureDisposition.Captured &&
                 immediate.Formats.Any(format =>
@@ -366,12 +383,15 @@ internal static class Program
                         ClipboardRepresentationKind.DibV5 or
                         ClipboardRepresentationKind.Dib &&
                     format.CaptureState is ClipboardFormatCaptureState.Failed) &&
-                malformedImageContent is null;
+                malformedImageContent is null &&
+                extendedImageMatrix?.Success is not false;
             var report = new
             {
                 schema = 5,
-                reportVersion = 5,
+                reportVersion = 6,
                 isolatedWindowStation = true,
+                extendedImageMatrixRequested = runExtendedImageMatrix,
+                extendedImageRounds,
                 immediate = Summarize(immediate),
                 delayed = Summarize(delayed),
                 excluded = Summarize(excluded),
@@ -449,6 +469,7 @@ internal static class Program
                     malformedDib = Summarize(malformedImageCapture),
                     malformedRouterRejected = malformedImageContent is null,
                 },
+                extendedImageMatrix,
                 diagnostics = service.GetDiagnosticSnapshot(),
                 success,
             };
@@ -462,6 +483,33 @@ internal static class Program
             Console.Error.WriteLine(exception);
             return 2;
         }
+    }
+
+    private static int? ReadExtendedImageRounds(string[] args)
+    {
+        var runExtended = args.Contains(
+            "--extended-image-matrix",
+            StringComparer.OrdinalIgnoreCase);
+        var roundsIndex = Array.FindIndex(
+            args,
+            static value => string.Equals(
+                value,
+                "--extended-image-rounds",
+                StringComparison.OrdinalIgnoreCase));
+        if (roundsIndex < 0)
+        {
+            return runExtended ? DefaultExtendedImageRounds : null;
+        }
+
+        if (roundsIndex == args.Length - 1 ||
+            !int.TryParse(args[roundsIndex + 1], out var rounds) ||
+            rounds is < 1 or > 50)
+        {
+            throw new ArgumentException(
+                "--extended-image-rounds requires an integer from 1 through 50.");
+        }
+
+        return rounds;
     }
 
     private static async Task<ClipboardCaptureResult> ReadNextAsync(

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vok Clipboard Image Target</title>
+  <style>
+    body {
+      margin: 32px;
+      color: #172033;
+      background: #f7f9fc;
+      font: 16px/1.5 system-ui, sans-serif;
+    }
+
+    #target {
+      min-height: 360px;
+      padding: 24px;
+      overflow: auto;
+      background: white;
+      border: 3px dashed #4b7bec;
+      border-radius: 12px;
+    }
+
+    #target:focus {
+      border-style: solid;
+      outline: 3px solid rgb(75 123 236 / 25%);
+    }
+
+    #target img {
+      max-width: 100%;
+      height: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>Vok 剪贴板图片粘贴目标</h1>
+  <p>此页仅用于本机浏览器可编辑区的图片往返验证。</p>
+  <div
+    id="target"
+    contenteditable="true"
+    role="textbox"
+    aria-label="剪贴板图片粘贴目标">请聚焦此区域，然后通过 Vok 粘贴图片。</div>
+</body>
+</html>

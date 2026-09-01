@@ -444,7 +444,7 @@ clipboard_files
 - 完成 PNG + 兼容位图多表示写回；
 - 以 Snipping Tool、Print Screen、浏览器图片、聊天软件和透明 PNG 完成真机往返。
 
-状态：详细实施规划与 M2.3.0–M2.3.6 已完成，M2.3.7 的产品接线和基础自动门禁已完成。组合根现以单一图片功能所有者共享捕获参数、normalizer、资产 coordinator、缩略图缓存与 replay；Controller 已提交 Image 历史，产品能力文案只在该链成功初始化时声明图片，资产根启动失败会释放部分 worker 并只降级图片能力。Release 392/392、61 项高风险定向连续五轮、win-x64 自包含发布、PowerShell AST 与隔离 Window Station `reportVersion=5, success=true` 通过。真实用户库 schema 5、6 条 Image/12 条双角色引用/11 个 Ready 资产已通过完整性核验；OS 进程终止后离线可读，重启前后状态摘要一致。真实来源×目标、重启后可见原图粘贴、150%/200% 物理跨屏和 4K/8K 长期资源曲线仍待验收，M2.3 尚未宣布完成。
+状态：M2.3 已在 `.apc/decisions.md §23` 的单屏范围内完成。M2.3.0–8 的实现、产品接线、目录目标分流、重启持久化以及 Paint、Chrome、Office、聊天软件和其他来源×目标往返均已通过。当前 Release 408/408、PowerShell AST、隔离 Window Station `reportVersion=6, success=true` 通过；扩展门禁在独立临时 schema 5/CAS 上连续 20 轮处理 60 份 4K PNG、约 32 MiB 4K DIBV5 与带有效 embedded ICC 的 8K Alpha PNG，PNG/DIB 同像素身份稳定，每项完成后 normalizer/asset job、lease 与 staging 均归零，最终只形成 2 条历史、40/20 次捕获计数和 4 个去重资产。第二资产提交注入 `ERROR_DISK_FULL` 时不发布半条元数据。收尾真实用户库为 schema 5、`quick_check=ok`、89 条历史/10 条 Image/20 个双角色引用/19 个 Ready 资产；19 个 PNG 的长度与 SHA-256 全部一致，0 外键违规、缺失、游离、PendingDelete、Quarantined 或 staging。跨屏/多屏及混合 DPI 仍未实现/未验证，不属于本次完成结论。
 
 #### M2.3.0 实施前基线、语料与交付边界
 
@@ -629,9 +629,9 @@ Windows 已定义 DIBV5→DIB/Bitmap 的按需转换，因此基线不额外发�
 4. **asset + schema 5（已完成）**：完成内容寻址 store、4→5 单事务迁移、图片 upsert/replay descriptor、重复回顶、固定、删除/tombstone、损坏隔离和重启恢复；
 5. **thumbnail + UI（已完成）**：增加异构图片卡、可见性驱动加载、字节缓存、迟到结果门禁和可访问名称；产品能力文案延后到完整接入时切换，当前 DPI 的真实 WPF Recycling/浅深渲染已通过，150%/200% 物理跨屏保留最终矩阵；
 6. **writer + paste（已完成）**：加入 image replay materializer、PNG/DIBV5/marker 写回、receipt 与既有粘贴门禁；覆盖部分句柄转移、外部覆盖、取消、双击、旧代和退出；
-7. **产品接入与发布（接线和基础自动门禁已完成）**：组合根一次启用完整切片，跑 Release 全量测试、0 警告构建、win-x64 自包含发布、PowerShell AST、隔离 Window Station 图片往返和长期资源曲线后再做真机验收。
+7. **产品接入与发布（已完成）**：组合根一次启用完整切片，跑 Release 全量测试、0 警告构建、win-x64 自包含发布、PowerShell AST、隔离 Window Station 图片往返和长期资源曲线后再做真机验收。
 
-实现状态（2026-08-31）：组合根通过单一 `ClipboardImageFeature` 显式拥有并按缩略图缓存→资产 coordinator→normalizer 的顺序释放完整图片链；同一 coordinator 同时服务双资产提交、缩略图读取、图片删除和 primary replay，没有重复 worker/store。`ClipboardController` 以窄所有权接口把 Image capture 转交 `Normalize→Commit`，单条图片失败只发布可观察降级并继续下一条监听，取消和退出仍由既有 5 秒 watchdog 收口。图片链初始化失败时释放已启动的部分资源，产品继续提供文本/文件并明确显示图片暂不可用；成功时空状态才声明文本、文件和图片。新增真实 normalization→双资产→schema 5 集成、组合根单例参数、连续失败、取消、部分启动失败和退出归零门禁；Release 392/392、61 项高风险五轮、自包含发布、7 个脚本 AST 与隔离 probe 通过。真实库的 schema 5、6 条 Image/12 条双角色引用/11 个 Ready 资产已通过 SHA/长度/尺寸/外键核验；用 OS 进程终止模拟异常退出后离线库可读，重启前后状态摘要一致，新进程响应正常且 staging 为 0。重启后可见原图粘贴、完整来源×目标、物理 DPI 和长期资源曲线仍未验证。
+实现状态（2026-09-01）：组合根通过单一 `ClipboardImageFeature` 显式拥有并按缩略图缓存→资产 coordinator→normalizer 的顺序释放完整图片链；同一 coordinator 同时服务双资产提交、缩略图读取、图片删除和 primary replay，没有重复 worker/store。`ClipboardController` 以窄所有权接口把 Image capture 转交 `Normalize→Commit`，单条图片失败只发布可观察降级并继续下一条监听，取消和退出仍由既有 5 秒 watchdog 收口。图片链初始化失败时释放已启动的部分资源，产品继续提供文本/文件并明确显示图片暂不可用；成功时空状态才声明文本、文件和图片。Release 408/408、全部工具脚本 AST、report v6 基础/扩展探针通过。扩展探针的 20 轮临时产品链得到 2 条语义历史、4 个资产和精确 40/20 capture count；第 1/20 轮 8K 阶段 Private Bytes 为 162,324,480/162,070,528，峰值 Working Set 206,934,016，未强制 GC且没有单调私有内存增长。真实库重启后卡片/缩略图与 Paint replay 已通过；Chrome 可编辑区调用 2100×1748 卡片后 sequence `2061→2067`，目标从 0 张图片新增唯一 694,211-byte、2100×1748 data PNG，且系统 PNG/DIBV5 尺寸一致。用户随后确认 Office、聊天软件和其他剩余来源×目标矩阵通过。只读收尾审计确认 schema 5、`quick_check=ok`、10 条 Image 的双角色引用及 19 个 Ready 资产/PNG 的长度和 SHA 全部一致，M2.3 单屏范围完成；多屏/跨屏后置，见 `.apc/decisions.md §23`。
 
 自动测试最低矩阵：
 
@@ -643,7 +643,7 @@ Windows 已定义 DIBV5→DIB/Bitmap 的按需转换，因此基线不额外发�
 - PNG/DIBV5/marker 真实写回、系统合成 DIB/Bitmap、SelfWrite、外部覆盖、部分 transfer、Close 失败和图片粘贴全部既有状态机路径；
 - 4K/8K 与连续截图下 queue/reserved bytes/cache 始终不超命名预算，第二轮 burst 不出现单调增长，空闲后 job/lease/staging/句柄/线程归零或回到固定缓存上限。
 
-真机验收按来源×目标而不是只看 Vok 卡片：Snipping Tool、Print Screen、浏览器、Office、聊天软件和透明 PNG 各确认“捕获→卡片→重启→写回→目标粘贴”；目标至少覆盖 Paint、Office、浏览器可编辑区和一种聊天软件。核对方向、长宽比、色彩、透明 Alpha、像素尺寸、DPI/物理粘贴尺寸、重复回顶和 4K/8K 清晰度；快速连续截图时 UI/热键/文本文件监听仍响应。删除历史后 asset refs 与文件一致，不改变系统剪贴板；损坏主图、只损坏缩略图、目录只读/空间不足分别明确降级。验收后只读确认真实用户库 schema 5、Image 行、两个 asset refs 与对应文件，再宣布 M2.3 完成。
+真机验收按来源×目标而不是只看 Vok 卡片：Snipping Tool、Print Screen、浏览器、Office、聊天软件和透明 PNG 各确认“捕获→卡片→重启→写回→目标粘贴”；目标至少覆盖 Paint、Office、浏览器可编辑区和一种聊天软件。核对方向、长宽比、色彩、透明 Alpha、像素尺寸、重复回顶和 4K/8K 清晰度；快速连续截图时 UI/热键/文本文件监听仍响应。删除历史后 asset refs 与文件一致，不改变系统剪贴板；损坏主图、只损坏缩略图、目录只读/空间不足分别明确降级。2026-09-01 用户确认该单屏来源×目标矩阵全部通过，随后只读确认真实用户库 schema 5、Image 双角色引用与资产文件完整，M2.3 完成。跨屏、多屏与混合 DPI 物理粘贴尺寸按 `.apc/decisions.md §23` 后置，不能用本轮单屏结果冒充通过。
 
 #### M2.3.8 图片目标分流（已完成）
 
@@ -659,7 +659,7 @@ Gate 0 与产品状态（2026-08-31）：隔离 `Vok.ImageDestinationProbe` 和 
 
 正式产品现已接线：asset coordinator 新增仅持有 canonical PNG 的 export materialization，继续复核 Ready/revision、内容 SHA、严格 PNG/WIC 与像素身份；Windows 目标服务在共享 Shell/COM STA 上只使用活动 Shell View/桌面 known folder 作授权，写入前重新解析同一 HWND 身份与目录，并在 generation-scoped 工作区声明被消费后才执行 `IFileOperation`。目录分支不调用 Clipboard writer、receipt 或输入注入；不支持目标完整退回既有图片安全粘贴。单项回调、目标 SHA/长度、碰撞改名和临时清理共同验证结果；创建成功后隐藏失败仍明确报告文件已创建，不重试。Release 构建 0 警告，Core 63/63 与 Windows/WPF 343/343 共 406/406 自动测试通过。
 
-新版自包含产品真机验收亦已通过：普通 Explorer 目录从空基线只生成一份 60,338-byte PNG，文件 SHA 与 CAS canonical 资产一致；Desktop 从空基线生成 2,749,130-byte PNG，再点同一条目得到保留原文件的“`- 副本.png`”，两份 SHA 相同；“此电脑”操作使 clipboard sequence `1959→1965` 而桌面/测试目录计数不变，证明虚拟目录安全回退；Paint 操作由用户确认图片显示，sequence `1965→1971` 且目录计数仍不变。PID 18136 全程响应正常。M2.3.8 范围完成；更广的来源×目标、Alpha、DPI、4K/8K 与长期资源矩阵仍阻止整个 M2.3 收口。
+新版自包含产品真机验收亦已通过：普通 Explorer 目录从空基线只生成一份 60,338-byte PNG，文件 SHA 与 CAS canonical 资产一致；Desktop 从空基线生成 2,749,130-byte PNG，再点同一条目得到保留原文件的“`- 副本.png`”，两份 SHA 相同；“此电脑”操作使 clipboard sequence `1959→1965` 而桌面/测试目录计数不变，证明虚拟目录安全回退；Paint 操作由用户确认图片显示，sequence `1965→1971` 且目录计数仍不变。PID 18136 全程响应正常。M2.3.8 范围完成；Alpha、embedded ICC、4K/8K、磁盘满一致性与重复资源曲线已由 2026-09-01 report v6/408 项回归补齐，Office、聊天软件和其他剩余来源×目标又由用户确认通过，单屏 M2.3 完成。跨屏/多屏不在当前范围。
 
 ### M2.4：规模与故障门禁
 
@@ -691,7 +691,7 @@ Gate 0 与产品状态（2026-08-31）：隔离 `Vok.ImageDestinationProbe` 和 
 - 4K/8K 截图方向、比例、清晰度和透明图片 Alpha 正确，快速连续截图时 UI 不冻结；
 - Explorer “复制”和“剪切”有不同明确标记；粘贴前目标正确，失败时只降级为已复制且不向错误窗口注入；
 - 重启后历史、固定状态和图片仍可用；删除、自动清理和一键清理后数据库与资产引用一致；
-- 浅色、深色、100%/150%/200% DPI 下右侧列表无裁切，键盘、屏幕阅读器名称和虚拟化滚动可用。
+- 浅色、深色与当前单屏缩放下右侧列表无裁切，键盘、屏幕阅读器名称和虚拟化滚动可用；100%/150%/200% 跨屏和多屏矩阵按 `.apc/decisions.md §23` 后置。
 
 ## 13. 明确不实现
 

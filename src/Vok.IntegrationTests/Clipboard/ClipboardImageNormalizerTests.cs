@@ -1,5 +1,7 @@
 using System.Buffers.Binary;
 using System.IO;
+using System.IO.Compression;
+using System.Text;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Vok.Core.Clipboard;
@@ -249,6 +251,40 @@ public sealed class ClipboardImageNormalizerTests
         Assert.Equal(-1, canonical.AsSpan().IndexOf(metadataKey));
         Assert.False(ContainsPngChunk(canonical, "tEXt"u8));
         Assert.False(ContainsPngChunk(canonical, "pHYs"u8));
+        Assert.False(ContainsPngChunk(canonical, "iCCP"u8));
+    }
+
+    [Fact]
+    public void ValidEmbeddedPngIccProfile_IsConvertedAndRemovedFromCanonicalAsset()
+    {
+        var profilePath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.System),
+            "spool",
+            "drivers",
+            "color",
+            "sRGB Color Space Profile.icm");
+        Assert.True(File.Exists(profilePath), $"Missing Windows sRGB profile: {profilePath}");
+        var png = EncodePng(2, 2, TestPixels.AlphaTwoByTwo, dpi: 96);
+        var withProfile = InsertPngChunkBeforeIdat(
+            png,
+            "iCCP"u8,
+            CreateIccChunkData(File.ReadAllBytes(profilePath)));
+
+        using var temporary = new TestTemporaryStore();
+        var normalizer = new ClipboardImageNormalizer(new ClipboardImageCaptureOptions());
+        using var result = normalizer.Normalize(
+            CreateCapture(ClipboardRepresentationKind.Png, withProfile, 2, 2),
+            temporary.Store,
+            CancellationToken.None);
+        using var stream = result.OpenCanonicalPngReadStream();
+        using var output = new MemoryStream();
+        stream.CopyTo(output);
+        var canonical = output.ToArray();
+
+        Assert.Equal(2, result.PixelWidth);
+        Assert.Equal(2, result.PixelHeight);
+        Assert.True(result.HasAlpha);
+        Assert.True(ContainsPngChunk(withProfile, "iCCP"u8));
         Assert.False(ContainsPngChunk(canonical, "iCCP"u8));
     }
 
@@ -673,6 +709,27 @@ public sealed class ClipboardImageNormalizerTests
             chunk.AsSpan(8 + data.Length),
             ComputePngCrc(chunk.AsSpan(4, 4 + data.Length)));
         return [.. png.AsSpan(0, idat), .. chunk, .. png.AsSpan(idat)];
+    }
+
+    private static byte[] CreateIccChunkData(byte[] profile)
+    {
+        using var compressed = new MemoryStream();
+        using (var zlib = new ZLibStream(
+                   compressed,
+                   CompressionLevel.SmallestSize,
+                   leaveOpen: true))
+        {
+            zlib.Write(profile);
+        }
+
+        var name = Encoding.ASCII.GetBytes("Vok sRGB");
+        var compressedBytes = compressed.ToArray();
+        var data = new byte[checked(name.Length + 2 + compressedBytes.Length)];
+        name.CopyTo(data, 0);
+        data[name.Length] = 0;
+        data[name.Length + 1] = 0;
+        compressedBytes.CopyTo(data, name.Length + 2);
+        return data;
     }
 
     private static int FindPngChunk(byte[] png, ReadOnlySpan<byte> type)

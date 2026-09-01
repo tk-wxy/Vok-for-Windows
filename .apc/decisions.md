@@ -26,6 +26,7 @@
 - §20 文件剪贴板 DROPEFFECT 掩码与 MOVE 安全边界 — 兼容 Explorer 的 COPY 附加位，但 COPY/MOVE 歧义不得归一为移动。
 - §21 图片剪贴板 Gate 0 路由、单候选与容量边界 — 像素格式优先分类，每次只拥有 PNG 或一个 DIB 候选，以 8K 实测锁定 lease/worker 预算。
 - §22 图片卡的正向目录导出与代次提交边界 — 仅活动 Explorer 文件系统 View/Desktop 直接创建 canonical PNG，写前复核同一目标并在 Shell STA 认领工作区代次。
+- §23 剪贴板 M2.3 的单屏收口与跨屏多屏后置 — 当前只验收单屏图片链路，不实现或宣称跨屏/多屏能力，后续单列里程碑重开。
 
 ## 详情
 
@@ -232,8 +233,8 @@
 - **证据与根因**：Snipping Tool 区域/全屏与 QQ 图片都同时发布像素格式和 HDROP，证明“HDROP 绝对优先”会把图片误归文件；反例中 Explorer Ctrl+C 已知 PNG 文件只发布 Shell/HDROP，没有像素格式。Office 同次 PNG 865×541、DIB 554×346，证明多表示可冲突；QQ 无 PNG，证明 DIB 后备仍必需。浏览器受控 7680×4320 Alpha PNG 仅 1,334,507 bytes，但其 DIB/DIBV5 为 132,710,440/132,710,524 bytes；总是复制两种候选会无收益地增加约 126.56 MiB 载荷与持有剪贴板时间。全部真实 DIB DPI 为 0，受控源 PNG 的 96 DPI `pHYs` 又被 Chromium 丢弃，DPI 不具稳定身份。Windows 官方契约还规定 32bpp BI_RGB 高字节未使用，因此 Chromium 的孤立 Alpha mask 只能诊断；可信 Alpha 来自 PNG color type 4/6、合法 `tRNS` 或受支持 bitfields。M2.3.2 实测 WPF PNG encoder 即使 metadata 为 null 仍自动写 `pHYs`，故 canonical 输出必须流式剥离来源 metadata；系统合成 V5 会重复 header 中的 12-byte RGB masks，兼容只能以逐 mask 精确相等为条件。M2.3.4 进一步验证文件名 hash 不能代替落盘后复核，已存在同名未知内容必须拒绝覆盖；数据库事务不能与文件 rename 构成原子操作，故只能先提交并验证文件、再引用，失败方向固定为可复用孤儿文件而不是悬空引用。删除与重新引用跨越文件/数据库边界，必须由同一串行 coordinator 以 `(hash, revision)` 再认领，不能依赖易漂移 `ref_count`。M2.3.5 又实测无 Source 的 WPF `Image` 初次 `ActualWidth/Height=0`，以它自身尺寸判可见会形成永不加载的循环；固定展示槽的真实布局、先撤销绑定身份再取消和四维迟到核验才同时覆盖空卡、Recycling 串图与隐藏驻留。M2.3.6 验证“replay 失败”不是单一故障类：semantic/像素不一致必须 quarantine，但预取消、stale revision、暂存目录不可用或 writer 失败不能污染 Ready 资产；Win32 句柄在 `SetClipboardData` 成功前后所有权相反，必须以逐格式 transfer 状态收口。隔离 Window Station `reportVersion=5` 真实得到图片 receipt 当前、自写 SelfWrite 与外部覆盖失效。
 - **否决方案**：HDROP 绝对优先；同时复制 PNG 与 DIB 作为无条件后备；把 HBITMAP 当 HGLOBAL 或跨关闭持有；信任 `BI_RGB` 的孤立 Alpha mask；把 DPI 放进像素哈希；沿用 64 MiB 单格式/16 项纯计数队列；无上限接受任意维度、profile 或图片 burst；分页后预载全部缩略图；App 拼 asset path；用空 Image 自身尺寸判可见；把 ImageSource 常驻 ViewModel；把原图读成大 `byte[]`；显式发布 CF_BITMAP；所有 replay 错误一律 quarantine；另建一套图片焦点/注入状态机。
 - **新增失败模式**：合法 PNG header 仍可能在关闭剪贴板后 codec 失败，此时因单候选策略没有 DIB 后备；一个最坏 DIB job 会占大部分 384 MiB 预留，后续 burst 将明确过载丢弃；超过 8192 单边但总像素较小的超宽图也会拒绝；同像素不同 DPI 去重后 replay 物理尺寸不构成身份。文件已提交而数据库失败会留下无引用资产，等待同内容复用或 M2.4 清理；物理删除或最终 DB row 删除失败会留下 PendingDelete tombstone，启动重试；损坏文件保留为 Quarantined 证据。实现必须让这些结果可诊断，所有 reject/drop/cancel/exit 都释放 lease 与 reservation，且不得用提高上限、覆盖未知文件或跨类回退掩盖。
-- **决定 / 最后验证**：2026-08-28 / 2026-08-31。
-- **状态**：active；M2.3.1–6 的捕获/规范化/双资产/schema 5/缩略图 UI/replay 已由 M2.3.7 的单一图片功能所有者接入产品组合根，Controller 通过显式所有权接口转交 Image capture，缩略图、删除和 replay 共用同一 coordinator，资产根启动失败只降级图片功能。Release 392/392、61 项高风险定向五轮、Window Station `reportVersion=5, success=true`、PowerShell AST 和自包含发布通过。真实库已验证 schema 5、6 条 Image/12 条双角色引用/11 个 Ready 资产与文件完整性；OS 进程终止后离线可读，重启前后状态摘要一致。重启后真实目标粘贴、150%/200% 跨屏、真实图片来源×目标以及 4K/8K 长期资源曲线仍未完成。
+- **决定 / 最后验证**：2026-08-28 / 2026-09-01。
+- **状态**：active；单一图片功能所有者已闭环捕获、规范化、双资产/schema 5、缩略图 UI、目录导出和 replay。Release 408/408、Window Station `reportVersion=6, success=true`、20 轮 4K/8K/Alpha/ICC/资源矩阵及 PowerShell AST 通过；用户确认 Paint、Chrome、Office、聊天软件和其他单屏真实来源×目标通过。收尾真实库 schema 5、`quick_check=ok`、10 条 Image/20 个双角色引用/19 个 Ready 资产与文件长度/SHA 全部一致，0 外键违规、缺失、游离或 staging。M2.3 在 §23 的单屏范围内完成；跨屏/多屏未实现且不属于该结论。
 
 ### §22 图片卡的正向目录导出与代次提交边界
 
@@ -244,3 +245,13 @@
 - **新增失败模式**：目标在物化或 Shell 排队期间换标签/关闭/复用 HWND；工作区隐藏、换代或退出先于文件认领；IFileOperation 已产生文件但回调、Unadvise 或后验校验失败；临时暂存清理失败；创建完成后新工作区已出现。实现以两次目标解析、私有一次性 destination claim、generation-scoped authorization、动作 gate、紧邻副作用认领、唯一临时目录、单项回调、目标 hash/length、同代隐藏和“已提交/已创建”保守终态限制影响；一旦 authorization 被消费，异常和取消都不得回退到剪贴板分支。
 - **决定 / 最后验证**：2026-08-31 / 2026-08-31。
 - **状态**：active；用户确认方案并授权实施，Gate 0、产品组合根、406/406 自动测试和新版物理交互全部通过。Explorer/桌面生成文件的 SHA 与 canonical 资产一致，碰撞保留原文件并改名；“此电脑”只推进 clipboard sequence 且不落盘，Paint 回退成功显示图片。M2.3.8 范围完成。
+
+### §23 剪贴板 M2.3 的单屏收口与跨屏多屏后置
+
+- **最终方案**：当前 M2.3 只以单屏环境收口图片捕获、持久化、缩略图、目录导出和安全粘贴；跨显示器移动、多个物理显示器、混合缩放及 150%/200% 跨屏行为暂不实现，也不作为当前 M2.3 完成门禁。既有 Per-Monitor V2、目标显示器工作区和 generation/focus 架构保持不变，不通过删除或硬编码单屏假设来“关闭”多屏路径。未来重开时作为独立里程碑，重新覆盖物理像素/DIP、目标显示器选择、容器可见性、焦点恢复和图片粘贴。
+- **范围**：M2.3 图片剪贴板本轮验收与后续计划；不改变 M0 的窗口/显示器架构，不宣称当前版本已支持或验证跨屏、多屏、混合 DPI。
+- **证据与根因**：2026-09-01 用户明确要求继续剪贴板测试但“跨屏多屏暂不实现”。跨屏矩阵依赖独立物理环境，并同时触及窗口放置、DPI、缩略图 viewport、目标恢复和输入注入；它与单屏图片语义、资产一致性及目标分流可以独立验收。当前单屏已完成重启图片卡、Paint replay、Explorer/Desktop 导出；隔离 report v6 又以 20 轮、60 次 4K/8K/Alpha/ICC 捕获→规范化→schema 5/CAS 提交验证命名预算、像素身份和所有权归零，因此没有必要用未验证的多屏结论阻塞或污染单屏证据。
+- **否决方案**：继续让未排期的物理跨屏矩阵无限阻塞 M2.3；删除既有 Per-Monitor 架构或硬编码主屏以制造“单屏支持”；未经真机验证便宣称多屏可用；把单屏 100% 环境数据外推成 150%/200% 混合 DPI 结论。
+- **新增失败模式**：用户可能把“后置”误读成“已经支持”；未来多屏实现可能与当前目标捕获、图片容器可见性或焦点恢复发生交叉回归。文档和状态必须明确标为未实现/未验证，重开时复用现有代次与真实结果观察门禁而不是增加延时或旁路。
+- **决定 / 最后验证**：2026-09-01 / 2026-09-01。
+- **状态**：active；用户确认 Office、聊天软件及其他剩余来源矩阵通过，真实库收尾审计一致，当前单屏 M2.3 已完成；跨屏/多屏未实现、未验证且不属于该完成结论。

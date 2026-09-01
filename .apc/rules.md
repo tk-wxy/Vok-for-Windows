@@ -55,8 +55,8 @@
 - [ ] R2：WPF UI、热键、剪贴板、Shell/COM、SQLite 和图片任务各有明确所有者；跨边界只投递不可变数据或调用窄接口，禁止同步等待 UI、散落 `Task.Run` 和不明固定延时。
   - 范围：进程内全部后台服务和系统事件。
   - 证据：Vok 产品要求覆盖失败、取消和重复触发；参考项目的轮询、跨线程等待和全局复位清单导致时序耦合；见 `decisions.md §1`。M2.2 将启动台与文件剪贴板适配器收敛到 DI 唯一拥有的容量 128 Shell/COM STA executor。M2.3.2–3 新增单消费者 MTA 图片 worker，只接受持有精确 `input+canonical` reservation 的 job。M2.3.4 又以单 MTA/容量 4 asset coordinator 唯一串行化文件提交、Image 元数据、删除和 quarantine；预取消必须在占用 slot 后才注册回调，否则同步回调会在 slot 尚不存在时发布终态并泄漏后来取得的容量。两条 worker 的取消、队列/容量拒绝、失败、shutdown 和 5 秒 watchdog 均先认领一次终态；自动测试覆盖入队前/排队中/认领后取消、同轮 shutdown、watchdog 超时后延迟归零、重复 Dispose、删除失败启动重试和旧 revision claim 失效。
-  - 最后验证：2026-08-30。
-  - 状态：active；WPF、热键、Clipboard STA、共享 Shell/COM STA、SQLite、图片 worker 与 asset coordinator 均已有显式所有权和退出边界；后两者尚不在产品组合根注册，等待 M2.3.5–7 完整切片接入。
+  - 最后验证：2026-09-01。
+  - 状态：active；WPF、热键、Clipboard STA、共享 Shell/COM STA、SQLite、图片 worker 与 asset coordinator 均已有显式所有权和退出边界并已接入产品组合根。隔离 report v6 的 20 轮、60 次 4K/8K 捕获→规范化→schema 5/CAS 提交中，每项完成后 normalizer job、asset job、临时 lease 与 staging 均归零。
 
 - [ ] R11：`Application.Deactivated` 是整个 Vok 丢失前台的唯一权威信号；宿主不得暴露或转发无消费者的单窗口失活接口。除同代持有由真实外部 OLE `DragEnter` 建立的窄拖放租约外，当前 generation 在下一 Dispatcher 轮次仍为 `Visible` 时必须以 `ForegroundLost` 被动隐藏；真实前台捕获只用于诊断，HWND 为 0 或捕获失败也不得阻断。拖放租约必须在 Drop、窗口级 DragLeave、隐藏、换代、退出或下一次 DragEnter 时收尾，终态先占有后执行，陈旧/重复终态不得影响新代；已经可见时再次显式热键关闭可抢占租约，只有本次长按从隐藏态呼出的原始松键仍等待拖放终态。普通失活必须完成 Hide、退出 Topmost、状态机和诊断收尾，但不得恢复旧捕获目标；状态明确为 `NotRequested`。
   - 范围：M0 Deactivated、前台切换、隐藏策略、诊断和下一代目标捕获。
@@ -161,8 +161,8 @@
 - [ ] R21：`CF_BITMAP` 的剪贴板句柄是 HBITMAP，不得调用 `GlobalSize`/`GlobalLock`，也不得在 `CloseClipboard` 后继续借用。只发布 `CF_BITMAP` 的来源应优先在同一次 `OpenClipboard` 内复制 Windows 合成的 packed `CF_DIBV5`/`CF_DIB`；若没有可复制表示，则明确标为不支持，不能延长 GDI 句柄生命周期。
   - 范围：剪贴板图片目录、捕获载荷所有权与后续图片 normalizer。
   - 证据：2026-08-28 独立 Window Station producer 通过真实 GDI `CreateBitmap` 只发布 `CF_BITMAP`；平台快照先将 `CF_BITMAP` 编目为 MetadataOnly，随后捕获 Windows 合成的 `CF_DIB` 68 bytes 与 `CF_DIBV5` 152 bytes。2026-08-29 M2.3.1 产品 reader 已只复制合成的 DIBV5；M2.3.2 隔离探针进一步确认该 152-byte V5 在 header 内已有 masks 后仍重复附加 12-byte RGB mask block，严格 parser 只在重复块与 header 三个 masks 精确一致时接受并按无 Alpha 解码，任意同长度尾随仍拒绝。`reportVersion=4, success=true` 同时验证 PNG/DIBV5 像素等价与纯 Bitmap 系统合成解码。Microsoft 标准剪贴板格式契约将 `CF_BITMAP` 定义为 HBITMAP，并说明系统可在 `CF_DIB`、`CF_DIBV5` 与 `CF_BITMAP` 间按需转换。
-  - 最后验证：2026-08-29。
-  - 状态：active；产品捕获所有权、严格 decoder、内容寻址资产、schema 5 与 replay 已通过单一图片功能所有者接入组合根；自动门禁通过，真实来源×目标仍待新版真机验收。
+  - 最后验证：2026-09-01。
+  - 状态：active；产品捕获所有权、严格 decoder、内容寻址资产、schema 5 与 replay 已通过单一图片功能所有者接入组合根；隔离 report v6 再次通过纯 Bitmap 合成 DIB、4K LeasedBlob DIBV5 与 PNG 同像素身份，用户已确认单屏真实来源×目标矩阵通过。
 
 - [ ] R22：不能把 `CF_HDROP` 的存在等同于用户复制文件；同一目录存在注册 `PNG`、`CF_DIBV5`、`CF_DIB` 或 `CF_BITMAP` 等像素表示时必须先按 Image 候选处理，随附 HDROP/HTML/URL 不得抢占类型，也不得在图片损坏后跨类降级。只有没有图片表示的有效 HDROP 才进入 FileList 路由；产品实现必须保留已通过的 Explorer 图片文件正反门禁。
   - 范围：剪贴板 Image/FileList/Text 路由、候选裁剪和畸形载荷降级。
@@ -173,14 +173,14 @@
 - [ ] R23：图片缩略图不得按分页条目或空 `Image` 自身尺寸预加载。只有 Recycling 容器已实现、展示槽与真实 ScrollViewer viewport 相交且工作台可见时才能请求；离开视口、Unloaded、CleanUp、DataContext/entry revision 变化、删除、隐藏或退出必须先撤销当前绑定身份，再取消请求并清空容器 `Source`。迟到结果只有 entry id、thumbnail hash、entry/asset revision 与当前容器数据项全部匹配才可落地。ViewModel 不持有原图或 thumbnail `ImageSource`；UI cache 只按 asset hash 保存已 `OnLoad`/`Freeze()` 的缩略图，并按解码字节硬限制 32 MiB。
   - 范围：M2.3.5 图片卡、WPF Recycling、缩略图读取/缓存、隐藏与退出生命周期。
   - 证据：2026-08-31 真实 WPF 测试复现无 Source 的 `Image` 即使声明 Width/Height，初次布局 `ActualWidth/Height` 仍为 0；若以其自身尺寸作为加载门禁，会形成“有图才有尺寸、有尺寸才读图”的永久空卡。改用固定展示槽的已布局矩形后，80 条 Image 列表只加载视口容器；滚动回收前一条绑定并故意迟到完成时不串图，隐藏后所有已实现 `Source` 清空。32 MiB LRU 按 `width × height × 4` 淘汰，损坏 decode 不入缓存；定向生命周期测试连续五轮通过。
-  - 最后验证：2026-08-31。
-  - 状态：active；图片卡、缓存与单一资产 coordinator 已接入产品组合根，Release 392/392、61 项高风险五轮、浅/深当前 DPI 渲染和自包含发布通过；150%/200% 物理跨屏与真实图片卡长期曲线仍待真机。
+  - 最后验证：2026-09-01。
+  - 状态：active；图片卡、缓存与单一资产 coordinator 已接入产品组合根，Release 408/408、浅/深当前 DPI 渲染、真实重启卡片/缩略图、20 轮大图资产压力及单屏来源×目标门禁通过，M2.3 完成；跨屏/多屏按用户决定后置且不得冒充支持，见 `decisions.md §23`。
 
 - [ ] R24：Image replay 的仓储查询只能返回 semantic hash、主资产引用与尺寸/Alpha/DPI descriptor；物化阶段必须以有生命周期的只读 lease 重新校验 Ready/revision、SHA-256、严格 PNG/WIC 和 `Vok.Image.Pixel.v1`，不得把路径或完整原图 `byte[]` 交给 App/VM。只有内容/像素完整性失败可按 `(hash, revision)` quarantine；取消、暂存目录不可用、DIB 生成或剪贴板写入失败不得污染 Ready 资产。writer 只在单一 Clipboard STA 一次 `EmptyClipboard` 后按 PNG→CF_DIBV5→marker 分块写入；成功转移的 HGLOBAL 归系统，失败只释放未转移句柄并清除半份内容。Controller 必须在物化成功后才隐藏，并在所有终态释放 materialization，继续复用 receipt/generation/focus 门禁。
   - 范围：M2.3.6 primary replay、DIBV5、WindowsClipboardWriter、ClipboardPasteController、取消与退出清理。
-  - 证据：2026-08-31 隔离测试验证 semantic mismatch 会 quarantine，而预取消、过期 revision 和已关闭 replay staging store 均不改变 Ready primary；生成的 124-byte V5 header、bottom-up BGRA8、RGBA masks、sRGB、DPI 与严格 DIB parser 一致。writer 的 marker 失败、流长度不符和分块中取消均清除已转移格式、只显式释放未转移句柄。33 项 materializer/writer/paste/asset 定向测试连续五轮通过；独立 Window Station `reportVersion=5, success=true` 真实验证 PNG+DIBV5+marker receipt、自写抑制与外部覆盖失效。
-  - 最后验证：2026-08-31。
-  - 状态：active；M2.3.6 replay 切片已通过 M2.3.7 单一图片功能所有者接入产品，缩略图/删除/replay 共用同一 coordinator；自动门禁通过，真实目标粘贴仍待新版真机。
+  - 证据：2026-08-31 隔离测试验证 semantic mismatch 会 quarantine，而预取消、过期 revision 和已关闭 replay staging store 均不改变 Ready primary；生成的 124-byte V5 header、bottom-up BGRA8、RGBA masks、sRGB、DPI 与严格 DIB parser 一致。writer 的 marker 失败、流长度不符和分块中取消均清除已转移格式、只显式释放未转移句柄。2026-09-01 新增 `ERROR_DISK_FULL` 第二资产提交故障，证明不发布半条 Image 元数据且结果/job 所有权归零；有效 embedded ICC PNG 成功转换到 sRGB 并从 canonical 资产剥离 profile。独立 Window Station `reportVersion=6, success=true` 继续验证 PNG+DIBV5+marker receipt、自写抑制和外部覆盖失效；用户确认 Paint、Chrome、Office、聊天软件及其他单屏来源×目标矩阵通过，收尾真实库 10 条 Image/20 个双角色引用/19 个 Ready 资产与文件 SHA 全部一致。
+  - 最后验证：2026-09-01。
+  - 状态：active；M2.3.6 replay 切片已通过 M2.3.7 单一图片功能所有者接入产品，Paint 当前/跨重启、Chrome、Office、聊天软件及其他单屏来源×目标 replay 均已真机通过，M2.3 完成。
 
 - [ ] R25：图片直接落盘只允许正向识别的 Explorer 当前文件系统 View 或当前用户 Desktop。解析必须绑定已捕获顶层 HWND/进程/线程与焦点活动 View，拒绝虚拟、歧义和失效目标，并在写入前于共享 Shell STA 再次确认同一目标；Automation、标题、地址栏和进程名不能授权。工作区 generation 声明只能在最终复核后、`IFileOperation` 副作用前原子消费；未消费声明被隐藏、换代、退出或取消后不得落盘。目录分支不得修改剪贴板或注入输入；创建成功后隐藏失败、回调结果不明或取消都不得回退/重试，必须按“已创建”或“已提交待确认”报告。App/VM 不能取得资产路径或完整原图，目标文件须经单项回调、目录归属、SHA/长度和碰撞改名确认。
   - 范围：M2.3.8 图片目标分流、Workspace generation、Shell/COM STA、IFileOperation、资产 export lease 与控制器终态。

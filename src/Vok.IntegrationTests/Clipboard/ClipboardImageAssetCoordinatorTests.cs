@@ -494,6 +494,44 @@ public sealed class ClipboardImageAssetCoordinatorTests
     }
 
     [Fact]
+    public async Task DiskFullDuringThumbnailCommitPublishesNoMetadataAndReleasesOwnership()
+    {
+        const int diskFullHResult = unchecked((int)0x80070070);
+        var repository = new CountingMetadataRepository();
+        var store = new DiskFullOnSecondCommitAssetStore(diskFullHResult);
+        using var coordinator = new ClipboardImageAssetCoordinator(
+            repository,
+            store,
+            new ClipboardImageCaptureOptions(),
+            TimeSpan.FromSeconds(2));
+        var result = CreateResult(
+            Hash(45),
+            EncodePng(2, 2, [
+                1, 2, 3, 255,
+                4, 5, 6, 128,
+                7, 8, 9, 64,
+                10, 11, 12, 255,
+            ]),
+            2,
+            2,
+            EncodePng(1, 1, [1, 2, 3, 255]),
+            1,
+            1);
+
+        var exception = await Assert.ThrowsAsync<IOException>(() =>
+            coordinator.CommitAsync(
+                result,
+                DateTimeOffset.UtcNow,
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal(diskFullHResult, exception.HResult);
+        Assert.True(result.IsDisposed);
+        Assert.Equal(2, store.CommitCount);
+        Assert.Equal(0, repository.UpsertCount);
+        Assert.Equal(0, coordinator.OutstandingJobCount);
+    }
+
+    [Fact]
     public async Task CapacityAndQueuedCancellationReleaseEveryOwnedResultOnce()
     {
         var store = new BlockingAssetStore();
@@ -778,6 +816,22 @@ public sealed class ClipboardImageAssetCoordinatorTests
                 new InvalidOperationException("Injected database failure."));
     }
 
+    private sealed class CountingMetadataRepository : InMemoryMetadataRepository
+    {
+        private int _upsertCount;
+
+        public int UpsertCount => Volatile.Read(ref _upsertCount);
+
+        public override Task<ClipboardImageUpsertResult> UpsertImageAsync(
+            ClipboardImageContent content,
+            DateTimeOffset capturedUtc,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _upsertCount);
+            return base.UpsertImageAsync(content, capturedUtc, cancellationToken);
+        }
+    }
+
     private class InMemoryMetadataRepository : IClipboardImageMetadataRepository
     {
         public virtual Task<ClipboardImageUpsertResult> UpsertImageAsync(
@@ -903,6 +957,67 @@ public sealed class ClipboardImageAssetCoordinatorTests
             Release.Set();
             Entered.Dispose();
             Release.Dispose();
+        }
+    }
+
+    private sealed class DiskFullOnSecondCommitAssetStore(int diskFullHResult)
+        : IClipboardContentAssetStore
+    {
+        private int _commitCount;
+
+        public int CommitCount => Volatile.Read(ref _commitCount);
+
+        public ClipboardPreparedAsset CommitPng(
+            Stream source,
+            long expectedLength,
+            int expectedPixelWidth,
+            int expectedPixelHeight,
+            CancellationToken cancellationToken = default)
+        {
+            var attempt = Interlocked.Increment(ref _commitCount);
+            if (attempt == 2)
+            {
+                _ = source.ReadByte();
+                throw new IOException(
+                    "Injected disk-full failure while committing the thumbnail.",
+                    diskFullHResult);
+            }
+
+            using var memory = new MemoryStream();
+            source.CopyTo(memory);
+            var hash = Convert.ToHexString(SHA256.HashData(memory.ToArray()))
+                .ToLowerInvariant();
+            return new ClipboardPreparedAsset(
+                hash,
+                $"{hash[..2]}/{hash}.png",
+                "image/png",
+                expectedLength,
+                expectedPixelWidth,
+                expectedPixelHeight);
+        }
+
+        public void ValidatePng(
+            ClipboardPreparedAsset asset,
+            CancellationToken cancellationToken = default)
+        {
+        }
+
+        public byte[] ReadPng(
+            ClipboardPreparedAsset asset,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public IClipboardPayloadLease OpenVerifiedPng(
+            ClipboardPreparedAsset asset,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public void Delete(ClipboardAssetDeleteClaim claim)
+        {
+        }
+
+        public void Dispose()
+        {
         }
     }
 

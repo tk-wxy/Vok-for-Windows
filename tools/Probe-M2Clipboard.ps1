@@ -1,5 +1,9 @@
 [CmdletBinding()]
-param()
+param(
+    [switch]$ExtendedImageMatrix,
+    [ValidateRange(1, 50)]
+    [int]$ExtendedImageRounds = 2
+)
 
 $ErrorActionPreference = 'Stop'
 $project = Join-Path $PSScriptRoot 'Vok.ClipboardProbe\Vok.ClipboardProbe.csproj'
@@ -15,5 +19,10 @@ if (-not (Test-Path -LiteralPath $probeAssembly)) {
     throw "Clipboard probe assembly was not produced: $probeAssembly"
 }
 
-dotnet $probeAssembly
+if ($ExtendedImageMatrix) {
+    dotnet $probeAssembly --extended-image-matrix --extended-image-rounds $ExtendedImageRounds
+}
+else {
+    dotnet $probeAssembly
+}
 exit $LASTEXITCODE

@@ -2,6 +2,14 @@
 
 > 归档超过滚动窗口的 `memory.md §0A` 完整会话。默认不读取，仅在取证时搜索；按时间从新到旧排列。
 
+### 会话 2026-08-31 - M2.3.8 图片目标分流 Gate 0
+
+- 规划确认图片卡主动作只在正向识别 Explorer 当前文件系统目录或 Desktop 时直接创建 canonical PNG；该分支不改剪贴板、不注入 `Ctrl+V`，其他目标继续原有安全粘贴。虚拟目录、第三方文件管理器、批量/格式设置等明确后置。
+- 新增隔离 Shell/COM STA 探针：按捕获顶层 HWND 匹配 `IShellWindows`，以 `QueryActiveShellView→IFolderView→IShellItem` 取得活动 View 与文件系统目录；当前两个 Explorer 窗口解析成功且两条独立路径证据的哈希一致。另用 `IFileOperation` 在工具自建临时目录验证 Unicode 名、连续碰撞、预取消、源/目标字节与清理，双实例并发通过。
+- 最终“此电脑”显式捕获为 `Unsupported`，活动 View 与 Automation 均无文件系统目录，Gate 0 全部关闭。产品已增加 canonical-only export lease、正向活动 View/Desktop 解析、写前同目标复核、Shell STA 紧邻副作用的 generation 认领、IFileOperation 单项/目标 hash 验证及不触碰剪贴板的目录分支；其他目标完整回退旧流程。
+- Release 构建 0 警告，Core 63/63 + Windows/WPF 343/343 共 406/406 通过；测试覆盖旧代/未授权零落盘、双击一次、创建后隐藏失败不重试、授权后结果不明不回退、export lease/取消和产品 COM ABI 的 Unicode 碰撞/字节/清理。
+- 自包含 M2.3.8 PID 18136 真机通过普通 Explorer 单文件、Desktop 单文件与碰撞改名；三份目标文件 SHA 均匹配 canonical 资产。虚拟“此电脑”只推进 sequence `1959→1965` 且目录计数不变；Paint 成功显示并推进 `1965→1971`。M2.3.8 范围完成，三个验收 PNG 暂留待用户决定是否删除。
+
 ### 会话 2026-08-31 - M2.3.7 产品图片接线与自动门禁
 
 - Core 新增转移 `ClipboardCaptureResult` 所有权的窄图片捕获接口，Windows pipeline 串接既有 normalizer 与资产 coordinator；App Controller 在图片目录分支提交 Image，单条失败可观察且不终止后续监听，取消/退出仍走既有 watchdog。
