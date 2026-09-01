@@ -11,12 +11,24 @@
 
 ## §0 快照
 
-- **状态**：M0、M1、M2.0–M2.2 与 M2.3.0–8 保持可用；M2.3.8 图片目标分流的 Gate 0、产品接线、自动门禁和新版真机验收均已完成。正向 Explorer 文件系统目录/Desktop 直接创建 canonical PNG，其他及虚拟目标继续安全粘贴；更广图片验收完成前仍不宣布整个 M2.3 收口。
-- **最近进展**：0 警告 Release、Core 63/63 + Windows/WPF 343/343 共 406/406 通过。PID 18136 真机验证 Explorer 单文件、Desktop 单文件与碰撞改名的 SHA 均匹配 canonical 资产；“此电脑”只使 clipboard sequence `1959→1965` 且不落盘，Paint 成功显示并使 sequence `1965→1971`，目录计数不变。
-- **下一步**：继续 M2.3 的重启后多来源×目标、透明 Alpha、150%/200% 跨屏 DPI、4K/8K、embedded ICC、空间不足与长期资源矩阵；M2.3.8 后置缺口仅在需求重新进入时考虑。
-- **已知问题**：合法 PNG 轻量 header 仍可能在关闭剪贴板后 codec 失败且没有 DIB 事后后备；数据库失败留下的无引用文件要到 M2.4 清理。真实 Image 尚未覆盖 Alpha、4K/8K、物理跨屏 DPI、embedded ICC、长期资源与空间不足。桌面保留 2 个、`artifacts/m238-manual-target` 保留 1 个本轮人工验收 PNG，尚未清理。
+- **状态**：M0、M1、M2.0–M2.2 与 M2.3.0–8 保持可用；M2.3.8 图片目标分流、重启持久化、隔离平台复验，以及重启后真实图片卡/缩略图可见与 Paint 当前/重启前图片 replay 均通过。正向 Explorer 文件系统目录/Desktop 直接创建 canonical PNG，其他及虚拟目标继续安全粘贴；更广图片矩阵完成前仍不宣布整个 M2.3 收口。
+- **最近进展**：当前源码 Release 406/406 通过。PID 14120 真实呼出后首屏显示重启后的 2100×1748 与重启前的 2478×1355、2779×1509 图片及真实缩略图；2100×1748 自动 replay 使 Vok 隐藏、Paint 前台恢复并显示原图，clipboard sequence `2025→2031`，用户随后确认重启前 2478×1355 历史也在 Paint 正常显示。收尾真实库 `quick_check=ok`，88 条历史/10 条 Image/19 个 Ready 资产，无缺失引用、PendingDelete/Quarantined 或外键错误，staging 为 0。
+- **下一步**：继续 M2.3 来源×目标、透明 Alpha、150%/200% 跨屏 DPI、4K/8K、embedded ICC、空间不足与长期资源矩阵，通过后进入 M2.4。
+- **已知问题**：合法 PNG 轻量 header 仍可能在关闭剪贴板后 codec 失败且没有 DIB 事后后备；数据库失败留下的无引用文件要到 M2.4 清理。真实 Image 尚未覆盖 Alpha、4K/8K、物理跨屏 DPI、embedded ICC、长期资源与空间不足。桌面保留 2 个、`artifacts/m238-manual-target` 保留 1 个既有人工验收 PNG；`artifacts/m23-validation` 保留 2 张本轮证据截图。
 
 ## §0A 最近会话
+
+### 会话 2026-09-01 - 重启后图片可见性与 Paint replay
+
+- 用户将 Paint 置为真实前台后，PID 14120 通过配置的 Ctrl+Space 呼出。UI Automation 首屏识别 2100×1748 图片卡，右栏截图同时证实重启前 2478×1355、2779×1509 图片卡的缩略图已从 schema 5/CAS 正常加载；总历史当时显示 88 条。
+- 调用 2100×1748 图片卡后 Vok 隐藏、Paint 前台恢复，clipboard sequence `2025→2031`，Paint 截图确认原图按 2100×1748 显示且 Vok 继续响应。收尾库为 88 条历史、10 条 Image、19 个 Ready 资产，`quick_check=ok`、外键/双角色引用完整、0 PendingDelete/Quarantined，staging 归零。
+- 2478×1355 重启前条目在库中唯一且卡片已可见；自动等待期间因 Paint 不在真实前台而安全拒绝注入，用户随后在 Paint 前台手动点击该条目并确认图片正常显示，精确跨重启 replay 门禁完成。30 秒隐藏样本为 Working Set 251,076,608、Private 162,893,824，单点不冒充长期资源结论。
+
+### 会话 2026-08-31 - M2.3 重启持久化与隔离复验
+
+- 将当前 M2.3.8 自包含实例从 PID 18136 重启为 PID 14120；重启前后真实库均为 schema 5、`quick_check=ok`、85 条历史、9 条 Image、18 条双角色引用和 17 个 Ready PNG。外键、Image 角色引用、资产引用和 17 个文件名 SHA 全部通过，0 PendingDelete/Quarantined，Vok 重启后响应正常。
+- 当前源码 Release 63/63 + 343/343 共 406/406 通过；独立 Window Station clipboard probe `reportVersion=5, success=true` 再次覆盖图片 PNG/DIBV5/Bitmap 解码、像素等价、Alpha、replay receipt、自写抑制和外部覆盖失效。IFileOperation probe `reportVersion=2, success=true` 再次覆盖预取消零副作用、碰撞改名、逐项结果、字节一致与临时清理。
+- 交互可见性/取用没有冒充通过：真实前台是 Minecraft，继续呼出或改写剪贴板会干扰用户会话；受控窗口又被 Windows 前台保护拒绝，重复尝试已停止。下一步由用户先切到 Paint 或 Explorer 等安全目标，再完成重启后图片卡可见、点击取用和来源×目标矩阵。
 
 ### 会话 2026-08-31 - M2.3.8 图片目标分流 Gate 0
 
@@ -25,18 +37,6 @@
 - 最终“此电脑”显式捕获为 `Unsupported`，活动 View 与 Automation 均无文件系统目录，Gate 0 全部关闭。产品已增加 canonical-only export lease、正向活动 View/Desktop 解析、写前同目标复核、Shell STA 紧邻副作用的 generation 认领、IFileOperation 单项/目标 hash 验证及不触碰剪贴板的目录分支；其他目标完整回退旧流程。
 - Release 构建 0 警告，Core 63/63 + Windows/WPF 343/343 共 406/406 通过；测试覆盖旧代/未授权零落盘、双击一次、创建后隐藏失败不重试、授权后结果不明不回退、export lease/取消和产品 COM ABI 的 Unicode 碰撞/字节/清理。
 - 自包含 M2.3.8 PID 18136 真机通过普通 Explorer 单文件、Desktop 单文件与碰撞改名；三份目标文件 SHA 均匹配 canonical 资产。虚拟“此电脑”只推进 sequence `1959→1965` 且目录计数不变；Paint 成功显示并推进 `1965→1971`。M2.3.8 范围完成，三个验收 PNG 暂留待用户决定是否删除。
-
-### 会话 2026-08-31 - M2.3.7 产品图片接线与自动门禁
-
-- Core 新增转移 `ClipboardCaptureResult` 所有权的窄图片捕获接口，Windows pipeline 串接既有 normalizer 与资产 coordinator；App Controller 在图片目录分支提交 Image，单条失败可观察且不终止后续监听，取消/退出仍走既有 watchdog。
-- 组合根以单一 `ClipboardImageFeature` 显式拥有共享 options、normalizer、资产 coordinator 和缩略图缓存；同一 coordinator 同时用于双资产提交、缩略图、删除与 replay。部分启动失败会按 cache→coordinator/store→normalizer 释放，文本/文件继续可用并显示图片降级。
-- Release 62/62 + 330/330 共 392/392，61 项接线/生命周期/缓存/replay/平台高风险测试连续五轮、自包含发布、7 个脚本 AST 与 Window Station `reportVersion=5, success=true` 通过。真机操作后只读确认真实库 schema 5，6 条 Image、12 条双角色引用和 11 个 Ready 资产全部通过 SHA/长度/尺寸/外键核验。用 OS 进程终止模拟异常退出，离线库可读且重启前后摘要一致；最终发布现以 PID 11276 运行且 `Responding=True`。重启后真实目标粘贴、来源×目标、Alpha、DPI、4K/8K 和长期资源仍待验收。
-
-### 会话 2026-08-31 - M2.3.6 图片 replay、写回与安全粘贴
-
-- Core materialization 以两个只读 lease 持有 canonical PNG 与受限 DIBV5；asset coordinator 在既有 MTA 串行边界复核 primary Ready/revision、内容 SHA、严格 PNG/WIC、尺寸/Alpha 和 `Vok.Image.Pixel.v1`。只有内容完整性失败 quarantine，stale、取消、暂存或 writer 环境失败不污染 Ready 资产。
-- DIBV5 固定为 124-byte header、32bpp bottom-up BGRA8、显式 RGBA masks、sRGB 与 nullable DPI；Clipboard STA 以 1 MiB 缓冲按 PNG→CF_DIBV5→marker 写入。部分失败会清空半份内容，只释放未转移 HGLOBAL；Controller 在物化完成后隐藏并复用原有 receipt/generation/focus/inject 状态机，所有终态释放 lease。
-- 隔离 Release 62/62 + 322/322 共 384/384，33 项 materializer/writer/paste/asset 高风险测试连续五轮、win-x64 自包含发布与 Window Station `reportVersion=5, success=true` 通过。本阶段未接产品组合根、未操作交互剪贴板；下一步 M2.3.7 一次接线和真实来源×目标/DPI/长期资源验收。
 
 ## 指引
 
