@@ -11,12 +11,19 @@
 
 ## §0 快照
 
-- **状态**：M0、M1、M2.0–M2.4 已在既定单屏范围完成；托盘长期 Shell 登记丢失 R27 已按 `decisions.md §25` 建立真实后验与有界自愈。当前运行 `artifacts/r27-publish/Vok.exe`，PID 28424；M2.4 的 schema 6 与数据边界未改变，破坏性的产品清空仍未物理验收。
-- **最近进展**：新增实际 HWND/GUID 的 `Shell_NotifyIconGetRect` 探针，以及启动、TaskbarCreated、Resume、Unlock、1 分钟 watchdog 驱动的 UI-STA 单航班恢复。自动门禁直接删除测试图标登记，证明库仍报 `IsCreated=true` 时可同 PID 恢复；65/65 Core + 364/364 Windows/WPF 共 429/429 和 win-x64 自包含发布通过。真实 PID 28424 登记被可逆删除为 `0x80004005` 后，无重启恢复为 `0x00000000`，持久 `Ctrl+Space` 仍被占有。
-- **下一步**：用户已反馈 PID 28424 基础交互测试基本通过，本轮按用户要求提交源码；方便时再执行真实睡眠/唤醒、锁定/解锁及用户触发 Explorer 重启专项矩阵。只有确实要删除全部 Vok 历史时才执行两次确认“清空”；跨屏/多屏若未来重开仍为独立里程碑。
+- **状态**：M0、M1 与单屏范围的 M2.0–M2.4 已完成并归档冻结；项目按 `decisions.md §26` 进入 M3 中转站开发基线，Stage 代码尚未创建。当前运行 `artifacts/r27-publish/Vok.exe`，PID 28424；归档发布位于 `artifacts/m2-archive-20260903-publish/Vok.exe`，未替换运行实例或操作真实用户数据。
+- **最近进展**：剪贴板归档复验通过 Release 65/65 Core + 364/364 Windows/WPF 共 429/429、8/8 PowerShell AST、clipboard probe report v7 扩展图片矩阵 20 轮及 win-x64 自包含发布；探针的语义标识/持久化稳定，所有 job、lease 与 staging 最终归零。已冻结 `M2_CLIPBOARD_PLAN.md`，并确认中转站先于剩余设置开发、业务模型独立且共性按第二消费者提取。
+- **下一步**：为中转站编写产品契约与 Gate 0，先锁定文件引用、容量/保留、窗口级 OLE 拖入拖出、操作效果和失败语义，再实施文件型最小纵向切片；此阶段不直接复用 `Clipboard*` 模型，也不提前接入 Stage 图片资产。
 - **已知问题**：R27 的根故障机制和 missed-event watchdog 已验证，但真实 Modern Standby/睡眠、Unlock、Explorer 重启信号仍未物理执行。合法 PNG 轻量 header 仍可能在关闭剪贴板后 codec 失败且没有 DIB 事后后备；真实产品清空、物理磁盘耗尽和跨屏/多屏仍未验证。既有人工验收 PNG/截图继续保留。
 
 ## §0A 最近会话
+
+### 会话 2026-09-03 - 剪贴板归档与中转站开发基线
+
+- 对当前 HEAD 重做归档验收：Release 65/65 Core + 364/364 Windows/WPF 共 429/429，8/8 PowerShell AST 通过；clipboard probe report v7 扩展图片矩阵 20 轮成功，覆盖 40 次 4K 与 20 次 8K 捕获，语义标识、持久化和所有权归零稳定。
+- 生成 `artifacts/m2-archive-20260903-publish/Vok.exe` 自包含 win-x64 发布；没有替换当前 PID 28424、执行产品清空或改写真实用户库。首次联网还原仅因 nuget.org 漏洞审计不可达产生 NU1900，使用本地锁定包并仅对本次还原关闭审计后，全量测试和发布通过。
+- `M2_CLIPBOARD_PLAN.md` 已冻结为单屏 M2 实现/验收记录；真实产品清空、物理磁盘耗尽和跨屏/多屏保持显式未物理验证，不冒充完成，也不再阻塞归档。
+- 用户确认下一阶段先开发中转站、剩余设置后置。`decisions.md §26` 锁定独立 Stage 业务模型、文件型首个纵向切片、第二消费者再提取共性，以及图片接入前扩展全局资产引用证明和单一窗口级 OLE 会话所有权。
 
 ### 会话 2026-09-02 - 托盘 Shell 登记自愈闭环
 
@@ -31,13 +38,6 @@
 - 替换前在线备份真实 schema 5 库到 `%LOCALAPPDATA%\Vok\backups\vok-pre-m24-20260902-112140.db`；备份 `quick_check=ok`、90 条历史、19 个资产、20 个引用、0 外键违规。随后精确停止 PID 14120，启动已验证的 `artifacts/m24-publish/Vok.exe` 为 PID 15992。
 - 新版完成 schema 6 迁移，90 条历史分类/资产/引用全部不变，`quick_check=ok`、0 外键违规、0 PendingDelete/Quarantined。19 个 PNG 长度和 SHA-256 全部一致，0 缺失/staging；Windows 溢出区重新识别 `Vok`，图标 GUID 查询成功，持久 `Ctrl+Space` 显示已占用。
 - 本次只部署并恢复当前登记，没有修改托盘代码。旧实例的长期登记丢失暴露 R27：库的 `TaskbarCreated` 恢复静默吞错且应用没有真实 Shell 健康核验，后续须独立根因修复；产品清空未执行。
-
-### 会话 2026-09-01 - M2.4 保留、清空与规模故障门禁
-
-- schema 6 新增并迁移回填 `clipboard_entries.total_bytes`；默认保留锁定为最新 100 条未固定、30 天和 512 MiB 受管总量，固定只豁免条数/时间。保留、单删和清空均以 SQLite 元数据事务先行，零引用资产转 revision tombstone 后由唯一 asset coordinator 物理回收。
-- 启动恢复 PendingDelete，并只删除路径/实际 SHA 同时证明属于 CAS 的孤儿；未知或伪装内容保留并报告。产品加入两次确认清空、缩略图 cache generation 和 capture clear epoch，保证不动系统剪贴板/用户文件，且并发迟到捕获不会在 UI 或重启后复活。
-- Release 构建 0 警告/错误，65/65 Core + 354/354 Integration 共 419/419；10,000 条元数据、1,000 次连续捕获、迁移回滚、固定/总容量、全部类型清空及孤儿/伪装文件门禁通过。clipboard probe report v7 基础、2 轮和 20 轮资源矩阵、8 个脚本 AST、自包含 win-x64 发布通过。
-- 当前旧版 PID 14120 和真实 schema 5 用户库均未改动；发布物位于 `artifacts/m24-publish/Vok.exe`。实库迁移与清空物理验收待用户有意启动新版，清空不会被自动代做。
 
 ## 指引
 

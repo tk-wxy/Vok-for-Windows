@@ -58,26 +58,28 @@
 
 ## 项目结构
 
-M0 生产宿主内核已通过核心显隐、输入就绪、焦点往返与长期资源曲线验证并冻结；项目现进入 M1 启动台纵向切片。当前实际结构如下：
+M0 生产宿主、M1 启动台和单屏范围的 M2 剪贴板已完成并冻结；项目现进入 M3 中转站开发基线，先完成产品契约与 Gate 0，尚未创建中转站代码或占位 UI。当前实际结构如下：
 
 ```text
 src/
 ├── Vok.sln
-├── Vok.App/                    # WPF 可执行程序、组合根、全屏宿主与 WorkspaceController
-├── Vok.Core/                   # 平台契约、会话状态机与性能快照
-├── Vok.Infrastructure.Windows/ # 热键消息线程、窗口放置、前台恢复与进程采样
+├── Vok.App/                    # WPF 可执行程序、组合根、产品壳层与启动台/剪贴板表现
+├── Vok.Core/                   # 平台契约、会话状态机与启动台/剪贴板业务模型
+├── Vok.Infrastructure.Windows/ # Win32/Shell/剪贴板 STA、SQLite 与外置资产实现
 ├── Vok.Tests/                  # Core 状态机单元测试
 └── Vok.IntegrationTests/       # Windows API、控制器副作用与真实 WPF STA 测试
 docs/
-└── ARCHITECTURE.md             # 目标架构、数据流、门禁和实施阶段
+├── ARCHITECTURE.md             # 目标架构、数据流、门禁和实施阶段
+├── M1_LAUNCHER_PLAN.md         # 已完成的启动台实现与验收记录
+└── M2_CLIPBOARD_PLAN.md        # 已归档的剪贴板实现与验收记录
 tools/
 ├── Probe-M0.ps1                # 结构化同代五门禁烟雾探针
 ├── Measure-HostInteraction.ps1 # 固定 PID/HWND 时延与长期资源探针
-└── Record-M0FocusRestore.*     # 两次真实隐藏的只读逐代焦点因果记录器
+└── Probe-M2Clipboard.ps1        # 独立 Window Station 剪贴板与图片资源探针
 .apc/                           # 项目知识与开发协议
 ```
 
-中转站与搜索在正式进入里程碑前只保留文档边界，不创建空代码目录或占位 UI。
+中转站在 Gate 0 锁定产品契约前不创建空代码目录或占位 UI；搜索在正式进入里程碑前继续只保留文档边界。
 
 ## 常用命令
 

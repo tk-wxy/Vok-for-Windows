@@ -2,6 +2,13 @@
 
 > 归档超过滚动窗口的 `memory.md §0A` 完整会话。默认不读取，仅在取证时搜索；按时间从新到旧排列。
 
+### 会话 2026-09-01 - M2.4 保留、清空与规模故障门禁
+
+- schema 6 新增并迁移回填 `clipboard_entries.total_bytes`；默认保留锁定为最新 100 条未固定、30 天和 512 MiB 受管总量，固定只豁免条数/时间。保留、单删和清空均以 SQLite 元数据事务先行，零引用资产转 revision tombstone 后由唯一 asset coordinator 物理回收。
+- 启动恢复 PendingDelete，并只删除路径/实际 SHA 同时证明属于 CAS 的孤儿；未知或伪装内容保留并报告。产品加入两次确认清空、缩略图 cache generation 和 capture clear epoch，保证不动系统剪贴板/用户文件，且并发迟到捕获不会在 UI 或重启后复活。
+- Release 构建 0 警告/错误，65/65 Core + 354/354 Integration 共 419/419；10,000 条元数据、1,000 次连续捕获、迁移回滚、固定/总容量、全部类型清空及孤儿/伪装文件门禁通过。clipboard probe report v7 基础、2 轮和 20 轮资源矩阵、8 个脚本 AST、自包含 win-x64 发布通过。
+- 当前旧版 PID 14120 和真实 schema 5 用户库均未改动；发布物位于 `artifacts/m24-publish/Vok.exe`。实库迁移与清空物理验收待用户有意启动新版，清空不会被自动代做。
+
 ### 会话 2026-09-01 - M2.3 单屏大图、ICC、磁盘满与资源门禁
 
 - 用户确认继续剪贴板测试，并明确跨屏/多屏暂不实现；当前 M2.3 单屏收口边界记录于 `decisions.md §23`，既有 Per-Monitor 架构保留且不宣称多屏已支持。
