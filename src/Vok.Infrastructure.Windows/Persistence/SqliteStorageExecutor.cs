@@ -7,7 +7,7 @@ namespace Vok.Infrastructure.Windows.Persistence;
 public sealed class SqliteStorageExecutor : IDisposable
 {
     private const int QueueCapacity = 64;
-    private const int CurrentSchemaVersion = 5;
+    private const int CurrentSchemaVersion = 6;
     private static readonly HashSet<string> CurrentLauncherColumns =
     [
         "id",
@@ -50,7 +50,7 @@ public sealed class SqliteStorageExecutor : IDisposable
         "file_intent",
         "item_count",
     ];
-    private static readonly HashSet<string> CurrentClipboardEntryColumns =
+    private static readonly HashSet<string> SchemaFiveClipboardEntryColumns =
     [
         .. SchemaFourClipboardEntryColumns,
         "pixel_width",
@@ -58,6 +58,11 @@ public sealed class SqliteStorageExecutor : IDisposable
         "has_alpha",
         "dpi_x_milli",
         "dpi_y_milli",
+    ];
+    private static readonly HashSet<string> CurrentClipboardEntryColumns =
+    [
+        .. SchemaFiveClipboardEntryColumns,
+        "total_bytes",
     ];
     private static readonly HashSet<string> CurrentClipboardRepresentationColumns =
     [
@@ -442,6 +447,7 @@ public sealed class SqliteStorageExecutor : IDisposable
         {
             MigrateClipboardSchema3(connection, transaction);
             MigrateClipboardSchema4(connection, transaction);
+            MigrateClipboardSchema5(connection, transaction);
         }
         else if (entryColumns.SetEquals(SchemaFourClipboardEntryColumns) &&
                  representationColumns.SetEquals(CurrentClipboardRepresentationColumns) &&
@@ -450,6 +456,15 @@ public sealed class SqliteStorageExecutor : IDisposable
                  assetReferenceColumns.Count == 0)
         {
             MigrateClipboardSchema4(connection, transaction);
+            MigrateClipboardSchema5(connection, transaction);
+        }
+        else if (entryColumns.SetEquals(SchemaFiveClipboardEntryColumns) &&
+                 representationColumns.SetEquals(CurrentClipboardRepresentationColumns) &&
+                 fileColumns.SetEquals(CurrentClipboardFileColumns) &&
+                 assetColumns.SetEquals(CurrentContentAssetColumns) &&
+                 assetReferenceColumns.SetEquals(CurrentClipboardAssetReferenceColumns))
+        {
+            MigrateClipboardSchema5(connection, transaction);
         }
         else if (!entryColumns.SetEquals(CurrentClipboardEntryColumns) ||
                  !representationColumns.SetEquals(CurrentClipboardRepresentationColumns) ||
@@ -671,7 +686,8 @@ public sealed class SqliteStorageExecutor : IDisposable
                 pixel_height INTEGER NULL,
                 has_alpha INTEGER NULL,
                 dpi_x_milli INTEGER NULL,
-                dpi_y_milli INTEGER NULL
+                dpi_y_milli INTEGER NULL,
+                total_bytes INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE clipboard_representations (
@@ -786,6 +802,37 @@ public sealed class SqliteStorageExecutor : IDisposable
                 FOREIGN KEY (entry_id) REFERENCES clipboard_entries(id) ON DELETE CASCADE,
                 FOREIGN KEY (asset_hash) REFERENCES content_assets(hash) ON DELETE RESTRICT
             );
+            """;
+        command.ExecuteNonQuery();
+    }
+
+    private static void MigrateClipboardSchema5(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            ALTER TABLE clipboard_entries
+            ADD COLUMN total_bytes INTEGER NOT NULL DEFAULT 0;
+
+            UPDATE clipboard_entries
+            SET total_bytes =
+                length(CAST(plain_preview AS BLOB)) +
+                CASE kind
+                    WHEN 0 THEN COALESCE((
+                        SELECT SUM(r.byte_length)
+                        FROM clipboard_representations AS r
+                        WHERE r.entry_id = clipboard_entries.id), 0)
+                    WHEN 2 THEN COALESCE((
+                        SELECT SUM(
+                            length(CAST(f.original_path AS BLOB)) +
+                            length(CAST(f.canonical_path AS BLOB)) +
+                            length(CAST(f.display_name AS BLOB)))
+                        FROM clipboard_files AS f
+                        WHERE f.entry_id = clipboard_entries.id), 0)
+                    ELSE 0
+                END;
             """;
         command.ExecuteNonQuery();
     }

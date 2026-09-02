@@ -129,6 +129,11 @@ public partial class ClipboardView : UserControl
         }
         else
         {
+            if (DataContext is ClipboardViewModel viewModel)
+            {
+                viewModel.CancelPendingConfirmations();
+            }
+
             CancelAllThumbnailBindings();
         }
     }

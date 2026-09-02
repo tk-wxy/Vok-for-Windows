@@ -18,11 +18,24 @@
                    FontSize="12"
                    FontWeight="SemiBold"
                    VerticalAlignment="Center" />
-        <TextBlock Text="{Binding TotalCount, StringFormat={}{0} 条}"
-                   FontSize="10.5"
-                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                   HorizontalAlignment="Right"
-                   VerticalAlignment="Center" />
+        <StackPanel Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Center">
+          <TextBlock Text="{Binding TotalCount, StringFormat={}{0} 条}"
+                     Margin="0,0,8,0"
+                     FontSize="10.5"
+                     Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                     VerticalAlignment="Center" />
+          <Button x:Name="ClearHistoryButton"
+                  MinWidth="34"
+                  Height="20"
+                  Padding="6,0"
+                  FontSize="10"
+                  Content="{Binding ClearHistoryButtonText}"
+                  Command="{Binding ClearHistoryCommand}"
+                  ToolTip="清空全部 Vok 剪贴板历史；不改变系统剪贴板"
+                  automation:AutomationProperties.Name="清空全部 Vok 剪贴板历史" />
+        </StackPanel>
       </Grid>
     </Border>
 

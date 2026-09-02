@@ -387,8 +387,8 @@ internal static class Program
                 extendedImageMatrix?.Success is not false;
             var report = new
             {
-                schema = 5,
-                reportVersion = 6,
+                schema = 6,
+                reportVersion = 7,
                 isolatedWindowStation = true,
                 extendedImageMatrixRequested = runExtendedImageMatrix,
                 extendedImageRounds,

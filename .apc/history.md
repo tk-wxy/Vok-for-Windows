@@ -2,6 +2,18 @@
 
 > 归档超过滚动窗口的 `memory.md §0A` 完整会话。默认不读取，仅在取证时搜索；按时间从新到旧排列。
 
+### 会话 2026-09-01 - 重启后图片可见性与 Paint replay
+
+- 用户将 Paint 置为真实前台后，PID 14120 通过配置的 Ctrl+Space 呼出。UI Automation 首屏识别 2100×1748 图片卡，右栏截图同时证实重启前 2478×1355、2779×1509 图片卡的缩略图已从 schema 5/CAS 正常加载；总历史当时显示 88 条。
+- 调用 2100×1748 图片卡后 Vok 隐藏、Paint 前台恢复，clipboard sequence `2025→2031`，Paint 截图确认原图按 2100×1748 显示且 Vok 继续响应。收尾库为 88 条历史、10 条 Image、19 个 Ready 资产，`quick_check=ok`、外键/双角色引用完整、0 PendingDelete/Quarantined，staging 归零。
+- 2478×1355 重启前条目在库中唯一且卡片已可见；自动等待期间因 Paint 不在真实前台而安全拒绝注入，用户随后在 Paint 前台手动点击该条目并确认图片正常显示，精确跨重启 replay 门禁完成。30 秒隐藏样本为 Working Set 251,076,608、Private 162,893,824，单点不冒充长期资源结论。
+
+### 会话 2026-08-31 - M2.3 重启持久化与隔离复验
+
+- 将当前 M2.3.8 自包含实例从 PID 18136 重启为 PID 14120；重启前后真实库均为 schema 5、`quick_check=ok`、85 条历史、9 条 Image、18 条双角色引用和 17 个 Ready PNG。外键、Image 角色引用、资产引用和 17 个文件名 SHA 全部通过，0 PendingDelete/Quarantined，Vok 重启后响应正常。
+- 当前源码 Release 63/63 + 343/343 共 406/406 通过；独立 Window Station clipboard probe `reportVersion=5, success=true` 再次覆盖图片 PNG/DIBV5/Bitmap 解码、像素等价、Alpha、replay receipt、自写抑制和外部覆盖失效。IFileOperation probe `reportVersion=2, success=true` 再次覆盖预取消零副作用、碰撞改名、逐项结果、字节一致与临时清理。
+- 交互可见性/取用没有冒充通过：真实前台是 Minecraft，继续呼出或改写剪贴板会干扰用户会话；受控窗口又被 Windows 前台保护拒绝，重复尝试已停止。下一步由用户先切到 Paint 或 Explorer 等安全目标，再完成重启后图片卡可见、点击取用和来源×目标矩阵。
+
 ### 会话 2026-08-31 - M2.3.8 图片目标分流 Gate 0
 
 - 规划确认图片卡主动作只在正向识别 Explorer 当前文件系统目录或 Desktop 时直接创建 canonical PNG；该分支不改剪贴板、不注入 `Ctrl+V`，其他目标继续原有安全粘贴。虚拟目录、第三方文件管理器、批量/格式设置等明确后置。

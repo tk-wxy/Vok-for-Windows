@@ -104,6 +104,7 @@ public partial class App : Application
         services.AddSingleton(GlobalHotkeyGesture.Default);
         services.AddSingleton(WorkspaceHostOptions.FromEnvironment());
         services.AddSingleton(new ClipboardImageCaptureOptions());
+        services.AddSingleton(new ClipboardRetentionOptions());
         services.AddSingleton(provider => new ClipboardCaptureOptions(
             image: provider.GetRequiredService<ClipboardImageCaptureOptions>()));
         services.AddSingleton<WorkspaceSessionStateMachine>();
@@ -161,7 +162,9 @@ public partial class App : Application
                 images.ThumbnailCache,
                 images.AssetService,
                 images.IsEnabled,
-                images.UnavailableStatus);
+                images.UnavailableStatus,
+                images.MaintenanceService ??
+                    provider.GetRequiredService<SqliteClipboardHistoryRepository>());
         });
         services.AddSingleton<MainWindowViewModel>();
         services.AddSingleton<MainWindow>();
@@ -194,7 +197,10 @@ public partial class App : Application
                 provider.GetRequiredService<IClipboardHistoryRepository>(),
                 provider.GetRequiredService<ClipboardViewModel>(),
                 provider.GetRequiredService<IWorkspaceWindow>(),
-                images.CaptureService);
+                images.CaptureService,
+                images.MaintenanceService ??
+                    provider.GetRequiredService<SqliteClipboardHistoryRepository>(),
+                provider.GetRequiredService<ClipboardRetentionOptions>());
         });
         services.AddSingleton<IApplicationLifetime, WpfApplicationLifetime>();
         services.AddSingleton<ApplicationController>();

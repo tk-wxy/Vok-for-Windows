@@ -81,7 +81,9 @@ public sealed partial class ClipboardItemViewModel : ObservableObject
 
     public string PinGlyph => Entry.IsPinned ? "\uE77A" : "\uE840";
 
-    public string PinToolTip => Entry.IsPinned ? "取消固定" : "固定";
+    public string PinToolTip => Entry.IsPinned
+        ? "取消固定"
+        : "固定；豁免时间和条数清理，总数据保护上限仍适用";
 
     public string DeleteToolTip => IsDeleteArmed ? "再次点击确认删除" : "删除历史";
 

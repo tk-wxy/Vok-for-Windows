@@ -95,7 +95,7 @@ public sealed class ClipboardImageAssetCoordinatorTests
             Assert.Equal(duplicate.Image, replay.Image);
 
             using var connection = OpenDatabase(databasePath);
-            Assert.Equal(5L, ExecuteInt64(connection, "PRAGMA user_version;"));
+            Assert.Equal(6L, ExecuteInt64(connection, "PRAGMA user_version;"));
             Assert.Equal(2L, ExecuteInt64(connection, "SELECT COUNT(*) FROM content_assets;"));
             Assert.Equal(2L, ExecuteInt64(connection, "SELECT COUNT(*) FROM clipboard_asset_refs;"));
             Assert.Equal(
@@ -169,6 +169,111 @@ public sealed class ClipboardImageAssetCoordinatorTests
             using var connection = OpenDatabase(databasePath);
             Assert.Equal(0L, ExecuteInt64(connection, "SELECT COUNT(*) FROM content_assets;"));
             Assert.Equal(0L, ExecuteInt64(connection, "SELECT COUNT(*) FROM clipboard_asset_refs;"));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task ClearHistoryRemovesAllKindsAndCompletesAssetTombstones()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "clear.db");
+        var assetRoot = Path.Combine(directory, "assets");
+        try
+        {
+            using var repository = new SqliteClipboardHistoryRepository(databasePath);
+            using var coordinator = new ClipboardImageAssetCoordinator(
+                repository,
+                new ContentAddressedClipboardAssetStore(assetRoot));
+            var text = await repository.UpsertTextAsync(
+                new ClipboardTextContent(
+                    Hash(80),
+                    "clear-text",
+                    "clear-text",
+                    [new ClipboardStoredRepresentation(
+                        ClipboardRepresentationKind.UnicodeText,
+                        100,
+                        "clear-text",
+                        22)]),
+                DateTimeOffset.UtcNow,
+                TestContext.Current.CancellationToken);
+            var png = EncodePng(1, 1, [3, 2, 1, 255]);
+            var image = await coordinator.CommitAsync(
+                CreateResult(Hash(81), png, 1, 1, png, 1, 1),
+                DateTimeOffset.UtcNow.AddSeconds(1),
+                TestContext.Current.CancellationToken);
+            var imagePath = GetAssetPath(assetRoot, image.Image!.PrimaryPng!.Hash);
+            Assert.True(File.Exists(imagePath));
+
+            var result = await coordinator.ClearHistoryAsync(
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal([text.Id, image.Id], result.RemovedEntryIds);
+            Assert.Equal(0, result.RemainingEntryCount);
+            Assert.True(result.ManagedBytesBefore > 0);
+            Assert.Equal(0, result.ManagedBytesAfter);
+            Assert.Equal(0, result.PendingAssetDeleteCount);
+            Assert.False(result.AssetCleanupDeferred);
+            Assert.False(File.Exists(imagePath));
+            using var connection = OpenDatabase(databasePath);
+            Assert.Equal(0L, ExecuteInt64(connection, "SELECT COUNT(*) FROM clipboard_entries;"));
+            Assert.Equal(0L, ExecuteInt64(connection, "SELECT COUNT(*) FROM clipboard_asset_refs;"));
+            Assert.Equal(0L, ExecuteInt64(connection, "SELECT COUNT(*) FROM content_assets;"));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task StartupDeletesHashVerifiedOrphansButRetainsUnknownContent()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "orphans.db");
+        var assetRoot = Path.Combine(directory, "assets");
+        try
+        {
+            var png = EncodePng(1, 1, [7, 6, 5, 255]);
+            ClipboardPreparedAsset orphan;
+            using (var store = new ContentAddressedClipboardAssetStore(assetRoot))
+            using (var stream = new MemoryStream(png, writable: false))
+            {
+                orphan = store.CommitPng(
+                    stream,
+                    png.Length,
+                    1,
+                    1,
+                    TestContext.Current.CancellationToken);
+            }
+
+            var unknownHash = Hash(999);
+            var unknownPath = GetAssetPath(assetRoot, unknownHash);
+            Directory.CreateDirectory(Path.GetDirectoryName(unknownPath)!);
+            File.WriteAllBytes(unknownPath, [1, 2, 3, 4]);
+            var faults = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
+            using var repository = new SqliteClipboardHistoryRepository(databasePath);
+            using var coordinator = new ClipboardImageAssetCoordinator(
+                repository,
+                new ContentAddressedClipboardAssetStore(assetRoot),
+                diagnosticFault: faults.Enqueue);
+
+            _ = await coordinator.ApplyRetentionAsync(
+                new ClipboardRetentionOptions(),
+                DateTimeOffset.UtcNow,
+                TestContext.Current.CancellationToken);
+
+            Assert.False(File.Exists(Path.Combine(
+                assetRoot,
+                orphan.RelativePath.Replace('/', Path.DirectorySeparatorChar))));
+            Assert.True(File.Exists(unknownPath));
+            Assert.Contains(
+                faults,
+                static fault => fault is InvalidDataException &&
+                    fault.Message.Contains("content-addressed", StringComparison.Ordinal));
         }
         finally
         {

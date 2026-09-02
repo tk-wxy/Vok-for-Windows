@@ -15,6 +15,7 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
     private readonly IClipboardFilePresentationService? _filePresentation;
     private readonly IClipboardThumbnailCache? _thumbnailCache;
     private readonly IClipboardImageAssetService? _imageAssets;
+    private readonly IClipboardHistoryMaintenanceService? _maintenance;
     private readonly bool _imageHistoryEnabled;
     private readonly string? _imageFeatureUnavailableStatus;
     private readonly CancellationTokenSource _lifetime = new();
@@ -24,12 +25,20 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
     private bool _disposed;
     private Guid? _pendingDeleteId;
     private bool _filePresentationPumpRunning;
+    private bool _isClearHistoryArmed;
+    private long _historyEpoch;
 
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private bool _isListenerReady;
     [ObservableProperty] private bool _hasError;
     [ObservableProperty] private string _statusText = "正在加载剪贴板历史…";
-    [ObservableProperty] private int _totalCount;
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ClearHistoryCommand))]
+    private int _totalCount;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ClearHistoryCommand))]
+    private bool _isMaintenanceBusy;
 
     public ClipboardViewModel(IClipboardHistoryRepository repository)
         : this(
@@ -61,12 +70,15 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
         IClipboardThumbnailCache? thumbnailCache,
         IClipboardImageAssetService? imageAssets,
         bool imageHistoryEnabled = false,
-        string? imageFeatureUnavailableStatus = null)
+        string? imageFeatureUnavailableStatus = null,
+        IClipboardHistoryMaintenanceService? maintenanceService = null)
     {
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         _filePresentation = filePresentation;
         _thumbnailCache = thumbnailCache;
         _imageAssets = imageAssets;
+        _maintenance = maintenanceService ??
+            repository as IClipboardHistoryMaintenanceService;
         _imageHistoryEnabled = imageHistoryEnabled;
         _imageFeatureUnavailableStatus = imageFeatureUnavailableStatus;
     }
@@ -76,6 +88,9 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
     public bool HasMore => _nextCursor is not null;
 
     public bool IsEmpty => _initialized && !IsLoading && !HasError && Items.Count == 0;
+
+    public string ClearHistoryButtonText =>
+        _isClearHistoryArmed ? "确认清空" : "清空";
 
     public string EmptyStateText => _imageHistoryEnabled
         ? "复制文本、文件或图片后会自动显示在这里。\n支持文本、HTML、RTF、文件系统路径和图片。"
@@ -110,10 +125,19 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
         await LoadPageCoreAsync(reset: false).ConfigureAwait(true);
     }
 
-    public void ApplyCaptured(ClipboardEntry entry)
+    public void ApplyCaptured(ClipboardEntry entry) =>
+        ApplyCaptured(entry, Volatile.Read(ref _historyEpoch));
+
+    public bool ApplyCaptured(ClipboardEntry entry, long expectedHistoryEpoch)
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(entry);
+        if (expectedHistoryEpoch != Volatile.Read(ref _historyEpoch))
+        {
+            return false;
+        }
+
+        DisarmClearHistory();
         ClearPendingDelete();
         var existing = Items.FirstOrDefault(item => item.Id == entry.Id);
         if (existing is not null)
@@ -136,6 +160,53 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
         HasError = false;
         StatusText = "剪贴板监听已就绪。";
         OnPropertyChanged(nameof(IsEmpty));
+        return true;
+    }
+
+    internal long CaptureHistoryEpoch() => Volatile.Read(ref _historyEpoch);
+
+    internal bool IsHistoryEpochCurrent(long expectedHistoryEpoch) =>
+        expectedHistoryEpoch == Volatile.Read(ref _historyEpoch);
+
+    public void ApplyMaintenance(
+        ClipboardHistoryMaintenanceResult result,
+        bool announce = false)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(result);
+        if (result.RemovedEntryIds.Count != 0)
+        {
+            DisarmClearHistory();
+            ClearPendingDelete();
+            var removed = result.RemovedEntryIds.ToHashSet();
+            foreach (var item in Items.Where(item => removed.Contains(item.Id)).ToArray())
+            {
+                Items.Remove(item);
+            }
+
+            _thumbnailCache?.Clear();
+        }
+
+        TotalCount = result.RemainingEntryCount;
+        if (TotalCount == 0)
+        {
+            _nextCursor = null;
+            Items.Clear();
+        }
+        else if (Items.Count >= TotalCount)
+        {
+            _nextCursor = null;
+        }
+
+        if (announce)
+        {
+            StatusText = result.AssetCleanupDeferred
+                ? "已清空 Vok 剪贴板历史；资产 tombstone 将在后续重试回收。"
+                : "已清空 Vok 剪贴板历史；系统剪贴板内容未改变。";
+        }
+
+        OnPropertyChanged(nameof(HasMore));
+        OnPropertyChanged(nameof(IsEmpty));
     }
 
     public void MarkListenerReady()
@@ -148,6 +219,13 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
                 ? EmptyPromptText
                 : "剪贴板监听已就绪。";
         OnPropertyChanged(nameof(IsEmpty));
+    }
+
+    public void CancelPendingConfirmations()
+    {
+        ThrowIfDisposed();
+        DisarmClearHistory();
+        ClearPendingDelete();
     }
 
     public void MarkListenerFault(Exception exception)
@@ -209,6 +287,7 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(item);
+        DisarmClearHistory();
         try
         {
             bool removed;
@@ -252,6 +331,7 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(item);
+        DisarmClearHistory();
         if (_pendingDeleteId != item.Id)
         {
             ClearPendingDelete();
@@ -279,6 +359,55 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
         _lifetime.Dispose();
     }
 
+    private bool CanClearHistory() =>
+        TotalCount > 0 && !IsMaintenanceBusy;
+
+    [RelayCommand(CanExecute = nameof(CanClearHistory))]
+    private async Task ClearHistoryAsync()
+    {
+        ThrowIfDisposed();
+        if (!CanClearHistory())
+        {
+            return;
+        }
+
+        if (!_isClearHistoryArmed)
+        {
+            _isClearHistoryArmed = true;
+            OnPropertyChanged(nameof(ClearHistoryButtonText));
+            StatusText = "再次点击“确认清空”将删除全部 Vok 剪贴板历史；不会改变系统剪贴板。";
+            return;
+        }
+
+        DisarmClearHistory();
+        if (_maintenance is null)
+        {
+            StatusText = "剪贴板清理服务尚未启用，未删除任何历史。";
+            return;
+        }
+
+        Interlocked.Increment(ref _historyEpoch);
+        IsMaintenanceBusy = true;
+        try
+        {
+            var result = await _maintenance
+                .ClearHistoryAsync(_lifetime.Token)
+                .ConfigureAwait(true);
+            ApplyMaintenance(result, announce: true);
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            RecordOperationFault("清空失败", exception);
+        }
+        finally
+        {
+            IsMaintenanceBusy = false;
+        }
+    }
+
     [RelayCommand]
     private async Task PasteAsync(ClipboardItemViewModel? item)
     {
@@ -287,6 +416,7 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
             return;
         }
 
+        DisarmClearHistory();
         ClearPendingDelete();
         await PasteActionAsync(item).ConfigureAwait(true);
     }
@@ -299,6 +429,7 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
             return;
         }
 
+        DisarmClearHistory();
         ClearPendingDelete();
         await CopyFileActionAsync(item).ConfigureAwait(true);
     }
@@ -311,6 +442,7 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
             return;
         }
 
+        DisarmClearHistory();
         ClearPendingDelete();
         try
         {
@@ -398,6 +530,17 @@ public sealed partial class ClipboardViewModel : ObservableObject, IDisposable
             Items.FirstOrDefault(item => item.Id == pendingId)?.SetDeleteArmed(false);
             _pendingDeleteId = null;
         }
+    }
+
+    private void DisarmClearHistory()
+    {
+        if (!_isClearHistoryArmed)
+        {
+            return;
+        }
+
+        _isClearHistoryArmed = false;
+        OnPropertyChanged(nameof(ClearHistoryButtonText));
     }
 
     private void QueueFilePresentation(ClipboardItemViewModel item)

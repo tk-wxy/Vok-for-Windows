@@ -36,6 +36,8 @@ internal sealed class ClipboardImageFeature : IDisposable
 
     public IClipboardImageAssetService? AssetService => _assets;
 
+    public IClipboardHistoryMaintenanceService? MaintenanceService => _assets;
+
     public IClipboardImageReplayMaterializer? ReplayMaterializer => _assets;
 
     public IClipboardImageExportMaterializer? ExportMaterializer => _assets;

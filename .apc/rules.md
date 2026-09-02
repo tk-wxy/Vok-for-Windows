@@ -33,6 +33,8 @@
 | R23 | 图片缩略图只按稳定展示槽可见性加载并以版本化容器门禁落地 | 剪贴板图片 UI | 是 |
 | R24 | 图片 replay 必须区分资产完整性失败与暂存/写入环境失败 | 剪贴板图片写回 | 是 |
 | R25 | 图片目录导出必须双重正向确认目标并在文件副作用前认领工作区代次 | 剪贴板图片写回 | 是 |
+| R26 | 历史回收必须先提交元数据 tombstone，再由 revision 与内容哈希证明物理删除资格 | 剪贴板保留与资产 | 是 |
+| R27 | 托盘对象存活不能冒充 Shell 图标仍已注册 | 生命周期与并发 | 是 |
 
 ## 规则
 
@@ -69,6 +71,12 @@
   - 证据：现有 M0 把显示器放置、会话期 Topmost、真实前台、输入焦点和目标恢复集中在 `WorkspaceController`，旁路显示会跳过这些门禁；任何通知区域菜单都会在打开后成为本进程前台，菜单项回调时再捕获可能只得到 Vok 自身。当前通知图标适配器在右键按下或键盘菜单交互开始时捕获目标，原生 `HMENU` 返回命令后才发布；旧代失活与新代设置显示按同优先级队列排序，每轮结束清除快照，退出先占有且失败可重试。
   - 最后验证：2026-08-27。
   - 状态：active；Release 默认/隔离构建 0 警告/错误、Core 24/24 与 Windows/WPF 69/69 共 93/93 测试、自包含 win-x64 发布均通过；用户已确认原生菜单视觉和其余壳层/托盘测试通过。
+
+- [ ] R27：不能以 `TaskbarIcon.IsCreated`、`H.NotifyIcon` 消息窗口仍存在或 Vok 热键仍工作，推断 Windows Shell 仍持有通知图标。长期运行恢复必须以图标 GUID 调用 `Shell_NotifyIconGetRect` 或等价真实 Shell 结果核验；任务栏重建/会话恢复后的重新注册失败必须可观察并有有界重试，不能静默吞错，也不能靠应用重启冒充根治。
+  - 范围：托盘图标长期运行、Explorer/任务栏重建、睡眠/唤醒、`H.NotifyIcon.Wpf` 与应用降级启动。
+  - 证据：2026-09-02 旧版 PID 14120 的快捷键与 WPF 主窗正常，`H.NotifyIcon_*` HWND 仍存活，但任务栏可见区、溢出区和 NotifyIconSettings 均无该实例，正确 GUID 的 `Shell_NotifyIconGetRect` 返回 `0x80004005`。该进程启动后经历多次 Modern Standby/睡眠恢复，未发现 Explorer/ShellExperienceHost 进程崩溃；无法精确归因到某一次恢复。固定依赖 `H.NotifyIcon.Wpf 2.4.1` 只在 `TaskbarCreated` 尝试重建且静默忽略异常，Vok 自身没有后验健康核验。替换为 PID 15992 后，同一 GUID 查询返回成功且 UI Automation 在溢出区识别到 `Vok`，证明缺失的是 Shell 登记而非进程/热键生命周期。
+  - 最后验证：2026-09-02。
+  - 状态：active；故障已复现并通过进程重启恢复，但根因修复尚未实现。后续必须以事件驱动重建、真实 Shell 复核和失败测试收口，不能把本次重启记为修复完成。
 
 ### 输入与热键
 
@@ -188,13 +196,19 @@
   - 最后验证：2026-08-31。
   - 状态：active；Gate 0、产品接线、0 警告 Release、406/406 自动测试及 Explorer/Desktop/碰撞/虚拟目录/Paint 新版物理交互全部通过。
 
+- [ ] R26：剪贴板历史的保留、删除和清空必须先在同一 SQLite 事务删除条目/引用并把零引用资产标为带 revision 的 PendingDelete，再由唯一 asset coordinator 复核 `(hash, revision)` 后删除物理文件和资产行。固定只豁免时间与条数，不得豁免总容量；总容量必须按条目字节加全局去重资产字节计算。启动孤儿回收只能删除符合应用 CAS 路径形状且实际 SHA-256 与路径一致的文件，未知或内容不符文件必须保留并报告。清空不得修改系统剪贴板或 FileList 指向的用户文件；与捕获并发时必须阻止清空前的迟到结果重新出现。
+  - 范围：M2.4 schema 6、自动保留、固定/总容量语义、单项删除、一键清空、tombstone、CAS 孤儿、缩略图缓存与捕获竞态。
+  - 证据：SQLite 与文件系统没有跨资源原子事务，M2.3 已把失败方向固定为“无引用 CAS 文件”而不是“数据库悬空引用”。M2.4 的迁移回滚、固定/未固定淘汰顺序、10,000 条 keyset 分页、全部类型清空、revision 失效、合法孤儿回收/伪装路径保留、清空 epoch 与 1,000 次连续捕获均有测试；见 `decisions.md §24`。
+  - 最后验证：2026-09-01。
+  - 状态：active；schema 6、默认 100 条/30 天/512 MiB、419/419 自动测试、report v7 20 轮及自包含发布通过。当前真实 schema 5 库尚未由新版迁移，破坏性清空未在用户数据上执行。
+
 ### 存储与规模
 
 - [ ] R5：不得在 UI Dispatcher 上执行 Microsoft.Data.Sqlite；数据库写入由显式执行器串行化并使用 WAL。数据库升级必须同时核验版本号与真实表结构，在单事务内迁移并让未知结构原样回滚；`CREATE TABLE IF NOT EXISTS` 只能建新表，不能冒充已有表迁移。大集合必须同时实施 SQL 分页和 WPF 容器虚拟化，不能把 UI 虚拟化当作数据虚拟化。
   - 范围：SQLite、启动台、剪贴板历史、图片与后续大列表。
-  - 证据：https://learn.microsoft.com/dotnet/standard/data/sqlite/async 说明 Async 方法实际同步；https://learn.microsoft.com/dotnet/desktop/wpf/advanced/optimizing-performance-controls 说明 WPF 没有内建数据虚拟化。2026-08-28 真机旧库因已有 `launcher_items` 使 `CREATE TABLE IF NOT EXISTS` 静默跳过，但代码仍写入版本并查询新列，复现 `no such column: target_kind`；schema 2 改为列集合识别和单事务迁移。M2.1–2 形成 schema 3/4。M2.3.4 以同一事务增加五个 nullable 图片列、`content_assets`、`clipboard_asset_refs`、CASCADE/RESTRICT 外键及引用/状态索引；fresh、schema 3、schema 4 与完整 schema 5 均按真实列/FK/index 识别，半迁移列和损坏 asset FK 原样拒绝。迁移定向验证 Text/FileList replay 均保留，图片分页只 LEFT JOIN 两个轻量引用，不读取 PNG。
-  - 最后验证：2026-08-31。
-  - 状态：active；设置、启动台与剪贴板共享串行所有权，schema 1→2→3→4→5、失败回滚、SQL 分页、WPF 虚拟化、去重/排序和取消一致性均有自动测试；真实用户库已迁移到 schema 5，并在 OS 进程终止后离线读取、新进程重开及前后状态摘要一致性中通过持久化核验。
+  - 证据：https://learn.microsoft.com/dotnet/standard/data/sqlite/async 说明 Async 方法实际同步；https://learn.microsoft.com/dotnet/desktop/wpf/advanced/optimizing-performance-controls 说明 WPF 没有内建数据虚拟化。2026-08-28 真机旧库因已有 `launcher_items` 使 `CREATE TABLE IF NOT EXISTS` 静默跳过，但代码仍写入版本并查询新列，复现 `no such column: target_kind`；schema 2 改为列集合识别和单事务迁移。M2.1–2 形成 schema 3/4，M2.3.4 形成 schema 5。M2.4 schema 6 在同一事务加入并回填 `clipboard_entries.total_bytes`；损坏 schema 5 外键的迁移失败测试证明 `user_version` 与新增列均回滚，10,000 条元数据验证 keyset 分页不依赖全量加载。
+  - 最后验证：2026-09-01。
+  - 状态：active；设置、启动台与剪贴板共享串行所有权，schema 1→2→3→4→5→6、失败回滚、SQL 分页、WPF 虚拟化、去重/排序、保留与取消一致性均有自动测试；真实用户库已验证 schema 5 持久化，但尚未由当前 schema 6 发布物迁移。
 
 ### 发布与互操作
 
@@ -238,6 +252,8 @@
 - 图片卡一直空白、滚动后串图、隐藏后缩略图仍驻留或图片越多内存越高 → 检查 R23；不要用空 `Image.ActualWidth` 判可见、分页预加载或只凭异步完成顺序绑定。
 - 图片原图无法回放、资产无故被隔离、粘贴失败后剩半份格式或句柄/临时文件不回落 → 检查 R24；先区分内容完整性、环境故障和 HGLOBAL 是否已转移。
 - 图片点入错误 Explorer 标签、虚拟目录误落盘、双击生成两份、创建成功却提示重试或目录分支改了剪贴板 → 检查 R25；不要用标题/Automation/进程名授权，也不要在最终 Shell 复核前消费代次声明。
+- 清空后历史重现、固定项无限增长、共享图片误删、启动回收误伤未知文件或数据库已空但资产长期残留 → 检查 R26；先核对元数据事务、revision tombstone、去重总字节和文件实际 SHA，不要直接按目录/mtime 删除。
+- Vok 热键正常但托盘图标在可见区/溢出区都消失 → 检查 R27；消息窗口或托盘对象仍活着不能证明 Shell 登记存在，先用图标 GUID 查询真实注册状态。
 - 条目增加导致 UI/内存线性增长 → 检查 R5。
 - Debug 正常但发布版互操作失败 → 检查 R6。
 - 测试命令成功但显示 0 项测试 → 检查 R7。

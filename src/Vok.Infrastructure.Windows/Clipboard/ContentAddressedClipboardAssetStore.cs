@@ -280,6 +280,79 @@ public sealed class ContentAddressedClipboardAssetStore :
         File.Delete(path);
     }
 
+    public IReadOnlySet<string> EnumerateCommittedRelativePaths()
+    {
+        ObjectDisposedException.ThrowIf(
+            Volatile.Read(ref _disposed) != 0,
+            this);
+        var paths = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var directory in Directory.EnumerateDirectories(
+                     _rootPath,
+                     "*",
+                     SearchOption.TopDirectoryOnly))
+        {
+            var prefix = Path.GetFileName(directory);
+            if (prefix.Length != 2 ||
+                !prefix.All(static character =>
+                    character is >= '0' and <= '9' or >= 'a' and <= 'f'))
+            {
+                continue;
+            }
+
+            foreach (var path in Directory.EnumerateFiles(
+                         directory,
+                         "*.png",
+                         SearchOption.TopDirectoryOnly))
+            {
+                var hash = Path.GetFileNameWithoutExtension(path);
+                if (IsLowercaseSha256(hash) &&
+                    hash.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    paths.Add(GetRelativePath(hash));
+                }
+            }
+        }
+
+        return paths;
+    }
+
+    public void DeleteOrphan(string relativePath)
+    {
+        ObjectDisposedException.ThrowIf(
+            Volatile.Read(ref _disposed) != 0,
+            this);
+        ArgumentException.ThrowIfNullOrWhiteSpace(relativePath);
+        var fileName = Path.GetFileName(relativePath.Replace('/', Path.DirectorySeparatorChar));
+        var hash = Path.GetFileNameWithoutExtension(fileName);
+        var path = ResolvePath(hash, relativePath);
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        using (var stream = new FileStream(
+                   path,
+                   FileMode.Open,
+                   FileAccess.Read,
+                   FileShare.Read,
+                   bufferSize: 64 * 1024,
+                   FileOptions.SequentialScan))
+        {
+            if (stream.Length is < 1 or >
+                ClipboardImageCaptureOptions.DefaultMaximumInputBytes ||
+                !string.Equals(
+                    ComputeSha256(stream, CancellationToken.None),
+                    hash,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    "An unreferenced clipboard asset did not match its content-addressed path.");
+            }
+        }
+
+        File.Delete(path);
+    }
+
     public void Dispose() =>
         Interlocked.Exchange(ref _disposed, 1);
 
@@ -604,4 +677,11 @@ internal interface IClipboardContentAssetStore : IDisposable
         CancellationToken cancellationToken = default);
 
     void Delete(ClipboardAssetDeleteClaim claim);
+
+    IReadOnlySet<string> EnumerateCommittedRelativePaths() =>
+        new HashSet<string>(StringComparer.Ordinal);
+
+    void DeleteOrphan(string relativePath)
+    {
+    }
 }

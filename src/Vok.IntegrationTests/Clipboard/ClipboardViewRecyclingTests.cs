@@ -15,6 +15,36 @@ namespace Vok.IntegrationTests.Clipboard;
 public sealed class ClipboardViewRecyclingTests(WpfApplicationFixture wpf)
 {
     [Fact]
+    public void ClearHistoryActionFitsTheFixedHeaderAndUsesTheViewModelCommand()
+    {
+        wpf.Invoke(() =>
+        {
+            using var viewModel = new ClipboardViewModel(new NoopClipboardRepository());
+            viewModel.ApplyCaptured(new ClipboardEntry(
+                Guid.NewGuid(),
+                ClipboardContentKind.Text,
+                new string('a', 64),
+                "clear",
+                DateTimeOffset.UtcNow,
+                DateTimeOffset.UtcNow,
+                1,
+                1,
+                false,
+                1));
+            var view = new ClipboardView { DataContext = viewModel };
+            view.Measure(new Size(420, 320));
+            view.Arrange(new Rect(0, 0, 420, 320));
+            view.UpdateLayout();
+
+            var button = Assert.IsType<Button>(view.FindName("ClearHistoryButton"));
+            Assert.Equal(20, button.ActualHeight);
+            Assert.Same(viewModel.ClearHistoryCommand, button.Command);
+            Assert.Equal("清空", button.Content);
+            Assert.True(button.IsEnabled);
+        });
+    }
+
+    [Fact]
     public void OnlyViewportImageContainersLoadAndWindowHideReleasesSources()
     {
         wpf.Invoke(() =>

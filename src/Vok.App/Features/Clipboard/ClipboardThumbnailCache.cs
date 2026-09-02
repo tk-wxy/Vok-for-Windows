@@ -20,6 +20,10 @@ internal interface IClipboardThumbnailCache
         string assetHash,
         long expectedRevision,
         CancellationToken cancellationToken = default);
+
+    void Clear()
+    {
+    }
 }
 
 internal sealed class ClipboardThumbnailCache : IClipboardThumbnailCache, IDisposable
@@ -33,6 +37,7 @@ internal sealed class ClipboardThumbnailCache : IClipboardThumbnailCache, IDispo
         new(StringComparer.Ordinal);
     private readonly LinkedList<CacheEntry> _leastRecentlyUsed = new();
     private long _cachedDecodedBytes;
+    private long _generation;
     private int _disposed;
 
     public ClipboardThumbnailCache(
@@ -61,6 +66,7 @@ internal sealed class ClipboardThumbnailCache : IClipboardThumbnailCache, IDispo
             this);
         ArgumentException.ThrowIfNullOrWhiteSpace(assetHash);
         ArgumentOutOfRangeException.ThrowIfLessThan(expectedRevision, 1);
+        var generation = _generation;
 
         if (TryGet(assetHash, out var cached))
         {
@@ -82,6 +88,14 @@ internal sealed class ClipboardThumbnailCache : IClipboardThumbnailCache, IDispo
             ObjectDisposedException.ThrowIf(
                 Volatile.Read(ref _disposed) != 0,
                 this);
+            if (generation != _generation)
+            {
+                return new ClipboardThumbnailPresentation(
+                    assetHash,
+                    State: null,
+                    expectedRevision,
+                    Image: null);
+            }
             if (TryGet(assetHash, out cached))
             {
                 return new ClipboardThumbnailPresentation(
@@ -102,6 +116,14 @@ internal sealed class ClipboardThumbnailCache : IClipboardThumbnailCache, IDispo
             ObjectDisposedException.ThrowIf(
                 Volatile.Read(ref _disposed) != 0,
                 this);
+            if (generation != _generation)
+            {
+                return new ClipboardThumbnailPresentation(
+                    assetHash,
+                    State: null,
+                    expectedRevision,
+                    Image: null);
+            }
 
             if (result is null)
             {
@@ -137,6 +159,15 @@ internal sealed class ClipboardThumbnailCache : IClipboardThumbnailCache, IDispo
         }
     }
 
+    public void Clear()
+    {
+        _dispatcher.VerifyAccess();
+        ObjectDisposedException.ThrowIf(
+            Volatile.Read(ref _disposed) != 0,
+            this);
+        ClearCore();
+    }
+
     public void Dispose()
     {
         _dispatcher.VerifyAccess();
@@ -146,10 +177,16 @@ internal sealed class ClipboardThumbnailCache : IClipboardThumbnailCache, IDispo
         }
 
         _lifetime.Cancel();
+        ClearCore();
+        _lifetime.Dispose();
+    }
+
+    private void ClearCore()
+    {
+        _generation++;
         _entries.Clear();
         _leastRecentlyUsed.Clear();
         _cachedDecodedBytes = 0;
-        _lifetime.Dispose();
     }
 
     private bool TryGet(string assetHash, out BitmapSource image)

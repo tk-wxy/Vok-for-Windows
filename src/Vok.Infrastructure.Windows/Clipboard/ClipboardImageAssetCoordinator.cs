@@ -9,13 +9,15 @@ namespace Vok.Infrastructure.Windows.Clipboard;
 public sealed class ClipboardImageAssetCoordinator :
     IClipboardImageAssetService,
     IClipboardImageReplayMaterializer,
-    IClipboardImageExportMaterializer
+    IClipboardImageExportMaterializer,
+    IClipboardHistoryMaintenanceService
 {
     private static readonly TimeSpan DefaultShutdownWatchdog =
         TimeSpan.FromSeconds(5);
 
     private readonly BlockingCollection<AssetWorkItem> _queue;
     private readonly IClipboardImageMetadataRepository _repository;
+    private readonly IClipboardHistoryMaintenanceRepository? _maintenanceRepository;
     private readonly IClipboardContentAssetStore _assetStore;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly Thread _thread;
@@ -61,6 +63,7 @@ public sealed class ClipboardImageAssetCoordinator :
         ClipboardImageTemporaryStore? replayTemporaryStore = null)
     {
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
+        _maintenanceRepository = repository as IClipboardHistoryMaintenanceRepository;
         _assetStore = assetStore ?? throw new ArgumentNullException(nameof(assetStore));
         ArgumentNullException.ThrowIfNull(options);
         if (shutdownWatchdog <= TimeSpan.Zero)
@@ -98,7 +101,7 @@ public sealed class ClipboardImageAssetCoordinator :
     /// <summary>
     /// Transfers ownership of <paramref name="result"/> on every non-null call.
     /// Successful publication occurs only after both files are verified and the
-    /// schema-5 metadata transaction commits.
+    /// schema-6 metadata transaction commits.
     /// </summary>
     public Task<ClipboardEntry> CommitAsync(
         ClipboardImageNormalizationResult result,
@@ -123,6 +126,30 @@ public sealed class ClipboardImageAssetCoordinator :
             cancellationToken,
             ReleaseJobSlot));
     }
+
+    public Task<bool> RemoveEntryAsync(
+        Guid entryId,
+        CancellationToken cancellationToken = default) =>
+        RemoveAsync(entryId, cancellationToken);
+
+    public Task<ClipboardHistoryMaintenanceResult> ApplyRetentionAsync(
+        ClipboardRetentionOptions options,
+        DateTimeOffset utcNow,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return Enqueue(new ApplyRetentionWorkItem(
+            options,
+            utcNow,
+            cancellationToken,
+            ReleaseJobSlot));
+    }
+
+    public Task<ClipboardHistoryMaintenanceResult> ClearHistoryAsync(
+        CancellationToken cancellationToken = default) =>
+        Enqueue(new ClearHistoryWorkItem(
+            cancellationToken,
+            ReleaseJobSlot));
 
     public Task<ClipboardAssetReference?> VerifyAssetAsync(
         string assetHash,
@@ -269,6 +296,8 @@ public sealed class ClipboardImageAssetCoordinator :
         try
         {
             RecoverPendingDeletes(_shutdown.Token);
+            RecoverUnreferencedAssets(_shutdown.Token);
+            ReconcileOrphanAssetFiles(_shutdown.Token);
             foreach (var item in _queue.GetConsumingEnumerable())
             {
                 item.Execute(this, _shutdown.Token);
@@ -361,6 +390,55 @@ public sealed class ClipboardImageAssetCoordinator :
         ProcessDeleteClaims(result.PendingDeletes);
         return result.Removed;
     }
+
+    private ClipboardHistoryMaintenanceResult ApplyRetentionCore(
+        ClipboardRetentionOptions options,
+        DateTimeOffset utcNow,
+        CancellationToken cancellationToken)
+    {
+        var repository = GetMaintenanceRepository();
+        var result = repository.ApplyRetentionMetadataAsync(
+                options,
+                utcNow,
+                cancellationToken)
+            .GetAwaiter()
+            .GetResult();
+        return CompleteMaintenance(result, cancellationToken);
+    }
+
+    private ClipboardHistoryMaintenanceResult ClearHistoryCore(
+        CancellationToken cancellationToken)
+    {
+        var result = GetMaintenanceRepository()
+            .ClearHistoryMetadataAsync(cancellationToken)
+            .GetAwaiter()
+            .GetResult();
+        return CompleteMaintenance(result, cancellationToken);
+    }
+
+    private ClipboardHistoryMaintenanceResult CompleteMaintenance(
+        ClipboardMetadataMaintenanceResult result,
+        CancellationToken cancellationToken)
+    {
+        ProcessDeleteClaims(result.PendingDeletes, cancellationToken);
+        ReconcileOrphanAssetFiles(cancellationToken);
+        var pendingCount = _repository
+            .LoadPendingAssetDeletesAsync(cancellationToken)
+            .GetAwaiter()
+            .GetResult()
+            .Count;
+        return new ClipboardHistoryMaintenanceResult(
+            result.RemovedEntryIds,
+            result.RemainingEntryCount,
+            result.ManagedBytesBefore,
+            result.ManagedBytesAfter,
+            pendingCount,
+            AssetCleanupDeferred: pendingCount != 0);
+    }
+
+    private IClipboardHistoryMaintenanceRepository GetMaintenanceRepository() =>
+        _maintenanceRepository ?? throw new InvalidOperationException(
+            "The clipboard metadata repository does not support history maintenance.");
 
     private ClipboardAssetReference? VerifyAssetCore(
         string assetHash,
@@ -670,6 +748,56 @@ public sealed class ClipboardImageAssetCoordinator :
             .GetAwaiter()
             .GetResult();
         ProcessDeleteClaims(claims, cancellationToken);
+    }
+
+    private void RecoverUnreferencedAssets(CancellationToken cancellationToken)
+    {
+        if (_maintenanceRepository is null)
+        {
+            return;
+        }
+
+        var claims = _maintenanceRepository
+            .ClaimUnreferencedAssetsAsync(cancellationToken)
+            .GetAwaiter()
+            .GetResult();
+        ProcessDeleteClaims(claims, cancellationToken);
+    }
+
+    private void ReconcileOrphanAssetFiles(CancellationToken cancellationToken)
+    {
+        if (_maintenanceRepository is null)
+        {
+            return;
+        }
+
+        var known = _maintenanceRepository
+            .LoadKnownAssetRelativePathsAsync(cancellationToken)
+            .GetAwaiter()
+            .GetResult();
+        IReadOnlySet<string> committed;
+        try
+        {
+            committed = _assetStore.EnumerateCommittedRelativePaths();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            ReportFault(exception);
+            return;
+        }
+
+        foreach (var relativePath in committed.Except(known, StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                _assetStore.DeleteOrphan(relativePath);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                ReportFault(exception);
+            }
+        }
     }
 
     private void ProcessDeleteClaims(
@@ -1065,6 +1193,37 @@ public sealed class ClipboardImageAssetCoordinator :
             ClipboardImageAssetCoordinator owner,
             CancellationToken cancellationToken) =>
             PublishSuccess(owner.RemoveCore(entryId, cancellationToken));
+    }
+
+    private sealed class ApplyRetentionWorkItem(
+        ClipboardRetentionOptions options,
+        DateTimeOffset utcNow,
+        CancellationToken callerCancellation,
+        Action releaseSlot)
+        : AssetWorkItem<ClipboardHistoryMaintenanceResult>(
+            callerCancellation,
+            releaseSlot)
+    {
+        protected override void ExecuteCore(
+            ClipboardImageAssetCoordinator owner,
+            CancellationToken cancellationToken) =>
+            PublishSuccess(owner.ApplyRetentionCore(
+                options,
+                utcNow,
+                cancellationToken));
+    }
+
+    private sealed class ClearHistoryWorkItem(
+        CancellationToken callerCancellation,
+        Action releaseSlot)
+        : AssetWorkItem<ClipboardHistoryMaintenanceResult>(
+            callerCancellation,
+            releaseSlot)
+    {
+        protected override void ExecuteCore(
+            ClipboardImageAssetCoordinator owner,
+            CancellationToken cancellationToken) =>
+            PublishSuccess(owner.ClearHistoryCore(cancellationToken));
     }
 
     private sealed class VerifyWorkItem(

@@ -10,7 +10,7 @@ namespace Vok.IntegrationTests.Persistence;
 public sealed class SqliteClipboardHistoryRepositoryTests
 {
     [Fact]
-    public async Task SchemaTwoUpgradesToFiveWithoutLosingLauncherRows()
+    public async Task SchemaTwoUpgradesToSixWithoutLosingLauncherRows()
     {
         var directory = CreateTestDirectory();
         var databasePath = Path.Combine(directory, "upgrade.db");
@@ -29,7 +29,7 @@ public sealed class SqliteClipboardHistoryRepositoryTests
             }
 
             using var connection = OpenDatabase(databasePath);
-            Assert.Equal(5L, ExecuteInt64(connection, "PRAGMA user_version;"));
+            Assert.Equal(6L, ExecuteInt64(connection, "PRAGMA user_version;"));
             Assert.Equal(
                 "keep-launcher",
                 ExecuteString(
@@ -73,7 +73,7 @@ public sealed class SqliteClipboardHistoryRepositoryTests
             }
 
             using var connection = OpenDatabase(databasePath);
-            Assert.Equal(5L, ExecuteInt64(connection, "PRAGMA user_version;"));
+            Assert.Equal(6L, ExecuteInt64(connection, "PRAGMA user_version;"));
             Assert.Equal(1L, TableExists(connection, "clipboard_files"));
             Assert.Equal(
                 0L,
@@ -151,7 +151,7 @@ public sealed class SqliteClipboardHistoryRepositoryTests
     }
 
     [Fact]
-    public async Task SchemaFourMigratesToFiveAndKeepsExistingRowsImageColumnsNull()
+    public async Task SchemaFourMigratesToSixAndKeepsExistingRowsImageColumnsNull()
     {
         var directory = CreateTestDirectory();
         var databasePath = Path.Combine(directory, "schema4.db");
@@ -189,7 +189,7 @@ public sealed class SqliteClipboardHistoryRepositoryTests
             }
 
             using var connection = OpenDatabase(databasePath);
-            Assert.Equal(5L, ExecuteInt64(connection, "PRAGMA user_version;"));
+            Assert.Equal(6L, ExecuteInt64(connection, "PRAGMA user_version;"));
             Assert.Equal(1L, TableExists(connection, "content_assets"));
             Assert.Equal(1L, TableExists(connection, "clipboard_asset_refs"));
             Assert.Equal(
@@ -197,6 +197,16 @@ public sealed class SqliteClipboardHistoryRepositoryTests
                 ExecuteInt64(
                     connection,
                     "SELECT COUNT(*) FROM pragma_table_info('clipboard_entries') WHERE name IN ('pixel_width', 'pixel_height', 'has_alpha', 'dpi_x_milli', 'dpi_y_milli');"));
+            Assert.Equal(
+                1L,
+                ExecuteInt64(
+                    connection,
+                    "SELECT COUNT(*) FROM pragma_table_info('clipboard_entries') WHERE name = 'total_bytes';"));
+            Assert.Equal(
+                2L,
+                ExecuteInt64(
+                    connection,
+                    "SELECT COUNT(*) FROM clipboard_entries WHERE total_bytes > 0;"));
             Assert.Equal(
                 0L,
                 ExecuteInt64(
@@ -259,7 +269,7 @@ public sealed class SqliteClipboardHistoryRepositoryTests
     }
 
     [Fact]
-    public async Task SchemaFiveWithBrokenAssetForeignKeyIsRejectedInPlace()
+    public async Task SchemaFiveWithBrokenAssetForeignKeyRollsBackSixMigration()
     {
         var directory = CreateTestDirectory();
         var databasePath = Path.Combine(directory, "broken-schema5.db");
@@ -278,6 +288,8 @@ public sealed class SqliteClipboardHistoryRepositoryTests
             {
                 command.CommandText = """
                     PRAGMA foreign_keys = OFF;
+                    ALTER TABLE clipboard_entries DROP COLUMN total_bytes;
+                    PRAGMA user_version = 5;
                     DROP TABLE clipboard_asset_refs;
                     CREATE TABLE clipboard_asset_refs (
                         entry_id TEXT NOT NULL,
@@ -304,6 +316,11 @@ public sealed class SqliteClipboardHistoryRepositoryTests
 
             using var reopened = OpenDatabase(databasePath);
             Assert.Equal(5L, ExecuteInt64(reopened, "PRAGMA user_version;"));
+            Assert.Equal(
+                0L,
+                ExecuteInt64(
+                    reopened,
+                    "SELECT COUNT(*) FROM pragma_table_info('clipboard_entries') WHERE name = 'total_bytes';"));
             Assert.Equal(
                 1L,
                 ExecuteInt64(
@@ -526,6 +543,193 @@ public sealed class SqliteClipboardHistoryRepositoryTests
                     .Select(static item => item.Id)
                     .Distinct()
                     .Count());
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task RetentionExpiresAndLimitsOnlyUnpinnedEntries()
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            using var repository = new SqliteClipboardHistoryRepository(
+                Path.Combine(directory, "retention.db"));
+            var pinnedOld = await repository.UpsertTextAsync(
+                Text("pinned-old", Hash(201)),
+                new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
+                TestContext.Current.CancellationToken);
+            var expired = await repository.UpsertTextAsync(
+                Text("expired", Hash(202)),
+                new DateTimeOffset(2026, 1, 2, 0, 0, 0, TimeSpan.Zero),
+                TestContext.Current.CancellationToken);
+            var overflow = await repository.UpsertTextAsync(
+                Text("overflow", Hash(203)),
+                new DateTimeOffset(2026, 1, 8, 0, 0, 0, TimeSpan.Zero),
+                TestContext.Current.CancellationToken);
+            var recent = await repository.UpsertTextAsync(
+                Text("recent", Hash(204)),
+                new DateTimeOffset(2026, 1, 9, 0, 0, 0, TimeSpan.Zero),
+                TestContext.Current.CancellationToken);
+            var newest = await repository.UpsertTextAsync(
+                Text("newest", Hash(205)),
+                new DateTimeOffset(2026, 1, 10, 0, 0, 0, TimeSpan.Zero),
+                TestContext.Current.CancellationToken);
+            _ = await repository.SetPinnedAsync(
+                pinnedOld.Id,
+                true,
+                TestContext.Current.CancellationToken);
+
+            var result = await repository.ApplyRetentionAsync(
+                new ClipboardRetentionOptions(
+                    maximumUnpinnedEntryCount: 2,
+                    maximumAge: TimeSpan.FromDays(3),
+                    maximumTotalBytes: long.MaxValue),
+                new DateTimeOffset(2026, 1, 10, 12, 0, 0, TimeSpan.Zero),
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(3, result.RemainingEntryCount);
+            Assert.Equal(
+                [expired.Id, overflow.Id],
+                result.RemovedEntryIds);
+            var page = await repository.LoadPageAsync(
+                null,
+                32,
+                TestContext.Current.CancellationToken);
+            Assert.Equal(
+                [newest.Id, recent.Id, pinnedOld.Id],
+                page.Items.Select(static item => item.Id));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task TotalByteProtectionEvictsUnpinnedBeforePinnedEntries()
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            using var repository = new SqliteClipboardHistoryRepository(
+                Path.Combine(directory, "byte-retention.db"));
+            var pinnedOld = await repository.UpsertTextAsync(
+                Text("aaaaaaaaaa", Hash(211)),
+                DateTimeOffset.UnixEpoch,
+                TestContext.Current.CancellationToken);
+            var unpinned = await repository.UpsertTextAsync(
+                Text("bbbbbbbbbb", Hash(212)),
+                DateTimeOffset.UnixEpoch.AddSeconds(1),
+                TestContext.Current.CancellationToken);
+            var pinnedNew = await repository.UpsertTextAsync(
+                Text("cccccccccc", Hash(213)),
+                DateTimeOffset.UnixEpoch.AddSeconds(2),
+                TestContext.Current.CancellationToken);
+            _ = await repository.SetPinnedAsync(
+                pinnedOld.Id,
+                true,
+                TestContext.Current.CancellationToken);
+            _ = await repository.SetPinnedAsync(
+                pinnedNew.Id,
+                true,
+                TestContext.Current.CancellationToken);
+
+            var result = await repository.ApplyRetentionAsync(
+                new ClipboardRetentionOptions(
+                    maximumUnpinnedEntryCount: 10,
+                    maximumAge: ClipboardRetentionOptions.MaximumSupportedAge,
+                    maximumTotalBytes: 64),
+                DateTimeOffset.UnixEpoch.AddDays(1),
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal([unpinned.Id], result.RemovedEntryIds);
+            Assert.Equal(64, result.ManagedBytesAfter);
+            var page = await repository.LoadPageAsync(
+                null,
+                32,
+                TestContext.Current.CancellationToken);
+            Assert.Equal([pinnedNew.Id, pinnedOld.Id], page.Items.Select(static item => item.Id));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task TenThousandMetadataRowsRemainKeysetPagedAndRetentionBounded()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "ten-thousand.db");
+        try
+        {
+            using (var repository = new SqliteClipboardHistoryRepository(databasePath))
+            {
+                _ = await repository.LoadPageAsync(
+                    null,
+                    1,
+                    TestContext.Current.CancellationToken);
+            }
+
+            using (var connection = OpenDatabase(databasePath))
+            using (var transaction = connection.BeginTransaction())
+            using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = """
+                    INSERT INTO clipboard_entries (
+                        id, kind, semantic_hash, plain_preview,
+                        first_captured_utc, last_captured_utc,
+                        last_capture_order, capture_count, is_pinned, revision,
+                        file_intent, item_count, pixel_width, pixel_height,
+                        has_alpha, dpi_x_milli, dpi_y_milli, total_bytes)
+                    VALUES (
+                        $id, 0, $hash, $preview,
+                        $utc, $utc, $captureOrder, 1, 0, 1,
+                        NULL, 0, NULL, NULL, NULL, NULL, NULL, 1);
+                    """;
+                var id = command.Parameters.Add("$id", SqliteType.Text);
+                var hash = command.Parameters.Add("$hash", SqliteType.Text);
+                var preview = command.Parameters.Add("$preview", SqliteType.Text);
+                var utc = command.Parameters.Add("$utc", SqliteType.Text);
+                var captureOrder = command.Parameters.Add("$captureOrder", SqliteType.Integer);
+                for (var index = 0; index < 10_000; index++)
+                {
+                    id.Value = Guid.NewGuid().ToString("D");
+                    hash.Value = Hash(index + 1);
+                    preview.Value = "x";
+                    utc.Value = new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.Zero)
+                        .AddSeconds(index)
+                        .ToString("O", CultureInfo.InvariantCulture);
+                    captureOrder.Value = index + 1;
+                    _ = command.ExecuteNonQuery();
+                }
+
+                transaction.Commit();
+            }
+
+            using var reopened = new SqliteClipboardHistoryRepository(databasePath);
+            var first = await reopened.LoadPageAsync(
+                null,
+                64,
+                TestContext.Current.CancellationToken);
+            Assert.Equal(10_000, first.TotalCount);
+            Assert.Equal(64, first.Items.Count);
+            Assert.NotNull(first.NextCursor);
+
+            var maintenance = await reopened.ApplyRetentionAsync(
+                new ClipboardRetentionOptions(
+                    maximumUnpinnedEntryCount: 10_000,
+                    maximumAge: ClipboardRetentionOptions.MaximumSupportedAge,
+                    maximumTotalBytes: long.MaxValue),
+                new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero),
+                TestContext.Current.CancellationToken);
+            Assert.Empty(maintenance.RemovedEntryIds);
+            Assert.Equal(10_000, maintenance.RemainingEntryCount);
         }
         finally
         {

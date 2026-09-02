@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO;
+using System.Text;
 using Microsoft.Data.Sqlite;
 using Vok.Core.Clipboard;
 using Vok.Infrastructure.Windows.Clipboard;
@@ -9,6 +10,8 @@ namespace Vok.Infrastructure.Windows.Persistence;
 public sealed class SqliteClipboardHistoryRepository :
     IClipboardHistoryRepository,
     IClipboardImageMetadataRepository,
+    IClipboardHistoryMaintenanceRepository,
+    IClipboardHistoryMaintenanceService,
     IDisposable
 {
     private const int MaximumPageSize = 256;
@@ -171,6 +174,59 @@ public sealed class SqliteClipboardHistoryRepository :
             cancellationToken);
     }
 
+    public Task<ClipboardMetadataMaintenanceResult> ApplyRetentionMetadataAsync(
+        ClipboardRetentionOptions options,
+        DateTimeOffset utcNow,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return _executor.ExecuteAsync(
+            connection => ApplyRetentionMetadata(connection, options, utcNow),
+            cancellationToken);
+    }
+
+    public Task<ClipboardMetadataMaintenanceResult> ClearHistoryMetadataAsync(
+        CancellationToken cancellationToken = default) =>
+        _executor.ExecuteAsync(ClearHistoryMetadata, cancellationToken);
+
+    public Task<IReadOnlyList<ClipboardAssetDeleteClaim>> ClaimUnreferencedAssetsAsync(
+        CancellationToken cancellationToken = default) =>
+        _executor.ExecuteAsync(ClaimAllUnreferencedAssets, cancellationToken);
+
+    public Task<IReadOnlySet<string>> LoadKnownAssetRelativePathsAsync(
+        CancellationToken cancellationToken = default) =>
+        _executor.ExecuteAsync(LoadKnownAssetRelativePaths, cancellationToken);
+
+    public async Task<ClipboardHistoryMaintenanceResult> ApplyRetentionAsync(
+        ClipboardRetentionOptions options,
+        DateTimeOffset utcNow,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await ApplyRetentionMetadataAsync(
+                options,
+                utcNow,
+                cancellationToken)
+            .ConfigureAwait(false);
+        return ToDeferredMaintenanceResult(result);
+    }
+
+    public async Task<ClipboardHistoryMaintenanceResult> ClearHistoryAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var result = await ClearHistoryMetadataAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return ToDeferredMaintenanceResult(result);
+    }
+
+    public async Task<bool> RemoveEntryAsync(
+        Guid entryId,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await RemoveWithAssetClaimsAsync(entryId, cancellationToken)
+            .ConfigureAwait(false);
+        return result.Removed;
+    }
+
     public void Dispose()
     {
         if (_ownsExecutor)
@@ -219,11 +275,301 @@ public sealed class SqliteClipboardHistoryRepository :
         return new ClipboardPage(items.AsReadOnly(), next, totalCount);
     }
 
+    private static ClipboardMetadataMaintenanceResult ApplyRetentionMetadata(
+        SqliteConnection connection,
+        ClipboardRetentionOptions options,
+        DateTimeOffset utcNow)
+    {
+        using var transaction = connection.BeginTransaction();
+        var entries = LoadMaintenanceEntries(connection, transaction);
+        var managedBytesBefore = CalculateManagedBytes(entries);
+        var removed = new HashSet<Guid>();
+        var cutoff = utcNow.ToUniversalTime() - options.MaximumAge;
+
+        foreach (var entry in entries)
+        {
+            if (!entry.IsPinned && entry.LastCapturedUtc < cutoff)
+            {
+                removed.Add(entry.Id);
+            }
+        }
+
+        var retainedUnpinned = entries
+            .Where(entry => !entry.IsPinned && !removed.Contains(entry.Id))
+            .OrderByDescending(static entry => entry.LastCaptureOrder)
+            .ThenByDescending(static entry => entry.Id)
+            .ToArray();
+        foreach (var entry in retainedUnpinned.Skip(options.MaximumUnpinnedEntryCount))
+        {
+            removed.Add(entry.Id);
+        }
+
+        var budget = CreateManagedByteBudget(
+            entries.Where(entry => !removed.Contains(entry.Id)));
+        if (budget.TotalBytes > options.MaximumTotalBytes)
+        {
+            var evictionOrder = entries
+                .Where(entry => !removed.Contains(entry.Id))
+                .OrderBy(static entry => entry.IsPinned)
+                .ThenBy(static entry => entry.LastCaptureOrder)
+                .ThenBy(static entry => entry.Id);
+            foreach (var entry in evictionOrder)
+            {
+                if (budget.TotalBytes <= options.MaximumTotalBytes)
+                {
+                    break;
+                }
+
+                removed.Add(entry.Id);
+                budget.Remove(entry);
+            }
+        }
+
+        DeleteEntries(connection, transaction, removed);
+        var pendingDeletes = MarkAllUnreferencedAssetsPending(connection, transaction);
+        transaction.Commit();
+
+        var orderedRemoved = entries
+            .Where(entry => removed.Contains(entry.Id))
+            .OrderBy(static entry => entry.LastCaptureOrder)
+            .ThenBy(static entry => entry.Id)
+            .Select(static entry => entry.Id)
+            .ToArray();
+        return new ClipboardMetadataMaintenanceResult(
+            orderedRemoved,
+            entries.Count - removed.Count,
+            managedBytesBefore,
+            budget.TotalBytes,
+            pendingDeletes.AsReadOnly());
+    }
+
+    private static ClipboardMetadataMaintenanceResult ClearHistoryMetadata(
+        SqliteConnection connection)
+    {
+        using var transaction = connection.BeginTransaction();
+        var entries = LoadMaintenanceEntries(connection, transaction);
+        var managedBytesBefore = CalculateManagedBytes(entries);
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "DELETE FROM clipboard_entries;";
+            var removedCount = command.ExecuteNonQuery();
+            if (removedCount != entries.Count)
+            {
+                throw new InvalidOperationException(
+                    "Clipboard history changed outside the serialized storage executor.");
+            }
+        }
+
+        var pendingDeletes = MarkAllUnreferencedAssetsPending(connection, transaction);
+        transaction.Commit();
+        return new ClipboardMetadataMaintenanceResult(
+            entries
+                .OrderBy(static entry => entry.LastCaptureOrder)
+                .ThenBy(static entry => entry.Id)
+                .Select(static entry => entry.Id)
+                .ToArray(),
+            RemainingEntryCount: 0,
+            managedBytesBefore,
+            ManagedBytesAfter: 0,
+            pendingDeletes.AsReadOnly());
+    }
+
+    private static IReadOnlyList<ClipboardAssetDeleteClaim> ClaimAllUnreferencedAssets(
+        SqliteConnection connection)
+    {
+        using var transaction = connection.BeginTransaction();
+        var claims = MarkAllUnreferencedAssetsPending(connection, transaction);
+        transaction.Commit();
+        return claims.AsReadOnly();
+    }
+
+    private static IReadOnlySet<string> LoadKnownAssetRelativePaths(
+        SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT relative_path FROM content_assets ORDER BY relative_path;";
+        var paths = new HashSet<string>(StringComparer.Ordinal);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            paths.Add(reader.GetString(0));
+        }
+
+        return paths;
+    }
+
+    private static List<MaintenanceEntry> LoadMaintenanceEntries(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
+        var entries = new List<MaintenanceEntry>();
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT id, last_captured_utc, last_capture_order, is_pinned, total_bytes
+                FROM clipboard_entries
+                ORDER BY last_capture_order DESC, id DESC;
+                """;
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                var totalBytes = reader.GetInt64(4);
+                if (totalBytes < 0)
+                {
+                    throw new InvalidDataException(
+                        "A clipboard entry has a negative managed byte length.");
+                }
+
+                entries.Add(new MaintenanceEntry(
+                    Guid.Parse(reader.GetString(0)),
+                    DateTimeOffset.Parse(
+                        reader.GetString(1),
+                        CultureInfo.InvariantCulture,
+                        DateTimeStyles.RoundtripKind),
+                    reader.GetInt64(2),
+                    reader.GetInt32(3) != 0,
+                    totalBytes));
+            }
+        }
+
+        var byId = entries.ToDictionary(static entry => entry.Id);
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT r.entry_id, a.hash, a.byte_length
+                FROM clipboard_asset_refs AS r
+                INNER JOIN content_assets AS a ON a.hash = r.asset_hash
+                ORDER BY r.entry_id, a.hash;
+                """;
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                if (!Guid.TryParse(reader.GetString(0), out var entryId) ||
+                    !byId.TryGetValue(entryId, out var entry))
+                {
+                    throw new InvalidDataException(
+                        "A clipboard asset reference points to an invalid entry.");
+                }
+
+                var byteLength = reader.GetInt64(2);
+                if (byteLength < 0)
+                {
+                    throw new InvalidDataException(
+                        "A clipboard asset has a negative managed byte length.");
+                }
+
+                entry.AddAsset(reader.GetString(1), byteLength);
+            }
+        }
+
+        return entries;
+    }
+
+    private static long CalculateManagedBytes(IEnumerable<MaintenanceEntry> entries) =>
+        CreateManagedByteBudget(entries).TotalBytes;
+
+    private static ManagedByteBudget CreateManagedByteBudget(
+        IEnumerable<MaintenanceEntry> entries)
+    {
+        var budget = new ManagedByteBudget();
+        foreach (var entry in entries)
+        {
+            budget.Add(entry);
+        }
+
+        return budget;
+    }
+
+    private static void DeleteEntries(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        IReadOnlyCollection<Guid> entryIds)
+    {
+        const int batchSize = 400;
+        var ids = entryIds.ToArray();
+        for (var offset = 0; offset < ids.Length; offset += batchSize)
+        {
+            var count = Math.Min(batchSize, ids.Length - offset);
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            var parameterNames = new string[count];
+            for (var index = 0; index < count; index++)
+            {
+                var name = $"$id{index}";
+                parameterNames[index] = name;
+                command.Parameters.AddWithValue(name, ids[offset + index].ToString("D"));
+            }
+
+            command.CommandText =
+                $"DELETE FROM clipboard_entries WHERE id IN ({string.Join(",", parameterNames)});";
+            if (command.ExecuteNonQuery() != count)
+            {
+                throw new InvalidOperationException(
+                    "Clipboard history changed outside the serialized storage executor.");
+            }
+        }
+    }
+
+    private static List<ClipboardAssetDeleteClaim> MarkAllUnreferencedAssetsPending(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
+        using (var update = connection.CreateCommand())
+        {
+            update.Transaction = transaction;
+            update.CommandText = """
+                UPDATE content_assets AS a
+                SET state = $pending,
+                    revision = revision + 1
+                WHERE state <> $pending
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM clipboard_asset_refs AS r
+                      WHERE r.asset_hash = a.hash);
+                """;
+            update.Parameters.AddWithValue(
+                "$pending",
+                (int)ClipboardAssetState.PendingDelete);
+            _ = update.ExecuteNonQuery();
+        }
+
+        using var select = connection.CreateCommand();
+        select.Transaction = transaction;
+        select.CommandText = """
+            SELECT a.hash, a.relative_path, a.revision
+            FROM content_assets AS a
+            WHERE a.state = $pending
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM clipboard_asset_refs AS r
+                  WHERE r.asset_hash = a.hash)
+            ORDER BY a.hash;
+            """;
+        select.Parameters.AddWithValue(
+            "$pending",
+            (int)ClipboardAssetState.PendingDelete);
+        var claims = new List<ClipboardAssetDeleteClaim>();
+        using var reader = select.ExecuteReader();
+        while (reader.Read())
+        {
+            claims.Add(new ClipboardAssetDeleteClaim(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetInt64(2)));
+        }
+
+        return claims;
+    }
+
     private static ClipboardEntry UpsertText(
         SqliteConnection connection,
         ClipboardTextContent content,
         DateTimeOffset capturedUtc)
     {
+        var totalBytes = CalculateTextPayloadBytes(content);
         using var transaction = connection.BeginTransaction();
         var existing = FindBySemanticHash(
             connection,
@@ -245,7 +591,7 @@ public sealed class SqliteClipboardHistoryRepository :
                 CaptureCount: 1,
                 IsPinned: false,
                 Revision: 1);
-            InsertEntry(connection, transaction, entry);
+            InsertEntry(connection, transaction, entry, totalBytes);
         }
         else
         {
@@ -257,7 +603,7 @@ public sealed class SqliteClipboardHistoryRepository :
                 CaptureCount = checked(existing.CaptureCount + 1),
                 Revision = checked(existing.Revision + 1),
             };
-            UpdateCapturedEntry(connection, transaction, entry);
+            UpdateCapturedEntry(connection, transaction, entry, totalBytes);
             DeleteRepresentations(connection, transaction, entry.Id);
         }
 
@@ -271,6 +617,7 @@ public sealed class SqliteClipboardHistoryRepository :
         ClipboardFileListContent content,
         DateTimeOffset capturedUtc)
     {
+        var totalBytes = CalculateFileListPayloadBytes(content);
         using var transaction = connection.BeginTransaction();
         var existing = FindBySemanticHash(
             connection,
@@ -294,7 +641,7 @@ public sealed class SqliteClipboardHistoryRepository :
                 Revision: 1,
                 FileIntent: content.Intent,
                 ItemCount: content.Files.Count);
-            InsertEntry(connection, transaction, entry);
+            InsertEntry(connection, transaction, entry, totalBytes);
         }
         else
         {
@@ -308,7 +655,7 @@ public sealed class SqliteClipboardHistoryRepository :
                 FileIntent = content.Intent,
                 ItemCount = content.Files.Count,
             };
-            UpdateCapturedEntry(connection, transaction, entry);
+            UpdateCapturedEntry(connection, transaction, entry, totalBytes);
             DeleteFiles(connection, transaction, entry.Id);
         }
 
@@ -322,6 +669,8 @@ public sealed class SqliteClipboardHistoryRepository :
         ClipboardImageContent content,
         DateTimeOffset capturedUtc)
     {
+        var preview = $"{content.PixelWidth}×{content.PixelHeight}";
+        var totalBytes = Encoding.UTF8.GetByteCount(preview);
         using var transaction = connection.BeginTransaction();
         var existing = FindBySemanticHash(
             connection,
@@ -363,7 +712,7 @@ public sealed class SqliteClipboardHistoryRepository :
                 Guid.NewGuid(),
                 ClipboardContentKind.Image,
                 content.SemanticHash,
-                $"{content.PixelWidth}×{content.PixelHeight}",
+                preview,
                 capturedUtc,
                 capturedUtc,
                 nextOrder,
@@ -371,13 +720,13 @@ public sealed class SqliteClipboardHistoryRepository :
                 IsPinned: false,
                 Revision: 1,
                 Image: image);
-            InsertEntry(connection, transaction, entry);
+            InsertEntry(connection, transaction, entry, totalBytes);
         }
         else
         {
             entry = existing with
             {
-                PlainPreview = $"{content.PixelWidth}×{content.PixelHeight}",
+                PlainPreview = preview,
                 LastCapturedUtc = capturedUtc,
                 LastCaptureOrder = nextOrder,
                 CaptureCount = checked(existing.CaptureCount + 1),
@@ -386,7 +735,7 @@ public sealed class SqliteClipboardHistoryRepository :
                 ItemCount = 0,
                 Image = image,
             };
-            UpdateCapturedEntry(connection, transaction, entry);
+            UpdateCapturedEntry(connection, transaction, entry, totalBytes);
             DeleteRepresentations(connection, transaction, entry.Id);
             DeleteFiles(connection, transaction, entry.Id);
             DeleteAssetReferences(connection, transaction, entry.Id);
@@ -745,7 +1094,8 @@ public sealed class SqliteClipboardHistoryRepository :
     private static void InsertEntry(
         SqliteConnection connection,
         SqliteTransaction transaction,
-        ClipboardEntry entry)
+        ClipboardEntry entry,
+        long totalBytes)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -756,23 +1106,24 @@ public sealed class SqliteClipboardHistoryRepository :
                 last_capture_order, capture_count, is_pinned, revision,
                 file_intent, item_count,
                 pixel_width, pixel_height, has_alpha,
-                dpi_x_milli, dpi_y_milli)
+                dpi_x_milli, dpi_y_milli, total_bytes)
             VALUES (
                 $id, $kind, $hash, $preview,
                 $firstUtc, $lastUtc,
                 $captureOrder, $captureCount, $isPinned, $revision,
                 $fileIntent, $itemCount,
                 $pixelWidth, $pixelHeight, $hasAlpha,
-                $dpiXMilli, $dpiYMilli);
+                $dpiXMilli, $dpiYMilli, $totalBytes);
             """;
-        AddEntryParameters(command, entry);
+        AddEntryParameters(command, entry, totalBytes);
         command.ExecuteNonQuery();
     }
 
     private static void UpdateCapturedEntry(
         SqliteConnection connection,
         SqliteTransaction transaction,
-        ClipboardEntry entry)
+        ClipboardEntry entry,
+        long totalBytes)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -789,18 +1140,23 @@ public sealed class SqliteClipboardHistoryRepository :
                 pixel_height = $pixelHeight,
                 has_alpha = $hasAlpha,
                 dpi_x_milli = $dpiXMilli,
-                dpi_y_milli = $dpiYMilli
+                dpi_y_milli = $dpiYMilli,
+                total_bytes = $totalBytes
             WHERE id = $id;
             """;
-        AddEntryParameters(command, entry);
+        AddEntryParameters(command, entry, totalBytes);
         if (command.ExecuteNonQuery() != 1)
         {
             throw new InvalidOperationException("The clipboard entry disappeared during update.");
         }
     }
 
-    private static void AddEntryParameters(SqliteCommand command, ClipboardEntry entry)
+    private static void AddEntryParameters(
+        SqliteCommand command,
+        ClipboardEntry entry,
+        long totalBytes)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(totalBytes);
         command.Parameters.AddWithValue("$id", entry.Id.ToString("D"));
         command.Parameters.AddWithValue("$kind", (int)entry.Kind);
         command.Parameters.AddWithValue("$hash", entry.SemanticHash);
@@ -830,6 +1186,7 @@ public sealed class SqliteClipboardHistoryRepository :
         command.Parameters.AddWithValue(
             "$dpiYMilli",
             entry.Image?.DpiYMilli is { } dpiYMilli ? dpiYMilli : DBNull.Value);
+        command.Parameters.AddWithValue("$totalBytes", totalBytes);
     }
 
     private static void DeleteRepresentations(
@@ -1422,6 +1779,40 @@ public sealed class SqliteClipboardHistoryRepository :
     private static string FormatUtc(DateTimeOffset value) =>
         value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
 
+    private static long CalculateTextPayloadBytes(ClipboardTextContent content)
+    {
+        var total = (long)Encoding.UTF8.GetByteCount(content.PlainPreview);
+        foreach (var representation in content.Representations)
+        {
+            total = checked(total + representation.ByteLength);
+        }
+
+        return total;
+    }
+
+    private static long CalculateFileListPayloadBytes(ClipboardFileListContent content)
+    {
+        var total = (long)Encoding.UTF8.GetByteCount(content.PlainPreview);
+        foreach (var file in content.Files)
+        {
+            total = checked(total + Encoding.UTF8.GetByteCount(file.OriginalPath));
+            total = checked(total + Encoding.UTF8.GetByteCount(file.CanonicalPath));
+            total = checked(total + Encoding.UTF8.GetByteCount(file.DisplayName));
+        }
+
+        return total;
+    }
+
+    private static ClipboardHistoryMaintenanceResult ToDeferredMaintenanceResult(
+        ClipboardMetadataMaintenanceResult result) =>
+        new(
+            result.RemovedEntryIds,
+            result.RemainingEntryCount,
+            result.ManagedBytesBefore,
+            result.ManagedBytesAfter,
+            result.PendingDeletes.Count,
+            AssetCleanupDeferred: result.PendingDeletes.Count != 0);
+
     private const string SelectEntrySql = """
         SELECT e.id, e.kind, e.semantic_hash, e.plain_preview,
                e.first_captured_utc, e.last_captured_utc,
@@ -1441,6 +1832,102 @@ public sealed class SqliteClipboardHistoryRepository :
         LEFT JOIN content_assets AS thumbnail_asset
           ON thumbnail_asset.hash = thumbnail_ref.asset_hash
         """;
+
+    private sealed class MaintenanceEntry(
+        Guid id,
+        DateTimeOffset lastCapturedUtc,
+        long lastCaptureOrder,
+        bool isPinned,
+        long totalBytes)
+    {
+        private readonly Dictionary<string, long> _assets = new(StringComparer.Ordinal);
+
+        public Guid Id { get; } = id;
+
+        public DateTimeOffset LastCapturedUtc { get; } = lastCapturedUtc;
+
+        public long LastCaptureOrder { get; } = lastCaptureOrder;
+
+        public bool IsPinned { get; } = isPinned;
+
+        public long TotalBytes { get; } = totalBytes;
+
+        public IReadOnlyDictionary<string, long> Assets => _assets;
+
+        public void AddAsset(string hash, long byteLength)
+        {
+            if (_assets.TryGetValue(hash, out var existing))
+            {
+                if (existing != byteLength)
+                {
+                    throw new InvalidDataException(
+                        "A clipboard asset has inconsistent managed byte lengths.");
+                }
+
+                return;
+            }
+
+            _assets.Add(hash, byteLength);
+        }
+    }
+
+    private sealed class ManagedByteBudget
+    {
+        private readonly Dictionary<string, AssetBudget> _assets =
+            new(StringComparer.Ordinal);
+
+        public long TotalBytes { get; private set; }
+
+        public void Add(MaintenanceEntry entry)
+        {
+            TotalBytes = checked(TotalBytes + entry.TotalBytes);
+            foreach (var (hash, byteLength) in entry.Assets)
+            {
+                if (_assets.TryGetValue(hash, out var asset))
+                {
+                    if (asset.ByteLength != byteLength)
+                    {
+                        throw new InvalidDataException(
+                            "A clipboard asset has inconsistent managed byte lengths.");
+                    }
+
+                    asset.ReferenceCount++;
+                    continue;
+                }
+
+                _assets.Add(hash, new AssetBudget(byteLength));
+                TotalBytes = checked(TotalBytes + byteLength);
+            }
+        }
+
+        public void Remove(MaintenanceEntry entry)
+        {
+            TotalBytes = checked(TotalBytes - entry.TotalBytes);
+            foreach (var (hash, _) in entry.Assets)
+            {
+                if (!_assets.TryGetValue(hash, out var asset) ||
+                    asset.ReferenceCount <= 0)
+                {
+                    throw new InvalidDataException(
+                        "A clipboard asset reference disappeared during retention cleanup.");
+                }
+
+                asset.ReferenceCount--;
+                if (asset.ReferenceCount == 0)
+                {
+                    TotalBytes = checked(TotalBytes - asset.ByteLength);
+                    _assets.Remove(hash);
+                }
+            }
+        }
+
+        private sealed class AssetBudget(long byteLength)
+        {
+            public long ByteLength { get; } = byteLength;
+
+            public int ReferenceCount { get; set; } = 1;
+        }
+    }
 
     private sealed record StoredAsset(
         string Hash,

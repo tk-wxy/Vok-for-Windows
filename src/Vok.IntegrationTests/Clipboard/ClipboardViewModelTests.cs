@@ -198,6 +198,49 @@ public sealed class ClipboardViewModelTests
         Assert.Empty(viewModel.Items);
     }
 
+    [Fact]
+    public async Task ClearHistoryRequiresConfirmationAndRejectsPreClearPresentation()
+    {
+        var entry = Entry("clear me", captureCount: 1, order: 1);
+        var repository = new FakeRepository(
+            new ClipboardPage([entry], null, TotalCount: 1));
+        var maintenance = new FakeMaintenanceService(
+            new ClipboardHistoryMaintenanceResult(
+                [entry.Id],
+                RemainingEntryCount: 0,
+                ManagedBytesBefore: 10,
+                ManagedBytesAfter: 0,
+                PendingAssetDeleteCount: 0,
+                AssetCleanupDeferred: false));
+        using var viewModel = new ClipboardViewModel(
+            repository,
+            filePresentation: null,
+            thumbnailCache: null,
+            imageAssets: null,
+            imageHistoryEnabled: false,
+            imageFeatureUnavailableStatus: null,
+            maintenanceService: maintenance);
+        await viewModel.InitializeAsync();
+        var preClearEpoch = viewModel.CaptureHistoryEpoch();
+
+        await viewModel.ClearHistoryCommand.ExecuteAsync(null);
+
+        Assert.Equal("确认清空", viewModel.ClearHistoryButtonText);
+        Assert.Equal(0, maintenance.ClearCallCount);
+        Assert.Single(viewModel.Items);
+
+        await viewModel.ClearHistoryCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, maintenance.ClearCallCount);
+        Assert.Empty(viewModel.Items);
+        Assert.Equal(0, viewModel.TotalCount);
+        Assert.False(viewModel.ApplyCaptured(
+            Entry("stale", captureCount: 1, order: 2),
+            preClearEpoch));
+        Assert.Empty(viewModel.Items);
+        Assert.Contains("系统剪贴板内容未改变", viewModel.StatusText, StringComparison.Ordinal);
+    }
+
     private static ClipboardEntry Entry(string preview, int captureCount, long order) => new(
         Guid.NewGuid(),
         ClipboardContentKind.Text,
@@ -296,5 +339,36 @@ public sealed class ClipboardViewModelTests
         public void Dispose()
         {
         }
+    }
+
+    private sealed class FakeMaintenanceService(
+        ClipboardHistoryMaintenanceResult clearResult)
+        : IClipboardHistoryMaintenanceService
+    {
+        public int ClearCallCount { get; private set; }
+
+        public Task<ClipboardHistoryMaintenanceResult> ApplyRetentionAsync(
+            ClipboardRetentionOptions options,
+            DateTimeOffset utcNow,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ClipboardHistoryMaintenanceResult(
+                [],
+                clearResult.RemainingEntryCount,
+                clearResult.ManagedBytesBefore,
+                clearResult.ManagedBytesBefore,
+                PendingAssetDeleteCount: 0,
+                AssetCleanupDeferred: false));
+
+        public Task<ClipboardHistoryMaintenanceResult> ClearHistoryAsync(
+            CancellationToken cancellationToken = default)
+        {
+            ClearCallCount++;
+            return Task.FromResult(clearResult);
+        }
+
+        public Task<bool> RemoveEntryAsync(
+            Guid entryId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(true);
     }
 }
