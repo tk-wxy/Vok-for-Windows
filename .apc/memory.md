@@ -11,12 +11,18 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏范围的 M2.0–M2.4 已完成并归档冻结；项目按 `decisions.md §26` 进入 M3 中转站开发基线，Stage 代码尚未创建。当前运行 `artifacts/r27-publish/Vok.exe`，PID 28424；归档发布位于 `artifacts/m2-archive-20260903-publish/Vok.exe`，未替换运行实例或操作真实用户数据。
-- **最近进展**：剪贴板归档复验通过 Release 65/65 Core + 364/364 Windows/WPF 共 429/429、8/8 PowerShell AST、clipboard probe report v7 扩展图片矩阵 20 轮及 win-x64 自包含发布；探针的语义标识/持久化稳定，所有 job、lease 与 staging 最终归零。已冻结 `M2_CLIPBOARD_PLAN.md`，并确认中转站先于剩余设置开发、业务模型独立且共性按第二消费者提取。
+- **状态**：M0、M1 与单屏范围的 M2.0–M2.4 已完成并归档冻结；项目按 `decisions.md §26` 进入 M3 中转站开发基线，Stage 代码尚未创建。主界面的启动台/剪贴板滚动条和设置界面视觉优化已在源码完成，尚未替换当前运行的 `artifacts/r27-publish/Vok.exe`（PID 28424）；M2 归档发布仍位于 `artifacts/m2-archive-20260903-publish/Vok.exe`。
+- **最近进展**：启动台与剪贴板改为隐藏滚动条但保留像素自由滚动；顶栏由固定 320/弹性/320 改为与主体一致的 1:2:1，使右上设置按钮在 520 DIP 窄窗口仍完整；设置弹窗改为响应式最大尺寸，并统一 16/12/10 DIP 层级圆角、卡片、导航选中态和图标按钮。Release 65/65 Core + 364/364 Windows/WPF 共 429/429通过，浅/深真实 WPF 渲染及任意 37.5 DIP 滚动偏移已复核。
 - **下一步**：为中转站编写产品契约与 Gate 0，先锁定文件引用、容量/保留、窗口级 OLE 拖入拖出、操作效果和失败语义，再实施文件型最小纵向切片；此阶段不直接复用 `Clipboard*` 模型，也不提前接入 Stage 图片资产。
 - **已知问题**：R27 的根故障机制和 missed-event watchdog 已验证，但真实 Modern Standby/睡眠、Unlock、Explorer 重启信号仍未物理执行。合法 PNG 轻量 header 仍可能在关闭剪贴板后 codec 失败且没有 DIB 事后后备；真实产品清空、物理磁盘耗尽和跨屏/多屏仍未验证。既有人工验收 PNG/截图继续保留。
 
 ## §0A 最近会话
+
+### 会话 2026-09-03 - 工作台滚动条与设置界面视觉优化
+
+- 启动台和剪贴板的纵向滚动条由 Auto 改为 Hidden；滚轮、触控板与程序滚动能力未移除，两个列表的 Recycling/Pixel 语义及 37.5 DIP 任意偏移自动门禁继续通过。
+- 右上设置入口被裁切的结构根因是顶栏两侧固定 320 DIP，在高缩放或低于约 640 DIP 的有效窗口宽度中右列会溢出；顶栏现与主体统一为 1:2:1 弹性列。设置弹窗同时从固定 720×540 改为 760×560 最大尺寸下的可用空间 Stretch，520×500 DIP 回归确认入口、弹窗和关闭按钮均完整位于可视范围。
+- 设置页统一 16 DIP 弹窗、12 DIP 卡片和 9–10 DIP 导航/按钮圆角，增加语义化卡片层级、选中指示与快捷键说明块；所有按钮样式继续 BasedOn Fluent 隐式样式并仅使用动态主题资源。Release 65/65 + 364/364 共 429/429、浅/深 WPF 渲染和差异检查通过；未替换当前运行实例。
 
 ### 会话 2026-09-03 - 剪贴板归档与中转站开发基线
 
@@ -31,13 +37,6 @@
 - 保留现有通知图标与原生 HMENU，新增实际 HWND/GUID Shell 探针和 UI-STA 恢复 coordinator。启动、TaskbarCreated、Resume、Unlock 与 1 分钟 watchdog 请求检查；确定缺失后最多五次有界重建，每次都以后验 Shell 查询定成功，菜单打开、跨代迟到、Dispose 与同轮重入均有门禁。
 - 自动测试原生删除测试图标登记并钉死“Shell 缺失但 IsCreated=true”的原机制；故障注入覆盖 watchdog 复核、耗尽、后验优先和各类竞态。Release 65/65 + 364/364 共 429/429、自包含 win-x64 发布通过。
 - 将 PID 15992 精确替换为 `artifacts/r27-publish/Vok.exe` PID 28424；真实 Vok 登记被可逆删除后从 `0x80004005` 无重启恢复为 `0x00000000`，进程响应且 Ctrl+Space 保持占用。用户反馈基础交互测试基本通过；真实睡眠/Unlock/Explorer 重启物理矩阵仍待方便时执行。
-
-### 会话 2026-09-02 - M2.4 实库迁移与托盘登记恢复
-
-- 用户报告托盘无 Vok 图标但快捷键仍能呼出。只读诊断确认旧版 PID 14120 仍响应且 `H.NotifyIcon_*` HWND 存活，但 Windows 可见/溢出通知区均无 Vok，正确 GUID 的 `Shell_NotifyIconGetRect` 返回 `0x80004005`；这是 Shell 登记丢失，不是进程退出或图标被折叠。进程期间存在多次睡眠/Modern Standby 恢复，但缺少持久错误，不能精确锁定哪一次边沿。
-- 替换前在线备份真实 schema 5 库到 `%LOCALAPPDATA%\Vok\backups\vok-pre-m24-20260902-112140.db`；备份 `quick_check=ok`、90 条历史、19 个资产、20 个引用、0 外键违规。随后精确停止 PID 14120，启动已验证的 `artifacts/m24-publish/Vok.exe` 为 PID 15992。
-- 新版完成 schema 6 迁移，90 条历史分类/资产/引用全部不变，`quick_check=ok`、0 外键违规、0 PendingDelete/Quarantined。19 个 PNG 长度和 SHA-256 全部一致，0 缺失/staging；Windows 溢出区重新识别 `Vok`，图标 GUID 查询成功，持久 `Ctrl+Space` 显示已占用。
-- 本次只部署并恢复当前登记，没有修改托盘代码。旧实例的长期登记丢失暴露 R27：库的 `TaskbarCreated` 恢复静默吞错且应用没有真实 Shell 健康核验，后续须独立根因修复；产品清空未执行。
 
 ## 指引
 

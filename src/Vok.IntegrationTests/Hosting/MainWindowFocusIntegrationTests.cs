@@ -327,6 +327,11 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                     row => Assert.Equal(new GridLength(28), row.Height));
                 var clipboardList = Assert.IsType<ListBox>(
                     clipboardPanel.FindName("ClipboardItemsList"));
+                var clipboardScrollViewer = Assert.IsType<ScrollViewer>(
+                    FindVisualDescendant<ScrollViewer>(clipboardList));
+                Assert.Equal(
+                    ScrollBarVisibility.Hidden,
+                    clipboardScrollViewer.VerticalScrollBarVisibility);
                 Assert.True(VirtualizingPanel.GetIsVirtualizing(clipboardList));
                 Assert.Equal(
                     VirtualizationMode.Recycling,
@@ -382,6 +387,11 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                     window,
                     launcherList,
                     "workbench-launcher-hover-light.png");
+                viewModel.NavigateTo(WorkspaceSection.Settings);
+                window.UpdateLayout();
+                window.Dispatcher.Invoke(DispatcherPriority.Render, static () => { });
+                CaptureWindowIfRequested(window, "workbench-settings-light.png");
+                viewModel.CloseSettingsCommand.Execute(null);
                 appearance.ChangeThemeAsync(AppThemeMode.Dark).GetAwaiter().GetResult();
                 window.UpdateLayout();
                 window.Dispatcher.Invoke(DispatcherPriority.Render, static () => { });
@@ -394,8 +404,14 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                     window,
                     launcherList,
                     "workbench-launcher-hover-dark.png");
+                viewModel.NavigateTo(WorkspaceSection.Settings);
+                window.UpdateLayout();
+                window.Dispatcher.Invoke(DispatcherPriority.Render, static () => { });
+                CaptureWindowIfRequested(window, "workbench-settings-dark.png");
+                viewModel.CloseSettingsCommand.Execute(null);
 
                 AssertLauncherScrollPreservesArbitraryOffset(launcher, launcherList);
+                AssertScrollPreservesArbitraryOffset(clipboardList);
                 for (var iteration = 0; iteration < 10; iteration++)
                 {
                     window.Hide();
@@ -433,14 +449,19 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
             try
             {
                 window.Show();
+                window.Width = 520;
+                window.Height = 500;
+                window.UpdateLayout();
                 var openSettingsButton = Assert.IsType<Button>(
                     window.FindName("OpenSettingsButton"));
-                Assert.Same(
-                    DependencyProperty.UnsetValue,
+                var openSettingsStyle = Assert.IsType<Style>(
                     openSettingsButton.ReadLocalValue(FrameworkElement.StyleProperty));
                 Assert.Same(
                     openSettingsButton.TryFindResource(typeof(Button)),
-                    openSettingsButton.Style);
+                    openSettingsStyle.BasedOn);
+                Assert.Equal(40, openSettingsButton.ActualWidth);
+                Assert.Equal(40, openSettingsButton.ActualHeight);
+                AssertFullyInside(openSettingsButton, window);
                 var lightBackground = Assert.IsType<SolidColorBrush>(
                     window.FindResource("ApplicationBackgroundBrush"));
                 var lightSettingsForeground = Assert.IsType<SolidColorBrush>(
@@ -480,15 +501,23 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                     window.FindName("SettingsOverlay"));
                 Assert.True(settingsOverlay.IsVisible);
                 Assert.Equal(3, Grid.GetRowSpan(settingsOverlay));
+                settingsOverlay.UpdateLayout();
                 var settingsWindow = Assert.IsType<Border>(
                     settingsOverlay.FindName("SettingsWindow"));
-                Assert.Equal(720, settingsWindow.Width);
-                Assert.Equal(540, settingsWindow.Height);
+                Assert.True(double.IsNaN(settingsWindow.Width));
+                Assert.True(double.IsNaN(settingsWindow.Height));
+                Assert.Equal(760, settingsWindow.MaxWidth);
+                Assert.Equal(560, settingsWindow.MaxHeight);
+                Assert.True(settingsWindow.ActualWidth <= window.ActualWidth - 48 + 0.001);
+                Assert.True(settingsWindow.ActualHeight <= window.ActualHeight - 48 + 0.001);
+                AssertFullyInside(settingsWindow, settingsOverlay);
                 var settingsCloseButton = Assert.IsType<Button>(
                     settingsOverlay.FindName("SettingsCloseButton"));
-                Assert.Same(
-                    DependencyProperty.UnsetValue,
+                var settingsCloseStyle = Assert.IsType<Style>(
                     settingsCloseButton.ReadLocalValue(FrameworkElement.StyleProperty));
+                Assert.NotNull(settingsCloseStyle.BasedOn);
+                Assert.Equal(typeof(Button), settingsCloseStyle.BasedOn.TargetType);
+                AssertFullyInside(settingsCloseButton, settingsWindow);
                 var settingsNavigation = Assert.IsType<ListBox>(
                     settingsOverlay.FindName("SettingsNavigation"));
                 var generalPanel = Assert.IsType<ScrollViewer>(
@@ -606,7 +635,7 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
         var scrollViewer = Assert.IsType<ScrollViewer>(
             FindVisualDescendant<ScrollViewer>(launcherList));
         Assert.True(scrollViewer.CanContentScroll);
-        Assert.Equal(ScrollBarVisibility.Auto, scrollViewer.VerticalScrollBarVisibility);
+        Assert.Equal(ScrollBarVisibility.Hidden, scrollViewer.VerticalScrollBarVisibility);
         Assert.True(VirtualizingPanel.GetIsVirtualizing(launcherList));
         Assert.Equal(
             VirtualizationMode.Recycling,
@@ -699,6 +728,29 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
         scrollViewer.ScrollToVerticalOffset(37.5);
         launcher.UpdateLayout();
         Assert.Equal(37.5, scrollViewer.VerticalOffset, precision: 3);
+    }
+
+    private static void AssertScrollPreservesArbitraryOffset(ListBox listBox)
+    {
+        var scrollViewer = Assert.IsType<ScrollViewer>(
+            FindVisualDescendant<ScrollViewer>(listBox));
+        Assert.Equal(ScrollBarVisibility.Hidden, scrollViewer.VerticalScrollBarVisibility);
+        Assert.True(scrollViewer.ScrollableHeight > 37.5);
+        scrollViewer.ScrollToVerticalOffset(37.5);
+        scrollViewer.Dispatcher.Invoke(DispatcherPriority.Render, static () => { });
+        scrollViewer.UpdateLayout();
+        Assert.Equal(37.5, scrollViewer.VerticalOffset, precision: 3);
+    }
+
+    private static void AssertFullyInside(FrameworkElement element, Visual ancestor)
+    {
+        var bounds = element.TransformToAncestor(ancestor).TransformBounds(
+            new Rect(0, 0, element.ActualWidth, element.ActualHeight));
+        var ancestorElement = Assert.IsAssignableFrom<FrameworkElement>(ancestor);
+        Assert.True(bounds.Left >= -0.001);
+        Assert.True(bounds.Top >= -0.001);
+        Assert.True(bounds.Right <= ancestorElement.ActualWidth + 0.001);
+        Assert.True(bounds.Bottom <= ancestorElement.ActualHeight + 0.001);
     }
 
     private static LauncherLayoutProfileCache CreateLauncherLayouts(

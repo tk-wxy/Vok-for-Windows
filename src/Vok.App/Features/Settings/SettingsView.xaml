@@ -5,21 +5,155 @@
              xmlns:automation="clr-namespace:System.Windows.Automation;assembly=PresentationCore"
              IsVisibleChanged="OnIsVisibleChanged"
              automation:AutomationProperties.Name="设置窗口">
+  <UserControl.Resources>
+    <Style x:Key="SettingsIconButtonStyle"
+           TargetType="Button"
+           BasedOn="{StaticResource {x:Type Button}}">
+      <Setter Property="Width" Value="38" />
+      <Setter Property="Height" Value="38" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="{DynamicResource ControlFillColorDefaultBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="ButtonSurface"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="10"
+                    SnapsToDevicePixels="True">
+              <ContentPresenter HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                RecognizesAccessKey="True" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ButtonSurface"
+                        Property="Background"
+                        Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+                <Setter TargetName="ButtonSurface"
+                        Property="BorderBrush"
+                        Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="ButtonSurface"
+                        Property="Background"
+                        Value="{DynamicResource ControlFillColorTertiaryBrush}" />
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="ButtonSurface"
+                        Property="BorderBrush"
+                        Value="{DynamicResource AccentFillColorDefaultBrush}" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="ButtonSurface" Property="Opacity" Value="0.45" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="SettingsNavigationItemStyle"
+           TargetType="ListBoxItem"
+           BasedOn="{StaticResource {x:Type ListBoxItem}}">
+      <Setter Property="Margin" Value="0,0,0,5" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ListBoxItem">
+            <Grid>
+              <Border x:Name="ItemSurface"
+                      Padding="13,10"
+                      Background="{TemplateBinding Background}"
+                      BorderBrush="{TemplateBinding BorderBrush}"
+                      BorderThickness="{TemplateBinding BorderThickness}"
+                      CornerRadius="9">
+                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                  VerticalAlignment="Center" />
+              </Border>
+              <Border x:Name="SelectionIndicator"
+                      Width="3"
+                      Height="18"
+                      Margin="3,0,0,0"
+                      HorizontalAlignment="Left"
+                      VerticalAlignment="Center"
+                      Background="{DynamicResource AccentFillColorDefaultBrush}"
+                      CornerRadius="2"
+                      Visibility="Collapsed" />
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ItemSurface"
+                        Property="Background"
+                        Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+              </Trigger>
+              <Trigger Property="IsSelected" Value="True">
+                <Setter TargetName="ItemSurface"
+                        Property="Background"
+                        Value="{DynamicResource ControlFillColorSecondaryBrush}" />
+                <Setter TargetName="ItemSurface"
+                        Property="BorderBrush"
+                        Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+                <Setter TargetName="SelectionIndicator"
+                        Property="Visibility"
+                        Value="Visible" />
+              </Trigger>
+              <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                <Setter TargetName="ItemSurface"
+                        Property="BorderBrush"
+                        Value="{DynamicResource AccentFillColorDefaultBrush}" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="ItemSurface" Property="Opacity" Value="0.45" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="SettingsCardStyle" TargetType="Border">
+      <Setter Property="Margin" Value="0,0,0,12" />
+      <Setter Property="Padding" Value="18,16" />
+      <Setter Property="Background" Value="{DynamicResource LayerFillColorDefaultBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="12" />
+    </Style>
+
+    <Style x:Key="SettingsActionButtonStyle"
+           TargetType="Button"
+           BasedOn="{StaticResource {x:Type Button}}">
+      <Setter Property="MinHeight" Value="38" />
+      <Setter Property="Padding" Value="16,8" />
+      <Setter Property="FontSize" Value="12.5" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+  </UserControl.Resources>
+
   <Grid x:Name="SettingsMask"
         Background="#59000000"
         MouseLeftButtonDown="OnMaskMouseLeftButtonDown">
     <Border x:Name="SettingsWindow"
-            Width="720"
-            Height="540"
-            MaxWidth="720"
-            MaxHeight="540"
+            MaxWidth="760"
+            MaxHeight="560"
             Margin="24"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center"
+            HorizontalAlignment="Stretch"
+            VerticalAlignment="Stretch"
             Background="{DynamicResource ApplicationBackgroundBrush}"
             BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
             BorderThickness="1"
-            CornerRadius="12"
+            CornerRadius="16"
             MouseLeftButtonDown="OnSettingsWindowMouseLeftButtonDown"
             automation:AutomationProperties.Name="设置">
       <Border.Effect>
@@ -31,11 +165,11 @@
 
       <Grid ClipToBounds="True">
         <Grid.RowDefinitions>
-          <RowDefinition Height="58" />
+          <RowDefinition Height="62" />
           <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <Border Padding="22,0"
+        <Border Padding="24,0"
                 BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
                 BorderThickness="0,0,0,1">
           <Grid>
@@ -54,8 +188,7 @@
             </StackPanel>
 
             <Button x:Name="SettingsCloseButton"
-                    Width="34"
-                    Height="34"
+                    Style="{StaticResource SettingsIconButtonStyle}"
                     HorizontalAlignment="Right"
                     VerticalAlignment="Center"
                     Command="{Binding CloseSettingsCommand}"
@@ -70,11 +203,11 @@
 
         <Grid Grid.Row="1">
           <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="176" />
+            <ColumnDefinition Width="164" />
             <ColumnDefinition Width="*" />
           </Grid.ColumnDefinitions>
 
-          <Border Padding="12,14"
+          <Border Padding="12,16"
                   Background="{DynamicResource LayerFillColorDefaultBrush}"
                   BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
                   BorderThickness="0,0,1,0">
@@ -82,9 +215,9 @@
                      SelectedIndex="0"
                      Background="Transparent"
                      BorderThickness="0"
+                     ItemContainerStyle="{StaticResource SettingsNavigationItemStyle}"
                      automation:AutomationProperties.Name="设置分类">
-              <ListBoxItem Padding="10,9"
-                           automation:AutomationProperties.Name="常规设置">
+              <ListBoxItem automation:AutomationProperties.Name="常规设置">
                   <StackPanel Orientation="Horizontal">
                     <TextBlock Text="&#xE713;"
                                FontFamily="Segoe Fluent Icons"
@@ -97,9 +230,7 @@
                   </StackPanel>
               </ListBoxItem>
 
-              <ListBoxItem Margin="0,3,0,0"
-                           Padding="10,9"
-                           automation:AutomationProperties.Name="快捷键设置">
+              <ListBoxItem automation:AutomationProperties.Name="快捷键设置">
                   <StackPanel Orientation="Horizontal">
                     <TextBlock Text="&#xE765;"
                                FontFamily="Segoe Fluent Icons"
@@ -112,9 +243,7 @@
                   </StackPanel>
               </ListBoxItem>
 
-              <ListBoxItem Margin="0,3,0,0"
-                           Padding="10,9"
-                           automation:AutomationProperties.Name="关于 Vok">
+              <ListBoxItem automation:AutomationProperties.Name="关于 Vok">
                   <StackPanel Orientation="Horizontal">
                     <TextBlock Text="&#xE946;"
                                FontFamily="Segoe Fluent Icons"
@@ -131,7 +260,7 @@
 
           <Grid Grid.Column="1">
             <ScrollViewer x:Name="GeneralPanel"
-                          Padding="28,22,28,28"
+                          Padding="24,22,24,24"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled">
               <ScrollViewer.Style>
@@ -148,46 +277,43 @@
                 <TextBlock Text="常规"
                            FontSize="16"
                            FontWeight="SemiBold" />
-                <TextBlock Margin="0,5,0,18"
+                <TextBlock Margin="0,5,0,20"
                            Text="调整 Vok 的外观与后台行为"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
 
-                <Grid MinHeight="64">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                  </Grid.ColumnDefinitions>
-                  <StackPanel VerticalAlignment="Center">
+                <Border Style="{StaticResource SettingsCardStyle}">
+                  <StackPanel>
                     <TextBlock Text="界面主题"
                                FontSize="13"
                                FontWeight="SemiBold" />
-                  </StackPanel>
-                  <StackPanel Grid.Column="1"
-                              Margin="24,0,0,0"
-                              Orientation="Horizontal"
-                              VerticalAlignment="Center">
+                    <TextBlock Margin="0,4,0,0"
+                               Text="选择与系统同步，或固定使用浅色、深色外观"
+                               FontSize="12"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                    <WrapPanel Margin="0,15,0,0">
                     <RadioButton Content="跟随系统"
-                                 Margin="0,0,14,0"
+                                 Margin="0,0,18,6"
+                                 Padding="2,3"
                                  IsChecked="{Binding Settings.IsSystemTheme, Mode=OneWay}"
                                  Command="{Binding Settings.ChangeThemeCommand}"
                                  CommandParameter="{x:Static appearance:AppThemeMode.System}" />
                     <RadioButton Content="浅色"
-                                 Margin="0,0,14,0"
+                                 Margin="0,0,18,6"
+                                 Padding="2,3"
                                  IsChecked="{Binding Settings.IsLightTheme, Mode=OneWay}"
                                  Command="{Binding Settings.ChangeThemeCommand}"
                                  CommandParameter="{x:Static appearance:AppThemeMode.Light}" />
                     <RadioButton Content="深色"
+                                 Margin="0,0,0,6"
+                                 Padding="2,3"
                                  IsChecked="{Binding Settings.IsDarkTheme, Mode=OneWay}"
                                  Command="{Binding Settings.ChangeThemeCommand}"
                                  CommandParameter="{x:Static appearance:AppThemeMode.Dark}" />
+                    </WrapPanel>
                   </StackPanel>
-                </Grid>
+                </Border>
 
-                <Border Margin="0,8"
-                        BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
-                        BorderThickness="0,1,0,0" />
-
-                <Grid MinHeight="64">
+                <Border Style="{StaticResource SettingsCardStyle}">
                   <StackPanel VerticalAlignment="Center">
                     <TextBlock Text="托盘与后台"
                                FontSize="13"
@@ -197,9 +323,9 @@
                                FontSize="12"
                                Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                   </StackPanel>
-                </Grid>
+                </Border>
 
-                <TextBlock Margin="0,10,0,0"
+                <TextBlock Margin="2,0,2,0"
                            Text="{Binding Settings.ThemeErrorMessage}"
                            Foreground="{DynamicResource SystemFillColorCriticalBrush}"
                            TextWrapping="Wrap">
@@ -221,7 +347,7 @@
             </ScrollViewer>
 
             <ScrollViewer x:Name="HotkeyPanel"
-                          Padding="28,22,28,28"
+                          Padding="24,22,24,24"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled">
               <ScrollViewer.Style>
@@ -238,16 +364,12 @@
                 <TextBlock Text="快捷键"
                            FontSize="16"
                            FontWeight="SemiBold" />
-                <TextBlock Margin="0,5,0,18"
+                <TextBlock Margin="0,5,0,20"
                            Text="设置用于显示或隐藏工作台的全局组合键"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
 
-                <Grid MinHeight="72">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                  </Grid.ColumnDefinitions>
-                  <StackPanel VerticalAlignment="Center">
+                <Border Style="{StaticResource SettingsCardStyle}">
+                  <StackPanel>
                     <TextBlock Text="呼出 / 隐藏"
                                FontSize="13"
                                FontWeight="SemiBold" />
@@ -255,12 +377,11 @@
                                Text="点击右侧后直接按下新的组合键"
                                FontSize="12"
                                Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                  </StackPanel>
-                  <Button x:Name="HotkeyRecorderButton"
-                          Grid.Column="1"
-                          Margin="24,0,0,0"
-                          MinWidth="180"
-                          Padding="14,8"
+                    <Button x:Name="HotkeyRecorderButton"
+                          Margin="0,16,0,0"
+                          MinWidth="190"
+                          HorizontalAlignment="Left"
+                          Style="{StaticResource SettingsActionButtonStyle}"
                           HorizontalContentAlignment="Center"
                           VerticalAlignment="Center"
                           Click="OnHotkeyRecorderClick"
@@ -269,18 +390,24 @@
                           automation:AutomationProperties.Name="录制呼出快捷键">
                     <TextBlock Text="{Binding Settings.HotkeyDisplayText}"
                                FontSize="13" />
-                  </Button>
-                </Grid>
+                    </Button>
+                  </StackPanel>
+                </Border>
 
-                <TextBlock Margin="0,10,0,0"
-                           Text="短按切换显隐；长按时保持显示，松开后隐藏。"
-                           FontSize="12"
-                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
-                <TextBlock Margin="0,6,0,0"
-                           Text="录制时按 Esc 可取消，原快捷键会自动恢复。"
-                           FontSize="12"
-                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
-                <TextBlock Margin="0,8,0,0"
+                <Border Padding="16,13"
+                        Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                        CornerRadius="10">
+                  <StackPanel>
+                    <TextBlock Text="短按切换显隐；长按时保持显示，松开后隐藏。"
+                               FontSize="12"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Margin="0,5,0,0"
+                               Text="录制时按 Esc 可取消，原快捷键会自动恢复。"
+                               FontSize="12"
+                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                  </StackPanel>
+                </Border>
+                <TextBlock Margin="2,10,2,0"
                            Text="{Binding Settings.HotkeyErrorMessage}"
                            Foreground="{DynamicResource SystemFillColorCriticalBrush}"
                            TextWrapping="Wrap">
@@ -302,7 +429,7 @@
             </ScrollViewer>
 
             <ScrollViewer x:Name="AboutPanel"
-                          Padding="28,22,28,28"
+                          Padding="24,22,24,24"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled">
               <ScrollViewer.Style>
@@ -319,33 +446,43 @@
                 <TextBlock Text="关于"
                            FontSize="16"
                            FontWeight="SemiBold" />
-                <TextBlock Margin="0,5,0,24"
+                <TextBlock Margin="0,5,0,20"
                            Text="Vok 应用信息"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
 
-                <Border Width="56"
-                        Height="56"
-                        HorizontalAlignment="Left"
-                        CornerRadius="15"
-                        Background="{DynamicResource AccentFillColorDefaultBrush}">
-                  <TextBlock Text="V"
-                             Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}"
-                             FontSize="26"
-                             FontWeight="Bold"
-                             HorizontalAlignment="Center"
-                             VerticalAlignment="Center" />
+                <Border Style="{StaticResource SettingsCardStyle}">
+                  <Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="64" />
+                      <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Width="56"
+                            Height="56"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Top"
+                            CornerRadius="16"
+                            Background="{DynamicResource AccentFillColorDefaultBrush}">
+                      <TextBlock Text="V"
+                                 Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}"
+                                 FontSize="26"
+                                 FontWeight="Bold"
+                                 HorizontalAlignment="Center"
+                                 VerticalAlignment="Center" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Margin="12,1,0,1">
+                      <TextBlock Text="Vok"
+                                 FontSize="20"
+                                 FontWeight="SemiBold" />
+                      <TextBlock Margin="0,4,0,0"
+                                 Text="{Binding ApplicationVersionText}"
+                                 Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                      <TextBlock Margin="0,10,0,0"
+                                 Text="面向 Windows 的全屏桌面工作台"
+                                 FontSize="12"
+                                 Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                    </StackPanel>
+                  </Grid>
                 </Border>
-                <TextBlock Margin="0,15,0,0"
-                           Text="Vok"
-                           FontSize="20"
-                           FontWeight="SemiBold" />
-                <TextBlock Margin="0,5,0,0"
-                           Text="{Binding ApplicationVersionText}"
-                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                <TextBlock Margin="0,14,0,0"
-                           Text="面向 Windows 的全屏桌面工作台"
-                           FontSize="12"
-                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
               </StackPanel>
             </ScrollViewer>
           </Grid>

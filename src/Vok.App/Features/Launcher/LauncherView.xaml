@@ -147,7 +147,7 @@
                BorderThickness="0"
                HorizontalContentAlignment="Stretch"
                ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-               ScrollViewer.VerticalScrollBarVisibility="Auto"
+               ScrollViewer.VerticalScrollBarVisibility="Hidden"
                ScrollViewer.CanContentScroll="True"
                VirtualizingPanel.IsVirtualizing="True"
                VirtualizingPanel.VirtualizationMode="Recycling"

@@ -2,6 +2,13 @@
 
 > 归档超过滚动窗口的 `memory.md §0A` 完整会话。默认不读取，仅在取证时搜索；按时间从新到旧排列。
 
+### 会话 2026-09-02 - M2.4 实库迁移与托盘登记恢复
+
+- 用户报告托盘无 Vok 图标但快捷键仍能呼出。只读诊断确认旧版 PID 14120 仍响应且 `H.NotifyIcon_*` HWND 存活，但 Windows 可见/溢出通知区均无 Vok，正确 GUID 的 `Shell_NotifyIconGetRect` 返回 `0x80004005`；这是 Shell 登记丢失，不是进程退出或图标被折叠。进程期间存在多次睡眠/Modern Standby 恢复，但缺少持久错误，不能精确锁定哪一次边沿。
+- 替换前在线备份真实 schema 5 库到 `%LOCALAPPDATA%\Vok\backups\vok-pre-m24-20260902-112140.db`；备份 `quick_check=ok`、90 条历史、19 个资产、20 个引用、0 外键违规。随后精确停止 PID 14120，启动已验证的 `artifacts/m24-publish/Vok.exe` 为 PID 15992。
+- 新版完成 schema 6 迁移，90 条历史分类/资产/引用全部不变，`quick_check=ok`、0 外键违规、0 PendingDelete/Quarantined。19 个 PNG 长度和 SHA-256 全部一致，0 缺失/staging；Windows 溢出区重新识别 `Vok`，图标 GUID 查询成功，持久 `Ctrl+Space` 显示已占用。
+- 本次只部署并恢复当前登记，没有修改托盘代码。旧实例的长期登记丢失暴露 R27：库的 `TaskbarCreated` 恢复静默吞错且应用没有真实 Shell 健康核验，后续须独立根因修复；产品清空未执行。
+
 ### 会话 2026-09-01 - M2.4 保留、清空与规模故障门禁
 
 - schema 6 新增并迁移回填 `clipboard_entries.total_bytes`；默认保留锁定为最新 100 条未固定、30 天和 512 MiB 受管总量，固定只豁免条数/时间。保留、单删和清空均以 SQLite 元数据事务先行，零引用资产转 revision tombstone 后由唯一 asset coordinator 物理回收。

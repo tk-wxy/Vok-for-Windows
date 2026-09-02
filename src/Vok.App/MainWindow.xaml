@@ -22,6 +22,60 @@
         PreviewDragLeave="OnPreviewDragLeave"
         PreviewDrop="OnPreviewDrop"
         PreviewKeyDown="OnPreviewKeyDown">
+  <Window.Resources>
+    <Style x:Key="HeaderIconButtonStyle"
+           TargetType="Button"
+           BasedOn="{StaticResource {x:Type Button}}">
+      <Setter Property="Width" Value="40" />
+      <Setter Property="Height" Value="40" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="{DynamicResource ControlFillColorDefaultBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="ButtonSurface"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="10"
+                    SnapsToDevicePixels="True">
+              <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                RecognizesAccessKey="True" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ButtonSurface"
+                        Property="Background"
+                        Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+                <Setter TargetName="ButtonSurface"
+                        Property="BorderBrush"
+                        Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="ButtonSurface"
+                        Property="Background"
+                        Value="{DynamicResource ControlFillColorTertiaryBrush}" />
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="ButtonSurface"
+                        Property="BorderBrush"
+                        Value="{DynamicResource AccentFillColorDefaultBrush}" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="ButtonSurface" Property="Opacity" Value="0.45" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </Window.Resources>
+
   <Grid x:Name="WorkspaceInputAnchor"
         Focusable="True"
         Background="{DynamicResource ApplicationBackgroundBrush}"
@@ -38,9 +92,9 @@
             BorderThickness="0,0,0,1">
       <Grid>
         <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="320" />
-          <ColumnDefinition Width="*" />
-          <ColumnDefinition Width="320" />
+          <ColumnDefinition Width="1*" />
+          <ColumnDefinition Width="2*" />
+          <ColumnDefinition Width="1*" />
         </Grid.ColumnDefinitions>
 
         <StackPanel Orientation="Horizontal"
@@ -95,8 +149,7 @@
 
         <Button x:Name="OpenSettingsButton"
                 Grid.Column="2"
-                Width="38"
-                Height="38"
+                Style="{StaticResource HeaderIconButtonStyle}"
                 HorizontalAlignment="Right"
                 VerticalAlignment="Center"
                 Command="{Binding OpenSettingsCommand}"
