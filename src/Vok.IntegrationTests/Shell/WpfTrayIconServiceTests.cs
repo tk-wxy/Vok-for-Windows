@@ -1,13 +1,15 @@
+using System.Runtime.InteropServices;
 using Vok.Core.Platform;
 using Vok.Core.Workspace;
 using Vok.Features.Tray;
 using Vok.IntegrationTests.Infrastructure;
+using Vok.Infrastructure.Windows.Shell;
 using Xunit;
 
 namespace Vok.IntegrationTests.Shell;
 
 [Collection(WpfApplicationCollection.Name)]
-public sealed class WpfTrayIconServiceTests(WpfApplicationFixture wpf)
+public sealed unsafe partial class WpfTrayIconServiceTests(WpfApplicationFixture wpf)
 {
     [Fact]
     public void StartsAndDisposesOnOwningStaThread()
@@ -16,7 +18,8 @@ public sealed class WpfTrayIconServiceTests(WpfApplicationFixture wpf)
         {
             var service = new WpfTrayIconService(
                 new FakeForegroundWindowService(),
-                new FakeTrayMenuService());
+                new FakeTrayMenuService(),
+                new FakeTrayRegistrationProbe());
 
             service.Start();
             service.Start();
@@ -36,7 +39,8 @@ public sealed class WpfTrayIconServiceTests(WpfApplicationFixture wpf)
             var foreground = new FakeForegroundWindowService(first);
             using var service = new WpfTrayIconService(
                 foreground,
-                new FakeTrayMenuService());
+                new FakeTrayMenuService(),
+                new FakeTrayRegistrationProbe());
             TrayIconCommandEventArgs? invocation = null;
             service.CommandInvoked += (_, args) => invocation = args;
 
@@ -61,7 +65,8 @@ public sealed class WpfTrayIconServiceTests(WpfApplicationFixture wpf)
                 new ForegroundTarget((nint)41, 7, 11));
             using var service = new WpfTrayIconService(
                 foreground,
-                new FakeTrayMenuService());
+                new FakeTrayMenuService(),
+                new FakeTrayRegistrationProbe());
             TrayIconCommandEventArgs? invocation = null;
             service.CommandInvoked += (_, args) => invocation = args;
 
@@ -84,7 +89,8 @@ public sealed class WpfTrayIconServiceTests(WpfApplicationFixture wpf)
         {
             using var service = new WpfTrayIconService(
                 new FakeForegroundWindowService(),
-                new FakeTrayMenuService());
+                new FakeTrayMenuService(),
+                new FakeTrayRegistrationProbe());
             Exception? reported = null;
             var completed = false;
             service.CommandInvoked += (_, _) => throw new InvalidOperationException("subscriber");
@@ -110,7 +116,10 @@ public sealed class WpfTrayIconServiceTests(WpfApplicationFixture wpf)
             {
                 NextCommand = TrayIconCommand.OpenSettings,
             };
-            using var service = new WpfTrayIconService(foreground, menu);
+            using var service = new WpfTrayIconService(
+                foreground,
+                menu,
+                new FakeTrayRegistrationProbe());
             var invocations = new List<TrayIconCommandEventArgs>();
             service.CommandInvoked += (_, args) => invocations.Add(args);
             service.Start();
@@ -128,6 +137,40 @@ public sealed class WpfTrayIconServiceTests(WpfApplicationFixture wpf)
             Assert.Equal(2, menu.ShowCount);
             Assert.NotEqual(0, menu.LastOwnerWindow);
             Assert.NotEqual(Guid.Empty, menu.LastIconId);
+        });
+    }
+
+    [Fact]
+    public void RecoversWhenShellRegistrationDisappearsWhileLibraryStateStaysCreated()
+    {
+        wpf.Invoke(() =>
+        {
+            var probe = new WindowsTrayRegistrationProbe();
+            using var service = new WpfTrayIconService(
+                new FakeForegroundWindowService(),
+                new FakeTrayMenuService(),
+                probe);
+            service.Start();
+
+            var ownerWindow = service.RegistrationOwnerWindow;
+            var iconId = service.RegistrationIconId;
+            Assert.NotEqual(0, ownerWindow);
+            Assert.NotEqual(Guid.Empty, iconId);
+            Assert.True(probe.Probe(ownerWindow, iconId).IsRegistered);
+            Assert.True(service.LibraryReportsRegistrationCreated);
+
+            Assert.True(DeleteShellRegistration(ownerWindow, iconId));
+            Assert.False(probe.Probe(ownerWindow, iconId).IsRegistered);
+            Assert.True(service.LibraryReportsRegistrationCreated);
+
+            service.RequestRegistrationCheck(
+                TrayRegistrationRecoveryTrigger.PowerResume);
+
+            Assert.True(probe.Probe(ownerWindow, iconId).IsRegistered);
+            Assert.True(service.LibraryReportsRegistrationCreated);
+            Assert.Equal(
+                TrayRegistrationRecoveryState.Healthy,
+                service.RegistrationRecoveryState);
         });
     }
 
@@ -168,5 +211,51 @@ public sealed class WpfTrayIconServiceTests(WpfApplicationFixture wpf)
             LastIconId = iconId;
             return NextCommand;
         }
+    }
+
+    private sealed class FakeTrayRegistrationProbe : ITrayRegistrationProbe
+    {
+        public TrayRegistrationProbeResult Probe(nint ownerWindow, Guid iconId) =>
+            new(IsRegistered: true, NativeResult: 0);
+    }
+
+    private static bool DeleteShellRegistration(nint ownerWindow, Guid iconId)
+    {
+        var data = new TestNotifyIconData
+        {
+            Size = (uint)Marshal.SizeOf<TestNotifyIconData>(),
+            Window = ownerWindow,
+            Flags = NotifyIconFlagGuid,
+            IconId = iconId,
+        };
+        return ShellNotifyIcon(NotifyIconMessageDelete, in data) != 0;
+    }
+
+    private const uint NotifyIconMessageDelete = 2;
+    private const uint NotifyIconFlagGuid = 0x20;
+
+    [LibraryImport("shell32.dll", EntryPoint = "Shell_NotifyIconW")]
+    private static partial int ShellNotifyIcon(
+        uint message,
+        in TestNotifyIconData data);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct TestNotifyIconData
+    {
+        public uint Size;
+        public nint Window;
+        public uint Id;
+        public uint Flags;
+        public uint CallbackMessage;
+        public nint Icon;
+        public fixed char ToolTip[128];
+        public uint State;
+        public uint StateMask;
+        public fixed char Information[256];
+        public uint Version;
+        public fixed char InformationTitle[64];
+        public uint InformationFlags;
+        public Guid IconId;
+        public nint BalloonIcon;
     }
 }

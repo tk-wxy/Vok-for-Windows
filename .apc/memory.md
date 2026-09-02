@@ -11,12 +11,19 @@
 
 ## §0 快照
 
-- **状态**：M0、M1、M2.0–M2.3 已在既定单屏范围完成；M2.4 的实现、自动门禁和真实 schema 5→6 迁移均已完成。当前运行 `artifacts/m24-publish/Vok.exe`，PID 15992；真实库为 schema 6，90 条历史与 19 个资产完整保留。破坏性的产品清空尚未物理验收，见 `decisions.md §24`。
-- **最近进展**：重启前创建在线一致性备份 `%LOCALAPPDATA%\Vok\backups\vok-pre-m24-20260902-112140.db`；迁移后 `quick_check=ok`、0 外键违规、57 Text/10 FileList/23 Image、19 个资产/20 个引用、0 PendingDelete/Quarantined。19 个 PNG 均通过长度与 SHA-256，0 缺失/staging。新版托盘已在 Windows 溢出区注册，`Shell_NotifyIconGetRect` 成功；持久 `Ctrl+Space` 被新实例占有。
-- **下一步**：由用户物理确认新版 `Ctrl+Space` 呼出及托盘点击/菜单；只有确实要删除全部 Vok 历史时才执行两次确认“清空”。托盘长期运行登记丢失的根因修复按 R27 独立处理，不能用本次重启冒充修复；跨屏/多屏若未来重开，仍作为独立里程碑。
-- **已知问题**：旧版长时间运行并经历多次睡眠/唤醒后，曾出现热键正常、`H.NotifyIcon` HWND 存活但 Shell 图标登记消失；新版重启已恢复，事件驱动自愈尚未实现，见 R27。合法 PNG 轻量 header 仍可能在关闭剪贴板后 codec 失败且没有 DIB 事后后备；真实产品清空、物理磁盘耗尽和跨屏/多屏仍未验证。既有人工验收 PNG/截图继续保留。
+- **状态**：M0、M1、M2.0–M2.4 已在既定单屏范围完成；托盘长期 Shell 登记丢失 R27 已按 `decisions.md §25` 建立真实后验与有界自愈。当前运行 `artifacts/r27-publish/Vok.exe`，PID 28424；M2.4 的 schema 6 与数据边界未改变，破坏性的产品清空仍未物理验收。
+- **最近进展**：新增实际 HWND/GUID 的 `Shell_NotifyIconGetRect` 探针，以及启动、TaskbarCreated、Resume、Unlock、1 分钟 watchdog 驱动的 UI-STA 单航班恢复。自动门禁直接删除测试图标登记，证明库仍报 `IsCreated=true` 时可同 PID 恢复；65/65 Core + 364/364 Windows/WPF 共 429/429 和 win-x64 自包含发布通过。真实 PID 28424 登记被可逆删除为 `0x80004005` 后，无重启恢复为 `0x00000000`，持久 `Ctrl+Space` 仍被占有。
+- **下一步**：用户已反馈 PID 28424 基础交互测试基本通过，本轮按用户要求提交源码；方便时再执行真实睡眠/唤醒、锁定/解锁及用户触发 Explorer 重启专项矩阵。只有确实要删除全部 Vok 历史时才执行两次确认“清空”；跨屏/多屏若未来重开仍为独立里程碑。
+- **已知问题**：R27 的根故障机制和 missed-event watchdog 已验证，但真实 Modern Standby/睡眠、Unlock、Explorer 重启信号仍未物理执行。合法 PNG 轻量 header 仍可能在关闭剪贴板后 codec 失败且没有 DIB 事后后备；真实产品清空、物理磁盘耗尽和跨屏/多屏仍未验证。既有人工验收 PNG/截图继续保留。
 
 ## §0A 最近会话
+
+### 会话 2026-09-02 - 托盘 Shell 登记自愈闭环
+
+- 根因复核确认：通知图标真正状态属于 Explorer/Shell，库的 `IsCreated` 只记录本地调用；`H.NotifyIcon.Wpf 2.4.1` 又会在 TaskbarCreated 恢复时吞掉异常，Vok 原先没有后验检查，导致一次外部登记丢失永久持续到重启。
+- 保留现有通知图标与原生 HMENU，新增实际 HWND/GUID Shell 探针和 UI-STA 恢复 coordinator。启动、TaskbarCreated、Resume、Unlock 与 1 分钟 watchdog 请求检查；确定缺失后最多五次有界重建，每次都以后验 Shell 查询定成功，菜单打开、跨代迟到、Dispose 与同轮重入均有门禁。
+- 自动测试原生删除测试图标登记并钉死“Shell 缺失但 IsCreated=true”的原机制；故障注入覆盖 watchdog 复核、耗尽、后验优先和各类竞态。Release 65/65 + 364/364 共 429/429、自包含 win-x64 发布通过。
+- 将 PID 15992 精确替换为 `artifacts/r27-publish/Vok.exe` PID 28424；真实 Vok 登记被可逆删除后从 `0x80004005` 无重启恢复为 `0x00000000`，进程响应且 Ctrl+Space 保持占用。用户反馈基础交互测试基本通过；真实睡眠/Unlock/Explorer 重启物理矩阵仍待方便时执行。
 
 ### 会话 2026-09-02 - M2.4 实库迁移与托盘登记恢复
 
@@ -31,14 +38,6 @@
 - 启动恢复 PendingDelete，并只删除路径/实际 SHA 同时证明属于 CAS 的孤儿；未知或伪装内容保留并报告。产品加入两次确认清空、缩略图 cache generation 和 capture clear epoch，保证不动系统剪贴板/用户文件，且并发迟到捕获不会在 UI 或重启后复活。
 - Release 构建 0 警告/错误，65/65 Core + 354/354 Integration 共 419/419；10,000 条元数据、1,000 次连续捕获、迁移回滚、固定/总容量、全部类型清空及孤儿/伪装文件门禁通过。clipboard probe report v7 基础、2 轮和 20 轮资源矩阵、8 个脚本 AST、自包含 win-x64 发布通过。
 - 当前旧版 PID 14120 和真实 schema 5 用户库均未改动；发布物位于 `artifacts/m24-publish/Vok.exe`。实库迁移与清空物理验收待用户有意启动新版，清空不会被自动代做。
-
-### 会话 2026-09-01 - M2.3 单屏大图、ICC、磁盘满与资源门禁
-
-- 用户确认继续剪贴板测试，并明确跨屏/多屏暂不实现；当前 M2.3 单屏收口边界记录于 `decisions.md §23`，既有 Per-Monitor 架构保留且不宣称多屏已支持。
-- 隔离 clipboard probe 升级到 report v6，新增可选 1–50 轮扩展矩阵和独立临时 normalizer staging/schema 5/CAS。20 轮共处理 60 份 4K PNG、约 32 MiB 4K DIBV5 与 embedded ICC 8K Alpha PNG；4K 两编码语义 hash 一致，ICC 成功转 sRGB且 canonical 无 iCCP，所有 job/lease/staging 每项归零。最终只有 2 条 Image 历史、40/20 capture count、4 个 PNG 资产和 0 asset staging；第 20 轮 8K Private Bytes 不高于第 1 轮。
-- 新增有效 Windows sRGB ICC 成功路径和第二资产提交 `ERROR_DISK_FULL` 故障测试；后者证明不调用 metadata upsert、结果释放且 coordinator job 归零。Release 408/408、PowerShell AST、report v6 基础/两轮/20 轮均通过。
-- 浏览器第一次目标尝试因测试标签不是 OS 活动标签而作废。用户将目标标签置前后，受控复验先把可编辑区从旧图片清为 0，再按真实持久化快捷键 `Ctrl+Space` 调用“图片剪贴板，2100×1748”；Vok 隐藏、sequence `2061→2067`，系统 PNG/DIBV5 与 DOM 新增的唯一 data PNG 均为 2100×1748、694,211 bytes，Chrome 可编辑区目标 replay 通过。先前看到的 2478×1355 是测试区旧内容，不是产品错取条目。
-- 用户确认 Office、聊天软件及其他剩余来源矩阵全部通过。随后只读审计真实用户库：schema 5、`quick_check=ok`、0 外键违规，10 条 Image 均有主图/缩略图双角色引用；19 个 Ready 资产与 19 个 PNG 的长度和 SHA-256 全部一致，0 缺失、游离或 staging。单屏 M2.3 据此完成，下一步进入 M2.4；跨屏/多屏继续按 §23 后置。
 
 ## 指引
 

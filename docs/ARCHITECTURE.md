@@ -105,6 +105,7 @@ WM_CLIPBOARDUPDATE
 - 应用壳层只有一个 WPF 顶层主 HWND；Settings 是主窗内部视图，托盘只发布应用命令，不拥有或旁路 Workspace 显隐事务；
 - 托盘左键/菜单显示与设置请求复用代次化宿主；退出先完成宿主隐藏和 Topmost 清理，再由显式应用生命周期关闭；
 - WPF 壳层使用 .NET 10 Fluent 语义资源；主题为跟随系统/浅色/深色三态，在主窗创建前加载并由专属 SQLite 执行器持久化；通知区域菜单使用 Windows 原生 `HMENU` 标准格式，不由 WPF/WinForms 自绘；
+- 通知图标对象或消息 HWND 存活不代表 Explorer/Shell 仍持有登记；启动、`TaskbarCreated`、Resume、Unlock 与低频 watchdog 都以实际 HWND/GUID 调用 `Shell_NotifyIconGetRect`，缺失时在 UI STA 代次化有界重建，只有后验查询成功才完成；
 - 模块拥有自己的 ViewModel、用例和生命周期取消源；
 - 命令、查询、失败、取消和资源所有权走 Core 中的窄接口；
 - Messenger 仅用于无需确认的广播，例如主题或数据已变化通知；

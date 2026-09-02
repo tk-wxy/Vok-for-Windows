@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Drawing;
 using System.Windows;
+using System.Windows.Threading;
 using H.NotifyIcon;
+using Microsoft.Win32;
 using Vok.Core.Platform;
 using Vok.Core.Workspace;
 
@@ -11,20 +13,30 @@ public sealed class WpfTrayIconService : ITrayIconService
 {
     private readonly IForegroundWindowService _foregroundWindowService;
     private readonly ITrayMenuService _trayMenuService;
+    private readonly ITrayRegistrationProbe _registrationProbe;
     private TaskbarIcon? _taskbarIcon;
+    private TrayRegistrationRecoveryCoordinator? _registrationRecovery;
+    private Dispatcher? _ownerDispatcher;
     private Icon? _icon;
     private ForegroundTarget _contextForegroundTarget;
     private long _contextRequestedTimestamp;
     private bool _contextMenuOpen;
+    private bool _powerEventsSubscribed;
+    private bool _sessionEventsSubscribed;
     private int _ownerThreadId;
     private int _lifecycle;
 
     public WpfTrayIconService(
         IForegroundWindowService foregroundWindowService,
-        ITrayMenuService trayMenuService)
+        ITrayMenuService trayMenuService,
+        ITrayRegistrationProbe registrationProbe)
     {
-        _foregroundWindowService = foregroundWindowService;
-        _trayMenuService = trayMenuService;
+        _foregroundWindowService = foregroundWindowService ??
+            throw new ArgumentNullException(nameof(foregroundWindowService));
+        _trayMenuService = trayMenuService ??
+            throw new ArgumentNullException(nameof(trayMenuService));
+        _registrationProbe = registrationProbe ??
+            throw new ArgumentNullException(nameof(registrationProbe));
     }
 
     public event EventHandler<TrayIconCommandEventArgs>? CommandInvoked;
@@ -62,6 +74,8 @@ public sealed class WpfTrayIconService : ITrayIconService
                 "The tray icon must be started on the WPF application dispatcher.");
         }
 
+        _ownerDispatcher = Dispatcher.CurrentDispatcher;
+
         try
         {
             _icon = LoadProcessIcon();
@@ -77,6 +91,17 @@ public sealed class WpfTrayIconService : ITrayIconService
             _taskbarIcon.TrayRightMouseUp += OnTrayRightMouseUp;
             _taskbarIcon.TrayKeyboardContextMenu += OnTrayKeyboardContextMenu;
             _taskbarIcon.ForceCreate(enablesEfficiencyMode: false);
+            _registrationRecovery = new TrayRegistrationRecoveryCoordinator(
+                _registrationProbe,
+                _taskbarIcon.TrayIcon.WindowHandle,
+                _taskbarIcon.Id,
+                RepairRegistration,
+                new DispatcherTrayRecoveryScheduler(_ownerDispatcher),
+                TrayRegistrationRecoveryOptions.Default,
+                PublishFault);
+            _taskbarIcon.TrayIcon.MessageWindow.TaskbarCreated += OnTaskbarCreated;
+            SubscribeToEnvironmentEvents();
+            _registrationRecovery.Start();
         }
         catch
         {
@@ -154,6 +179,7 @@ public sealed class WpfTrayIconService : ITrayIconService
         }
 
         _contextMenuOpen = true;
+        _registrationRecovery?.SetBlocked(true);
         try
         {
             if (_contextRequestedTimestamp == 0)
@@ -178,8 +204,23 @@ public sealed class WpfTrayIconService : ITrayIconService
         {
             ResetContextInvocation();
             _contextMenuOpen = false;
+            _registrationRecovery?.SetBlocked(false);
         }
     }
+
+    internal nint RegistrationOwnerWindow =>
+        _taskbarIcon?.TrayIcon.WindowHandle ?? 0;
+
+    internal Guid RegistrationIconId => _taskbarIcon?.Id ?? Guid.Empty;
+
+    internal bool LibraryReportsRegistrationCreated =>
+        _taskbarIcon?.IsCreated == true;
+
+    internal TrayRegistrationRecoveryState RegistrationRecoveryState =>
+        _registrationRecovery?.State ?? TrayRegistrationRecoveryState.NotStarted;
+
+    internal void RequestRegistrationCheck(TrayRegistrationRecoveryTrigger trigger) =>
+        _registrationRecovery?.RequestCheck(trigger);
 
     private void OnTrayLeftMouseUp(object sender, RoutedEventArgs e) => InvokeShowWorkspace();
 
@@ -192,6 +233,25 @@ public sealed class WpfTrayIconService : ITrayIconService
     {
         CaptureContextInvocation();
         InvokeContextMenu(keyboardInvocation: true);
+    }
+
+    private void OnTaskbarCreated(object? sender, EventArgs e) =>
+        PostRegistrationCheck(TrayRegistrationRecoveryTrigger.TaskbarCreated);
+
+    private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode == PowerModes.Resume)
+        {
+            PostRegistrationCheck(TrayRegistrationRecoveryTrigger.PowerResume);
+        }
+    }
+
+    private void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
+    {
+        if (e.Reason == SessionSwitchReason.SessionUnlock)
+        {
+            PostRegistrationCheck(TrayRegistrationRecoveryTrigger.SessionUnlock);
+        }
     }
 
     private (ForegroundTarget Target, long Timestamp) CaptureInvocation()
@@ -258,9 +318,114 @@ public sealed class WpfTrayIconService : ITrayIconService
         }
     }
 
+    private void RepairRegistration()
+    {
+        var taskbarIcon = _taskbarIcon ?? throw new InvalidOperationException(
+            "The tray icon is unavailable during registration recovery.");
+        if (!taskbarIcon.TrayIcon.TryRemove())
+        {
+            Trace.TraceWarning(
+                "The Shell did not acknowledge removal of tray icon {0:B} before recovery.",
+                taskbarIcon.Id);
+        }
+
+        taskbarIcon.TrayIcon.Create();
+    }
+
+    private void PostRegistrationCheck(TrayRegistrationRecoveryTrigger trigger)
+    {
+        var dispatcher = _ownerDispatcher;
+        var recovery = _registrationRecovery;
+        if (dispatcher is null || recovery is null ||
+            Volatile.Read(ref _lifecycle) != 1)
+        {
+            return;
+        }
+
+        try
+        {
+            _ = dispatcher.BeginInvoke(
+                DispatcherPriority.Background,
+                () =>
+                {
+                    if (Volatile.Read(ref _lifecycle) == 1 &&
+                        ReferenceEquals(_registrationRecovery, recovery))
+                    {
+                        recovery.RequestCheck(trigger);
+                    }
+                });
+        }
+        catch (InvalidOperationException exception)
+        {
+            if (Volatile.Read(ref _lifecycle) == 1)
+            {
+                PublishFault(exception);
+            }
+        }
+    }
+
+    private void SubscribeToEnvironmentEvents()
+    {
+        try
+        {
+            SystemEvents.PowerModeChanged += OnPowerModeChanged;
+            _powerEventsSubscribed = true;
+        }
+        catch (Exception exception)
+        {
+            PublishFault(new InvalidOperationException(
+                "Unable to observe Windows power resume events for tray recovery.",
+                exception));
+        }
+
+        try
+        {
+            SystemEvents.SessionSwitch += OnSessionSwitch;
+            _sessionEventsSubscribed = true;
+        }
+        catch (Exception exception)
+        {
+            PublishFault(new InvalidOperationException(
+                "Unable to observe Windows session unlock events for tray recovery.",
+                exception));
+        }
+    }
+
+    private void UnsubscribeFromEnvironmentEvents()
+    {
+        if (_powerEventsSubscribed)
+        {
+            SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+            _powerEventsSubscribed = false;
+        }
+
+        if (_sessionEventsSubscribed)
+        {
+            SystemEvents.SessionSwitch -= OnSessionSwitch;
+            _sessionEventsSubscribed = false;
+        }
+    }
+
     private void DisposeResources()
     {
         List<Exception>? failures = null;
+        UnsubscribeFromEnvironmentEvents();
+        if (_taskbarIcon is not null)
+        {
+            _taskbarIcon.TrayIcon.MessageWindow.TaskbarCreated -= OnTaskbarCreated;
+        }
+
+        var registrationRecovery = _registrationRecovery;
+        _registrationRecovery = null;
+        try
+        {
+            registrationRecovery?.Dispose();
+        }
+        catch (Exception exception)
+        {
+            (failures ??= []).Add(exception);
+        }
+
         if (_taskbarIcon is not null)
         {
             var taskbarIcon = _taskbarIcon;
@@ -292,6 +457,7 @@ public sealed class WpfTrayIconService : ITrayIconService
 
         ResetContextInvocation();
         _contextMenuOpen = false;
+        _ownerDispatcher = null;
         if (failures is not null)
         {
             PublishFault(failures.Count == 1

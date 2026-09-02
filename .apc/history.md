@@ -2,6 +2,14 @@
 
 > 归档超过滚动窗口的 `memory.md §0A` 完整会话。默认不读取，仅在取证时搜索；按时间从新到旧排列。
 
+### 会话 2026-09-01 - M2.3 单屏大图、ICC、磁盘满与资源门禁
+
+- 用户确认继续剪贴板测试，并明确跨屏/多屏暂不实现；当前 M2.3 单屏收口边界记录于 `decisions.md §23`，既有 Per-Monitor 架构保留且不宣称多屏已支持。
+- 隔离 clipboard probe 升级到 report v6，新增可选 1–50 轮扩展矩阵和独立临时 normalizer staging/schema 5/CAS。20 轮共处理 60 份 4K PNG、约 32 MiB 4K DIBV5 与 embedded ICC 8K Alpha PNG；4K 两编码语义 hash 一致，ICC 成功转 sRGB且 canonical 无 iCCP，所有 job/lease/staging 每项归零。最终只有 2 条 Image 历史、40/20 capture count、4 个 PNG 资产和 0 asset staging；第 20 轮 8K Private Bytes 不高于第 1 轮。
+- 新增有效 Windows sRGB ICC 成功路径和第二资产提交 `ERROR_DISK_FULL` 故障测试；后者证明不调用 metadata upsert、结果释放且 coordinator job 归零。Release 408/408、PowerShell AST、report v6 基础/两轮/20 轮均通过。
+- 浏览器第一次目标尝试因测试标签不是 OS 活动标签而作废。用户将目标标签置前后，受控复验先把可编辑区从旧图片清为 0，再按真实持久化快捷键 `Ctrl+Space` 调用“图片剪贴板，2100×1748”；Vok 隐藏、sequence `2061→2067`，系统 PNG/DIBV5 与 DOM 新增的唯一 data PNG 均为 2100×1748、694,211 bytes，Chrome 可编辑区目标 replay 通过。先前看到的 2478×1355 是测试区旧内容，不是产品错取条目。
+- 用户确认 Office、聊天软件及其他剩余来源矩阵全部通过。随后只读审计真实用户库：schema 5、`quick_check=ok`、0 外键违规，10 条 Image 均有主图/缩略图双角色引用；19 个 Ready 资产与 19 个 PNG 的长度和 SHA-256 全部一致，0 缺失、游离或 staging。单屏 M2.3 据此完成，下一步进入 M2.4；跨屏/多屏继续按 §23 后置。
+
 ### 会话 2026-09-01 - 重启后图片可见性与 Paint replay
 
 - 用户将 Paint 置为真实前台后，PID 14120 通过配置的 Ctrl+Space 呼出。UI Automation 首屏识别 2100×1748 图片卡，右栏截图同时证实重启前 2478×1355、2779×1509 图片卡的缩略图已从 schema 5/CAS 正常加载；总历史当时显示 88 条。

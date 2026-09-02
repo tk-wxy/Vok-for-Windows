@@ -117,6 +117,7 @@ public partial class App : Application
         services.AddSingleton<IConfigurableGlobalHotkeyService>(provider =>
             provider.GetRequiredService<GlobalHotkeyService>());
         services.AddSingleton<ITrayMenuService, WindowsTrayMenuService>();
+        services.AddSingleton<ITrayRegistrationProbe, WindowsTrayRegistrationProbe>();
         services.AddSingleton<ITrayIconService, WpfTrayIconService>();
         services.AddSingleton<IPerformanceSampler, ProcessPerformanceSampler>();
         services.AddSingleton<IWorkspaceDiagnosticPublisher, Win32WorkspaceDiagnosticPublisher>();

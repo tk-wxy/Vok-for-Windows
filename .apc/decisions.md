@@ -28,6 +28,7 @@
 - §22 图片卡的正向目录导出与代次提交边界 — 仅活动 Explorer 文件系统 View/Desktop 直接创建 canonical PNG，写前复核同一目标并在 Shell STA 认领工作区代次。
 - §23 剪贴板 M2.3 的单屏收口与跨屏多屏后置 — 当前只验收单屏图片链路，不实现或宣称跨屏/多屏能力，后续单列里程碑重开。
 - §24 剪贴板保留、清空与资产回收事务 — schema 6 统一计量历史与资产，元数据先提交、revision tombstone 后物理回收，清空不触碰系统剪贴板或用户文件。
+- §25 托盘 Shell 登记健康闭环 — 保留现有通知图标适配器，以真实 Shell 后验查询、事件信号、代次化有界重建和低频 watchdog 修复长期登记丢失。
 
 ## 详情
 
@@ -266,3 +267,13 @@
 - **新增失败模式**：清空/保留与捕获、重新引用或缩略图读取竞争；旧 revision 删除新资产；数据库已提交但物理删除失败；进程在 tombstone 后退出；未知文件伪装 CAS 路径；清空后迟到缩略图重新占用缓存；固定项使总量长期不降。实现用单 coordinator 排序、事务内零引用 claim、revision 再验证、启动恢复、实际 SHA 复核、缩略图 cache generation 和清空 epoch 限制影响；物理清理失败以 `AssetCleanupDeferred` 明确降级，不能冒充完全清理。
 - **决定 / 最后验证**：2026-09-01 / 2026-09-01。
 - **状态**：active；Release 构建 0 警告/错误，419/419 自动测试、clipboard probe report v7 基础/2 轮/20 轮、8 个 PowerShell 脚本 AST 和 win-x64 自包含发布通过。2026-09-02 经在线备份后将旧版 PID 14120 替换为 M2.4 PID 15992；真实库 schema 5→6 迁移后 `quick_check=ok`、0 外键违规，90 条历史、19 个资产和 20 个引用全部保留，19 个 PNG 长度/SHA-256 一致。破坏性的产品清空仍未对真实历史执行。
+
+### §25 托盘 Shell 登记健康闭环
+
+- **最终方案**：继续由 `H.NotifyIcon.Wpf` 拥有通知图标消息 HWND、鼠标事件与基础 Explorer 重建，不重写完整 `Shell_NotifyIcon` 宿主。Vok 以图标对象的实际 HWND/GUID 调用 `Shell_NotifyIconGetRect`，只有真实 Shell 查询成功才认为登记健康；启动、库内 `TaskbarCreated` 处理完成后、系统 Resume、会话 Unlock 都在 WPF UI STA 请求检查。低频 1 分钟 watchdog 只补漏系统事件，首次失败再于 250 ms 后复核；确定缺失后以单航班 `TryRemove → Create → Shell 后验查询` 修复，失败按 250 ms、1 s、3 s、10 s 有界退避，共最多五次。每轮以 generation 隔离迟到回调，原生菜单打开期间延后，退出先取消调度和静态系统事件订阅；耗尽后报告触发源、轮次和 HRESULT，并等待下一环境事件/watchdog，不无限忙重试。
+- **范围**：托盘图标长期运行、Explorer/任务栏重建、睡眠/唤醒、会话解锁、原生菜单重入、应用退出与 `H.NotifyIcon.Wpf 2.4.1` 的恢复缺口；不改变托盘命令路由、Workspace 显隐/焦点事务、原生 `HMENU` 外观、热键线程或用户数据。
+- **证据与根因**：旧 PID 14120 已证明热键、WPF 主窗和 `H.NotifyIcon_*` HWND 可继续存活，而 Shell 对同一 GUID 的查询返回 `0x80004005`；进程内对象状态不是外部 Shell 登记。依赖库的 `Create()` 会在本地 `IsCreated=true` 时提前返回，`TaskbarCreated` 路径又吞掉 `TryRemove/Create` 异常，Vok 原先没有后验查询、Resume/Unlock 信号或失败重试，所以一次外部登记丢失会永久持续到重启。新集成测试直接原生删除测试图标登记，确认库仍报告 `IsCreated=true`，随后同 PID 自动恢复并通过 Shell 后验查询；故障注入另覆盖 watchdog 复核、五次耗尽、跨代迟到、菜单阻塞、Dispose、重入和“修复抛错但真实后验成功”。Release 65/65 Core + 364/364 Windows/WPF 共 429/429 通过。自包含 PID 28424 的真实登记随后被可逆删除，立即查询为 `0x80004005`，一分钟 watchdog 在不重启进程的情况下恢复为 `0x00000000`，`Ctrl+Space` 仍由该实例占有。
+- **否决方案**：把进程/消息 HWND/`IsCreated` 存活当登记健康；依赖应用重启；只等待 `TaskbarCreated`；吞掉重建异常；无限或无后验查询的重试；把 1 分钟 watchdog 当同步完成条件；无证据升级预览包；在现有公开恢复接缝足够时重写完整通知图标消息宿主。
+- **新增失败模式**：TaskbarCreated、Resume、Unlock 与 watchdog 同时触发；菜单嵌套消息循环中重建；上一轮 retry 在新一轮或 Dispose 后迟到；`TryRemove` 未获 Shell 确认但 Create 可继续；Create 抛错但 Shell 已部分成功；Shell 长期不可用。实现先占有状态再执行副作用，以单 Dispatcher scheduler、generation、菜单阻塞、后验结果优先、失败聚合和每轮有界次数限制影响。1 分钟/250 ms/退避序列是工程侧可调健康预算，不是产品语义或成功判据。
+- **决定 / 最后验证**：2026-09-02 / 2026-09-02。
+- **状态**：active；根故障机制、故障注入、真实 Shell 删除自愈、全量测试和自包含部署均已验证，用户反馈基础交互测试基本通过。真实 Modern Standby/睡眠、Unlock 与用户触发 Explorer 重启的物理事件矩阵尚未执行，不能由受控删除门禁或基础交互冒充。

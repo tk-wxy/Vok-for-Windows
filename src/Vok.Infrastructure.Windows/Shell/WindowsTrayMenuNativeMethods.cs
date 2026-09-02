@@ -61,14 +61,10 @@ internal sealed unsafe partial class WindowsTrayMenuNativeMethods
         Guid iconId,
         out TrayMenuPoint anchor)
     {
-        var identifier = new NotifyIconIdentifier
-        {
-            Size = (uint)Marshal.SizeOf<NotifyIconIdentifier>(),
-            Window = ownerWindow,
-            Id = 0,
-            IconId = iconId,
-        };
-        if (ShellNotifyIconGetRect(in identifier, out var rectangle) < 0)
+        if (WindowsTrayRegistrationNativeMethods.GetIconRectangle(
+                ownerWindow,
+                iconId,
+                out var rectangle) < 0)
         {
             anchor = default;
             return false;
@@ -130,26 +126,4 @@ internal sealed unsafe partial class WindowsTrayMenuNativeMethods
     private static Win32Exception CreateLastErrorException(string message) =>
         new(Marshal.GetLastPInvokeError(), message);
 
-    [LibraryImport("shell32.dll", EntryPoint = "Shell_NotifyIconGetRect")]
-    private static partial int ShellNotifyIconGetRect(
-        in NotifyIconIdentifier identifier,
-        out NativeRectangle iconLocation);
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct NotifyIconIdentifier
-    {
-        public uint Size;
-        public nint Window;
-        public uint Id;
-        public Guid IconId;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct NativeRectangle
-    {
-        public int Left;
-        public int Top;
-        public int Right;
-        public int Bottom;
-    }
 }

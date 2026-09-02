@@ -74,9 +74,9 @@
 
 - [ ] R27：不能以 `TaskbarIcon.IsCreated`、`H.NotifyIcon` 消息窗口仍存在或 Vok 热键仍工作，推断 Windows Shell 仍持有通知图标。长期运行恢复必须以图标 GUID 调用 `Shell_NotifyIconGetRect` 或等价真实 Shell 结果核验；任务栏重建/会话恢复后的重新注册失败必须可观察并有有界重试，不能静默吞错，也不能靠应用重启冒充根治。
   - 范围：托盘图标长期运行、Explorer/任务栏重建、睡眠/唤醒、`H.NotifyIcon.Wpf` 与应用降级启动。
-  - 证据：2026-09-02 旧版 PID 14120 的快捷键与 WPF 主窗正常，`H.NotifyIcon_*` HWND 仍存活，但任务栏可见区、溢出区和 NotifyIconSettings 均无该实例，正确 GUID 的 `Shell_NotifyIconGetRect` 返回 `0x80004005`。该进程启动后经历多次 Modern Standby/睡眠恢复，未发现 Explorer/ShellExperienceHost 进程崩溃；无法精确归因到某一次恢复。固定依赖 `H.NotifyIcon.Wpf 2.4.1` 只在 `TaskbarCreated` 尝试重建且静默忽略异常，Vok 自身没有后验健康核验。替换为 PID 15992 后，同一 GUID 查询返回成功且 UI Automation 在溢出区识别到 `Vok`，证明缺失的是 Shell 登记而非进程/热键生命周期。
+  - 证据：2026-09-02 旧版 PID 14120 的快捷键与 WPF 主窗正常，`H.NotifyIcon_*` HWND 仍存活，但任务栏可见区、溢出区和 NotifyIconSettings 均无该实例，正确 GUID 的 `Shell_NotifyIconGetRect` 返回 `0x80004005`。该进程启动后经历多次 Modern Standby/睡眠恢复，未发现 Explorer/ShellExperienceHost 进程崩溃；无法精确归因到某一次恢复。固定依赖 `H.NotifyIcon.Wpf 2.4.1` 只在 `TaskbarCreated` 尝试重建且静默忽略异常，Vok 自身没有后验健康核验。替换为 PID 15992 后，同一 GUID 查询返回成功且 UI Automation 在溢出区识别到 `Vok`，证明缺失的是 Shell 登记而非进程/热键生命周期。§25 实现后，集成门禁原生删除测试图标登记并确认库的 `IsCreated` 仍为 true，随后同 PID 自动恢复；故障注入覆盖 watchdog、五次耗尽、菜单阻塞、跨代/同代迟到、Dispose 与后验成功优先。65/65 + 364/364 共 429/429 通过。真实部署 PID 28424 的 Vok 登记也被可逆删除为 `0x80004005`，一分钟 watchdog 无重启恢复为 `0x00000000`，热键仍被该实例占有。
   - 最后验证：2026-09-02。
-  - 状态：active；故障已复现并通过进程重启恢复，但根因修复尚未实现。后续必须以事件驱动重建、真实 Shell 复核和失败测试收口，不能把本次重启记为修复完成。
+  - 状态：active；根故障机制、真实 Shell 删除自愈、有界失败与自包含部署已验证，用户反馈基础交互测试基本通过，方案见 `decisions.md §25`。真实 Modern Standby/睡眠、会话 Unlock 和用户触发 Explorer 重启的物理事件矩阵仍未执行；这部分不得以受控删除门禁或基础交互冒充通过。
 
 ### 输入与热键
 
