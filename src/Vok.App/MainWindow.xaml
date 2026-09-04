@@ -4,6 +4,7 @@
         xmlns:automation="clr-namespace:System.Windows.Automation;assembly=PresentationCore"
         xmlns:launcher="clr-namespace:Vok.Features.Launcher"
         xmlns:clipboard="clr-namespace:Vok.Features.Clipboard"
+        xmlns:stage="clr-namespace:Vok.Features.Stage"
         xmlns:settings="clr-namespace:Vok.Features.Settings"
         Title="Vok"
         WindowStyle="None"
@@ -182,23 +183,8 @@
               Grid.Column="1"
               BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
               BorderThickness="0,0,1,0"
-              automation:AutomationProperties.Name="中转站预留区域">
-        <Grid>
-          <Grid.RowDefinitions>
-            <RowDefinition Height="24" />
-            <RowDefinition Height="*" />
-          </Grid.RowDefinitions>
-          <Border Padding="16,0"
-                  BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
-                  BorderThickness="0,0,0,1">
-            <TextBlock Text="中转站"
-                       FontSize="12"
-                       FontWeight="SemiBold"
-                       VerticalAlignment="Center" />
-          </Border>
-          <!-- 中转站内容区本轮保持为空。 -->
-          <Grid Grid.Row="1" />
-        </Grid>
+              automation:AutomationProperties.Name="中转站区域">
+        <stage:StageView x:Name="StagePanel" />
       </Border>
 
       <Border x:Name="ClipboardRegion"

@@ -24,6 +24,7 @@ using Vok.Presentation;
 using Vok.Features.Settings;
 using Vok.Features.Launcher;
 using Vok.Features.Clipboard;
+using Vok.Features.Stage;
 using Vok.Hotkeys;
 
 namespace Vok;
@@ -59,6 +60,8 @@ public partial class App : Application
         await launcher.InitializeAsync();
         var clipboard = _services.GetRequiredService<ClipboardViewModel>();
         await clipboard.InitializeAsync();
+        var stage = _services.GetRequiredService<StageViewModel>();
+        await stage.InitializeAsync();
         var window = _services.GetRequiredService<MainWindow>();
         var controller = _services.GetRequiredService<WorkspaceController>();
         _ = _services.GetRequiredService<LauncherActionController>();
@@ -162,6 +165,7 @@ public partial class App : Application
         services.AddSingleton<SettingsViewModel>();
         services.AddSingleton<LauncherLayoutProfileCache>();
         services.AddSingleton<LauncherViewModel>();
+        services.AddSingleton<StageViewModel>();
         services.AddSingleton(provider =>
         {
             var images = provider.GetRequiredService<ClipboardImageFeature>();

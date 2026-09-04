@@ -16,6 +16,7 @@ using Vok.Core.Launcher;
 using Vok.Features.Settings;
 using Vok.Features.Launcher;
 using Vok.Features.Clipboard;
+using Vok.Features.Stage;
 using Vok.Core.Platform;
 using Vok.Core.Clipboard;
 using Vok.Hotkeys;
@@ -284,6 +285,9 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                 Assert.Equal(launcher.ActualHeight, dropOverlay.ActualHeight, precision: 3);
                 Assert.False(launcherList.IsHitTestVisible);
                 CaptureWindowIfRequested(window, "workbench-launcher-drop-light.png");
+                launcher.SetExternalDragActive(isActive: true, canDrop: false);
+                Assert.Equal(Visibility.Collapsed, dropOverlay.Visibility);
+                Assert.False(launcherList.IsHitTestVisible);
                 launcher.SetExternalDragActive(isActive: false, canDrop: false);
                 Assert.True(launcherList.IsHitTestVisible);
 
@@ -317,7 +321,22 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
 
                 var stage = Assert.IsType<Border>(window.FindName("StageRegion"));
                 var clipboard = Assert.IsType<Border>(window.FindName("ClipboardRegion"));
-                AssertPlaceholderBodyIsEmpty(stage);
+                var stagePanel = Assert.IsType<StageView>(stage.Child);
+                var stageLayout = Assert.IsType<Grid>(stagePanel.Content);
+                Assert.Collection(
+                    stageLayout.RowDefinitions,
+                    row => Assert.Equal(new GridLength(24), row.Height),
+                    row => Assert.Equal(new GridLength(1, GridUnitType.Star), row.Height),
+                    row => Assert.Equal(new GridLength(28), row.Height));
+                var stageList = Assert.IsType<ListBox>(stagePanel.FindName("StageItemsList"));
+                Assert.True(VirtualizingPanel.GetIsVirtualizing(stageList));
+                Assert.Equal(
+                    VirtualizationMode.Recycling,
+                    VirtualizingPanel.GetVirtualizationMode(stageList));
+                Assert.Equal(ScrollUnit.Pixel, VirtualizingPanel.GetScrollUnit(stageList));
+                Assert.Equal(
+                    ScrollBarVisibility.Hidden,
+                    ScrollViewer.GetVerticalScrollBarVisibility(stageList));
                 var clipboardPanel = Assert.IsType<ClipboardView>(clipboard.Child);
                 var clipboardLayout = Assert.IsType<Grid>(clipboardPanel.Content);
                 Assert.Collection(
@@ -615,15 +634,6 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
         });
         Dispatcher.PushFrame(frame);
         return focused;
-    }
-
-    private static void AssertPlaceholderBodyIsEmpty(Border region)
-    {
-        var layout = Assert.IsType<Grid>(region.Child);
-        AssertPanelUsesCompactFixedHeaderAndFlexibleBody(layout);
-        Assert.Equal(2, layout.Children.Count);
-        var body = Assert.IsType<Grid>(layout.Children[1]);
-        Assert.Empty(body.Children);
     }
 
     private static void AssertLauncherCardsFillFourColumnLayout(

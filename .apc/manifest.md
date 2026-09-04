@@ -58,7 +58,7 @@
 
 ## 项目结构
 
-M0 生产宿主、M1 启动台和单屏范围的 M2 剪贴板已完成并冻结；项目现进入 M3 中转站开发，产品契约已锁定。“外部拖动中呼出并在 Stage 松手持久落项”的 M3.MVP1 数据内核已经完成，真实 Stage UI 与窗口级入站路由尚未接入。当前实际结构如下：
+M0 生产宿主、M1 启动台和单屏范围的 M2 剪贴板已完成并冻结；项目现进入 M3 中转站开发，产品契约已锁定。“外部拖动中呼出并在 Stage 松手持久落项”的 M3.MVP1 数据内核与 M3.MVP2 Stage UI/唯一入站路由已经完成，真实产品库副本、发布候选和 Explorer/桌面物理闭环尚未验收。当前实际结构如下：
 
 ```text
 src/
@@ -71,7 +71,10 @@ src/
 docs/
 ├── ARCHITECTURE.md             # 目标架构、数据流、门禁和实施阶段
 ├── M1_LAUNCHER_PLAN.md         # 已完成的启动台实现与验收记录
-└── M2_CLIPBOARD_PLAN.md        # 已归档的剪贴板实现与验收记录
+├── M2_CLIPBOARD_PLAN.md        # 已归档的剪贴板实现与验收记录
+├── M3_STAGE_PLAN.md            # 中转站产品契约、完整路线与分期门禁
+├── M3_STAGE_MVP1_PLAN.md       # 已完成的 Stage 数据内核实施与验收记录
+└── M3_STAGE_MVP2_PLAN.md       # 下一阶段 Stage 展示与统一入站路由实施规格
 tools/
 ├── Probe-M0.ps1                # 结构化同代五门禁烟雾探针
 ├── Measure-HostInteraction.ps1 # 固定 PID/HWND 时延与长期资源探针
@@ -79,7 +82,7 @@ tools/
 .apc/                           # 项目知识与开发协议
 ```
 
-中转站下一步接真实 Stage UI 与唯一窗口级 `WorkspaceFileDropRouter`，消费已经验证的独立 Core/schema 7 入站仓储；出站 OLE Gate 后置到拖出功能之前。搜索在正式进入里程碑前继续只保留文档边界。
+中转站下一步进入 M3.MVP3：只读审计真实库状态、在副本验证迁移、生成发布候选并完成 Explorer/桌面物理拖动呼出入站闭环；出站 OLE Gate 后置到拖出功能之前。搜索在正式进入里程碑前继续只保留文档边界。
 
 ## 常用命令
 

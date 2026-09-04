@@ -39,6 +39,7 @@ public partial class LauncherView : UserControl
     private LauncherLayoutProfileCache? _layoutProfiles;
     private bool _pageLoadRequested;
     private bool _externalDragActive;
+    private bool _externalDragTargeted;
     private Button? _pressedTile;
     private LauncherItemViewModel? _pressedItem;
     private Point _pressPoint;
@@ -92,14 +93,16 @@ public partial class LauncherView : UserControl
 
     internal void SetExternalDragActive(bool isActive, bool canDrop)
     {
-        _ = canDrop;
-        if (_externalDragActive == isActive)
+        if (_externalDragActive == isActive && _externalDragTargeted == canDrop)
         {
             return;
         }
 
         _externalDragActive = isActive;
-        DropOverlay.Visibility = isActive ? Visibility.Visible : Visibility.Collapsed;
+        _externalDragTargeted = canDrop;
+        DropOverlay.Visibility = isActive && canDrop
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         LauncherItemsList.IsHitTestVisible = !isActive;
     }
 

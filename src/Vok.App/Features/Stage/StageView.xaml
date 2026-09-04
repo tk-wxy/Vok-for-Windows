@@ -1,0 +1,282 @@
+<UserControl x:Class="Vok.Features.Stage.StageView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:automation="clr-namespace:System.Windows.Automation;assembly=PresentationCore"
+             xmlns:stage="clr-namespace:Vok.Features.Stage"
+             automation:AutomationProperties.Name="中转站">
+  <UserControl.Resources>
+    <Style x:Key="StagePageButtonStyle"
+           TargetType="Button"
+           BasedOn="{StaticResource {x:Type Button}}">
+      <Setter Property="Height" Value="24" />
+      <Setter Property="MinWidth" Value="52" />
+      <Setter Property="Padding" Value="8,0" />
+      <Setter Property="FontSize" Value="10.5" />
+      <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+      <Setter Property="Background" Value="{DynamicResource ControlFillColorDefaultBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+    </Style>
+  </UserControl.Resources>
+
+  <Grid x:Name="StageLayoutRoot"
+        Background="Transparent">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="24" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="28" />
+    </Grid.RowDefinitions>
+
+    <Grid x:Name="StageInteractionSurface"
+          Grid.RowSpan="3">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="24" />
+        <RowDefinition Height="*" />
+        <RowDefinition Height="28" />
+      </Grid.RowDefinitions>
+
+      <Border Padding="16,0"
+              BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
+              BorderThickness="0,0,0,1">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Text="中转站"
+                     FontSize="12"
+                     FontWeight="SemiBold"
+                     VerticalAlignment="Center" />
+          <Border Grid.Column="1"
+                  Margin="8,0,0,0"
+                  Padding="6,1"
+                  VerticalAlignment="Center"
+                  Background="{DynamicResource ControlFillColorDefaultBrush}"
+                  BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                  BorderThickness="1"
+                  CornerRadius="8">
+            <TextBlock Text="{Binding TotalCount, StringFormat={}{0} 项}"
+                       FontSize="9.5"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+          </Border>
+          <TextBlock Grid.Column="2"
+                     Margin="12,0,0,0"
+                     Text="{Binding StatusText}"
+                     FontSize="10.5"
+                     Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                     TextTrimming="CharacterEllipsis"
+                     VerticalAlignment="Center"
+                     ToolTip="{Binding StatusText}" />
+        </Grid>
+      </Border>
+
+      <Grid Grid.Row="1">
+        <ListBox x:Name="StageItemsList"
+                 Margin="8,6,8,0"
+                 Padding="0"
+                 ItemsSource="{Binding Items}"
+                 Background="Transparent"
+                 BorderThickness="0"
+                 Focusable="False"
+                 ScrollViewer.CanContentScroll="True"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 ScrollViewer.VerticalScrollBarVisibility="Hidden"
+                 VirtualizingPanel.IsVirtualizing="True"
+                 VirtualizingPanel.VirtualizationMode="Recycling"
+                 VirtualizingPanel.ScrollUnit="Pixel"
+                 automation:AutomationProperties.Name="中转项目">
+          <ListBox.ItemsPanel>
+            <ItemsPanelTemplate>
+              <VirtualizingStackPanel />
+            </ItemsPanelTemplate>
+          </ListBox.ItemsPanel>
+          <ListBox.ItemContainerStyle>
+            <Style TargetType="ListBoxItem">
+              <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+              <Setter Property="Padding" Value="0" />
+              <Setter Property="Margin" Value="0,0,0,6" />
+              <Setter Property="Background" Value="Transparent" />
+              <Setter Property="BorderThickness" Value="0" />
+              <Setter Property="Focusable" Value="False" />
+              <Setter Property="Template">
+                <Setter.Value>
+                  <ControlTemplate TargetType="ListBoxItem">
+                    <ContentPresenter />
+                  </ControlTemplate>
+                </Setter.Value>
+              </Setter>
+            </Style>
+          </ListBox.ItemContainerStyle>
+          <ListBox.ItemTemplate>
+            <DataTemplate DataType="{x:Type stage:StageItemViewModel}">
+              <Border MinHeight="54"
+                      Padding="10,7"
+                      Background="{DynamicResource LayerFillColorDefaultBrush}"
+                      BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                      BorderThickness="1"
+                      CornerRadius="8"
+                      ToolTip="{Binding TargetValue}"
+                      automation:AutomationProperties.Name="{Binding AutomationName}">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="34" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <Border Width="28"
+                          Height="28"
+                          HorizontalAlignment="Left"
+                          VerticalAlignment="Center"
+                          Background="{DynamicResource ControlFillColorDefaultBrush}"
+                          CornerRadius="7">
+                    <TextBlock Text="{Binding Glyph}"
+                               FontFamily="Segoe Fluent Icons"
+                               FontSize="15"
+                               Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center" />
+                  </Border>
+                  <Grid Grid.Column="1"
+                        Margin="6,0,8,0">
+                    <Grid.RowDefinitions>
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="{Binding DisplayName}"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBlock Grid.Row="1"
+                               Margin="0,2,0,0"
+                               Text="{Binding ParentPath}"
+                               FontSize="10.5"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               TextTrimming="CharacterEllipsis" />
+                  </Grid>
+                  <StackPanel Grid.Column="2"
+                              HorizontalAlignment="Right"
+                              VerticalAlignment="Center">
+                    <TextBlock Text="{Binding TypeText}"
+                               FontSize="9.5"
+                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                    <TextBlock Margin="0,2,0,0"
+                               Text="已固定"
+                               FontSize="9.5"
+                               Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}">
+                      <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                          <Setter Property="Visibility" Value="Collapsed" />
+                          <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsPinned}" Value="True">
+                              <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                          </Style.Triggers>
+                        </Style>
+                      </TextBlock.Style>
+                    </TextBlock>
+                  </StackPanel>
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+
+        <Grid IsHitTestVisible="False">
+          <Grid.Style>
+            <Style TargetType="Grid">
+              <Setter Property="Visibility" Value="Collapsed" />
+              <Style.Triggers>
+                <DataTrigger Binding="{Binding IsEmpty}" Value="True">
+                  <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+              </Style.Triggers>
+            </Style>
+          </Grid.Style>
+          <StackPanel HorizontalAlignment="Center"
+                      VerticalAlignment="Center">
+            <TextBlock Text="&#xE8B7;"
+                       FontFamily="Segoe Fluent Icons"
+                       FontSize="28"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                       HorizontalAlignment="Center" />
+            <TextBlock Margin="0,10,0,0"
+                       Text="将文件、文件夹或快捷方式拖到这里"
+                       FontSize="12"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       TextAlignment="Center" />
+          </StackPanel>
+        </Grid>
+
+        <Grid IsHitTestVisible="False">
+          <Grid.Style>
+            <Style TargetType="Grid">
+              <Setter Property="Visibility" Value="Collapsed" />
+              <Style.Triggers>
+                <DataTrigger Binding="{Binding ShowErrorState}" Value="True">
+                  <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+              </Style.Triggers>
+            </Style>
+          </Grid.Style>
+          <TextBlock Margin="24"
+                     Text="{Binding StatusText}"
+                     FontSize="12"
+                     Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                     TextAlignment="Center"
+                     TextWrapping="Wrap"
+                     HorizontalAlignment="Center"
+                     VerticalAlignment="Center" />
+        </Grid>
+
+        <ProgressBar Height="2"
+                     VerticalAlignment="Top"
+                     IsIndeterminate="True"
+                     IsHitTestVisible="False">
+          <ProgressBar.Style>
+            <Style TargetType="ProgressBar"
+                   BasedOn="{StaticResource {x:Type ProgressBar}}">
+              <Setter Property="Visibility" Value="Collapsed" />
+              <Style.Triggers>
+                <DataTrigger Binding="{Binding IsLoading}" Value="True">
+                  <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+              </Style.Triggers>
+            </Style>
+          </ProgressBar.Style>
+        </ProgressBar>
+      </Grid>
+
+      <Border Grid.Row="2"
+              Padding="8,2"
+              BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
+              BorderThickness="0,1,0,0">
+        <Grid>
+          <Button Style="{StaticResource StagePageButtonStyle}"
+                  HorizontalAlignment="Left"
+                  Content="较新"
+                  Command="{Binding LoadNewerCommand}"
+                  automation:AutomationProperties.Name="显示较新的中转项目" />
+          <TextBlock Text="{Binding PageSummaryText}"
+                     FontSize="10.5"
+                     Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                     HorizontalAlignment="Center"
+                     VerticalAlignment="Center" />
+          <Button Style="{StaticResource StagePageButtonStyle}"
+                  HorizontalAlignment="Right"
+                  Content="较早"
+                  Command="{Binding LoadOlderCommand}"
+                  automation:AutomationProperties.Name="显示较早的中转项目" />
+        </Grid>
+      </Border>
+    </Grid>
+
+    <Border x:Name="DropOverlay"
+            Grid.RowSpan="3"
+            BorderBrush="{DynamicResource AccentFillColorDefaultBrush}"
+            BorderThickness="2"
+            CornerRadius="0"
+            Panel.ZIndex="20"
+            IsHitTestVisible="False"
+            Visibility="Collapsed" />
+  </Grid>
+</UserControl>

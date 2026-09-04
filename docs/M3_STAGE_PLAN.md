@@ -1,6 +1,6 @@
 # M3 中转站产品契约与实施计划
 
-> **状态（2026-09-04）**：产品边界和长期路线已确认，业务代码尚未创建。当前交付被进一步收窄为“外部拖着文件呼出 Vok，在中转站松手后条目持久落入”的入站 MVP；取用、拖出和管理动作全部后置。200 条是首期产品开放上限，不是 schema、仓储或分页的架构上限。当前 429/429 自动测试是进入 M3 的回归基线；下一步先实现入站引用模型与 schema 7，不再以前置出站 OLE 探针阻塞 MVP。
+> **状态（2026-09-04）**：产品边界和长期路线已确认，当前交付收窄为“外部拖着文件呼出 Vok，在中转站松手后条目持久落入”的入站 MVP；取用、拖出和管理动作全部后置。M3.MVP1 数据内核与 M3.MVP2 真实 Stage 展示/唯一窗口级入站 Router 均已完成，Release 466/466 自动测试通过；下一步 M3.MVP3 只做实库副本、发布候选和 Explorer/桌面物理闭环。200 条是首期产品开放上限，不是 schema、仓储或分页的架构上限；出站 OLE 探针继续后置到拖出功能之前。
 
 ## 0. 当前最小 MVP（本轮唯一交付范围）
 
@@ -334,9 +334,13 @@ INDEX stage_items_order ON stage_items(sort_order, id)
 
 ### M3.MVP2：真实 Stage 展示与唯一入站路由
 
+状态：已于 2026-09-04 完成实现与自动门禁；固定 64 项 keyset 页面、真实 Stage WPF、唯一三态 Router、异步入站状态、生命周期与 DI 已落地，Release 71/71 Core + 395/395 集成共 466/466，构建 0 warning / 0 error。未读取真实产品库、生成发布候选或执行 Explorer/桌面物理验收。
+
 交付：用真实 `StageView` 替换中转站空区域，接入分页展示和入站状态；把 `MainWindow` 当前面向 Launcher 的拖放代码收敛为唯一 `WorkspaceFileDropRouter`，由 Launcher/Stage target adapter 分发。现有 Workspace 外部拖放租约继续由宿主拥有，不创建第二套租约。
 
 门禁：跨 Launcher/Stage/无目标区域移动只更新一个命中目标；Enter/Over 不读取外国数据，Drop 最多读取一次；Drop 先认领并清理视觉再异步入库；DragLeave、Esc/取消、隐藏、设置、关闭、新 DragEnter 和异常均幂等收口；源文件零改动。
+
+固定大小页面状态、WPF 结构、Router 终态顺序、目标 adapter、实施检查点和自动验收矩阵见 `M3_STAGE_MVP2_PLAN.md`。
 
 ### M3.MVP3：入站 MVP 验收
 

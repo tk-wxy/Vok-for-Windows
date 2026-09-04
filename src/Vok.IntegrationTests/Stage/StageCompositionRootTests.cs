@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Vok.Core.Stage;
+using Vok.Features.Stage;
 using Vok.Infrastructure.Windows.Launcher;
 using Xunit;
 
@@ -20,6 +21,8 @@ public sealed class StageCompositionRootTests
             service.ServiceType == typeof(IStageRepository));
         Assert.Single(services, static service =>
             service.ServiceType == typeof(IStageFileService));
+        Assert.Single(services, static service =>
+            service.ServiceType == typeof(StageViewModel));
 
         using var provider = services.BuildServiceProvider(new ServiceProviderOptions
         {
@@ -30,6 +33,9 @@ public sealed class StageCompositionRootTests
 
         Assert.NotNull(provider.GetRequiredService<IStageRepository>());
         Assert.NotNull(provider.GetRequiredService<IStageFileService>());
+        Assert.Same(
+            provider.GetRequiredService<StageViewModel>(),
+            provider.GetRequiredService<StageViewModel>());
         Assert.Same(
             shellExecutor,
             provider.GetRequiredService<WindowsShellStaExecutor>());

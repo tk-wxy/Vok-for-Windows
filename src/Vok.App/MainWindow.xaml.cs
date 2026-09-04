@@ -1,12 +1,12 @@
 using System.ComponentModel;
-using System.Linq;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Threading;
 using Vok.Core.Workspace;
-using Vok.Features.Launcher;
 using Vok.Features.Clipboard;
+using Vok.Features.Launcher;
+using Vok.Features.Stage;
 using Vok.Hosting;
 using Vok.Presentation;
 
@@ -16,19 +16,17 @@ public partial class MainWindow : Window, IWorkspaceWindow
 {
     private Application? _application;
     private readonly MainWindowViewModel _viewModel;
-    private readonly LauncherViewModel? _launcherViewModel;
-    private long _nextExternalDragId;
-    private long _activeExternalDragId;
+    private readonly WorkspaceFileDropRouter _fileDropRouter;
 
     public MainWindow(
         MainWindowViewModel viewModel,
         LauncherLayoutProfileCache launcherLayoutProfiles,
         LauncherViewModel? launcherViewModel = null,
-        ClipboardViewModel? clipboardViewModel = null)
+        ClipboardViewModel? clipboardViewModel = null,
+        StageViewModel? stageViewModel = null)
     {
         InitializeComponent();
         _viewModel = viewModel;
-        _launcherViewModel = launcherViewModel;
         DataContext = viewModel;
         if (launcherViewModel is not null)
         {
@@ -38,6 +36,23 @@ public partial class MainWindow : Window, IWorkspaceWindow
         {
             ClipboardPanel.DataContext = clipboardViewModel;
         }
+        if (stageViewModel is not null)
+        {
+            StagePanel.DataContext = stageViewModel;
+        }
+
+        _fileDropRouter = new WorkspaceFileDropRouter(
+            [
+                new LauncherWorkspaceFileDropTarget(LauncherPanel, launcherViewModel),
+                new StageWorkspaceFileDropTarget(StagePanel, stageViewModel),
+            ],
+            dragId => ExternalDragStarted?.Invoke(
+                this,
+                new WorkspaceExternalDragStartedEventArgs(dragId)),
+            (dragId, accepted) => ExternalDragEnded?.Invoke(
+                this,
+                new WorkspaceExternalDragEndedEventArgs(dragId, accepted)),
+            () => IsVisible);
         LauncherPanel.UseLayoutProfiles(launcherLayoutProfiles);
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
         IsVisibleChanged += OnWindowIsVisibleChanged;
@@ -100,7 +115,7 @@ public partial class MainWindow : Window, IWorkspaceWindow
 
     protected override void OnClosed(EventArgs e)
     {
-        CancelExternalFileDrag();
+        _fileDropRouter.Dispose();
         IsVisibleChanged -= OnWindowIsVisibleChanged;
         _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
         if (_application is not null)
@@ -145,6 +160,7 @@ public partial class MainWindow : Window, IWorkspaceWindow
         else if (e.PropertyName == nameof(MainWindowViewModel.IsSettingsVisible) &&
                  _viewModel.IsSettingsVisible)
         {
+            CancelExternalFileDrag();
             LauncherPanel.CancelAllInteractions();
         }
     }
@@ -154,6 +170,7 @@ public partial class MainWindow : Window, IWorkspaceWindow
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
+        CancelExternalFileDrag();
         if (Application.Current?.Dispatcher.HasShutdownStarted == true)
         {
             return;
@@ -197,9 +214,9 @@ public partial class MainWindow : Window, IWorkspaceWindow
 
     private void OnPreviewDragEnter(object sender, DragEventArgs e)
     {
-        var canDrop = IsOverLauncher(e);
-        var acceptedFormat = BeginExternalFileDrag(e.Data, canDrop);
-        e.Effects = acceptedFormat && canDrop
+        var acceptedFormat = _fileDropRouter.Begin(e.Data, ResolveDropTarget(e));
+        e.Effects = acceptedFormat &&
+            _fileDropRouter.CurrentTarget is not WorkspaceFileDropTargetKind.None
             ? DragDropEffects.Copy
             : DragDropEffects.None;
         e.Handled = true;
@@ -207,8 +224,7 @@ public partial class MainWindow : Window, IWorkspaceWindow
 
     private void OnPreviewDragOver(object sender, DragEventArgs e)
     {
-        var canDrop = _activeExternalDragId != 0 && IsOverLauncher(e);
-        UpdateExternalFileDrag(canDrop);
+        var canDrop = _fileDropRouter.Update(ResolveDropTarget(e));
         e.Effects = canDrop ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
     }
@@ -224,151 +240,67 @@ public partial class MainWindow : Window, IWorkspaceWindow
 
     private void OnPreviewDrop(object sender, DragEventArgs e)
     {
-        var result = CompleteExternalFileDrop(
-            e.Data,
-            _launcherViewModel is not null && IsOverLauncher(e));
+        var result = _fileDropRouter.Complete(e.Data, ResolveDropTarget(e));
         e.Effects = result.Accepted ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
-
-        if (result.Accepted && _launcherViewModel is not null)
-        {
-            _ = _launcherViewModel.AddDroppedPathsAsync(result.Paths);
-        }
     }
 
     internal bool BeginExternalFileDrag(IDataObject data, bool canDrop)
     {
-        ArgumentNullException.ThrowIfNull(data);
-        LauncherPanel.CancelAllInteractions();
-
-        // A fresh DragEnter is a terminal boundary for any source that failed
-        // to deliver the preceding Drop/DragLeave callback.
-        var replacedActiveDrag = _activeExternalDragId != 0;
-        CancelExternalFileDrag();
-        if (replacedActiveDrag && !IsVisible)
-        {
-            // Ending the previous lease can synchronously honor a deferred
-            // deactivation and hide the window. Do not create an orphaned UI
-            // drag after that reentrant lifecycle transition.
-            return false;
-        }
-
-        if (!HasFileDrop(data))
-        {
-            return false;
-        }
-
-        _activeExternalDragId = Interlocked.Increment(ref _nextExternalDragId);
-        ExternalDragStarted?.Invoke(
-            this,
-            new WorkspaceExternalDragStartedEventArgs(_activeExternalDragId));
-        UpdateExternalFileDrag(canDrop);
-        return true;
+        return _fileDropRouter.Begin(
+            data,
+            canDrop
+                ? WorkspaceFileDropTargetKind.Launcher
+                : WorkspaceFileDropTargetKind.None);
     }
 
     internal void UpdateExternalFileDrag(bool canDrop)
     {
-        if (_activeExternalDragId == 0)
-        {
-            return;
-        }
-
-        LauncherPanel.SetExternalDragActive(isActive: true, canDrop);
+        _ = _fileDropRouter.Update(
+            canDrop
+                ? WorkspaceFileDropTargetKind.Launcher
+                : WorkspaceFileDropTargetKind.None);
     }
 
     internal WorkspaceExternalFileDropResult CompleteExternalFileDrop(
         IDataObject data,
         bool canDrop)
     {
-        ArgumentNullException.ThrowIfNull(data);
-        var dragId = ClaimExternalFileDrag();
-        if (dragId == 0)
-        {
-            return WorkspaceExternalFileDropResult.Rejected;
-        }
-
-        IReadOnlyList<string> paths = [];
-        var accepted = canDrop && TrySnapshotFileDrop(data, out paths);
-        ExternalDragEnded?.Invoke(
-            this,
-            new WorkspaceExternalDragEndedEventArgs(dragId, accepted));
-        return accepted
-            ? new WorkspaceExternalFileDropResult(true, paths)
-            : WorkspaceExternalFileDropResult.Rejected;
+        return _fileDropRouter.Complete(
+            data,
+            canDrop
+                ? WorkspaceFileDropTargetKind.Launcher
+                : WorkspaceFileDropTargetKind.None);
     }
 
     internal void CancelExternalFileDrag()
     {
-        var dragId = ClaimExternalFileDrag();
-        if (dragId != 0)
-        {
-            ExternalDragEnded?.Invoke(
-                this,
-                new WorkspaceExternalDragEndedEventArgs(dragId, dropAccepted: false));
-        }
+        _fileDropRouter.Cancel();
     }
 
-    private bool IsOverLauncher(DragEventArgs e)
+    private WorkspaceFileDropTargetKind ResolveDropTarget(DragEventArgs e)
     {
-        if (_viewModel.IsSettingsVisible || !LauncherPanel.IsVisible)
+        if (_viewModel.IsSettingsVisible)
         {
-            return false;
+            return WorkspaceFileDropTargetKind.None;
         }
 
-        var point = e.GetPosition(LauncherPanel);
+        if (LauncherPanel.IsVisible && IsPointInside(e, LauncherPanel))
+        {
+            return WorkspaceFileDropTargetKind.Launcher;
+        }
+
+        return StagePanel.IsVisible && IsPointInside(e, StagePanel)
+            ? WorkspaceFileDropTargetKind.Stage
+            : WorkspaceFileDropTargetKind.None;
+    }
+
+    private static bool IsPointInside(DragEventArgs e, FrameworkElement element)
+    {
+        var point = e.GetPosition(element);
         return point.X >= 0 && point.Y >= 0 &&
-            point.X <= LauncherPanel.ActualWidth &&
-            point.Y <= LauncherPanel.ActualHeight;
-    }
-
-    private static bool HasFileDrop(IDataObject data)
-    {
-        try
-        {
-            return data.GetDataPresent(DataFormats.FileDrop, autoConvert: true);
-        }
-        catch (Exception exception) when (
-            exception is System.Runtime.InteropServices.COMException or InvalidOperationException)
-        {
-            return false;
-        }
-    }
-
-    private static bool TrySnapshotFileDrop(
-        IDataObject data,
-        out IReadOnlyList<string> paths)
-    {
-        try
-        {
-            if (data.GetData(DataFormats.FileDrop, autoConvert: true) is string[] values)
-            {
-                paths = values.ToArray();
-                return paths.Count != 0;
-            }
-        }
-        catch (Exception exception) when (
-            exception is System.Runtime.InteropServices.COMException or InvalidOperationException)
-        {
-            // A foreign OLE source can withdraw a format while the drag is terminating.
-        }
-
-        paths = [];
-        return false;
-    }
-
-    private long ClaimExternalFileDrag()
-    {
-        var dragId = _activeExternalDragId;
-        if (dragId == 0)
-        {
-            return 0;
-        }
-
-        // Claim before visual and lifecycle side effects so reentrant or late
-        // terminal callbacks cannot complete the same drag twice.
-        _activeExternalDragId = 0;
-        LauncherPanel.SetExternalDragActive(isActive: false, canDrop: false);
-        return dragId;
+            point.X < element.ActualWidth &&
+            point.Y < element.ActualHeight;
     }
 
     private sealed class DispatcherTimerRegistration(
@@ -398,11 +330,4 @@ public partial class MainWindow : Window, IWorkspaceWindow
         }
     }
 
-}
-
-internal sealed record WorkspaceExternalFileDropResult(
-    bool Accepted,
-    IReadOnlyList<string> Paths)
-{
-    public static WorkspaceExternalFileDropResult Rejected { get; } = new(false, []);
 }
