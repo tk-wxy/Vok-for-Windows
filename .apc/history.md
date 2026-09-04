@@ -2,6 +2,13 @@
 
 > 归档超过滚动窗口的 `memory.md §0A` 完整会话。默认不读取，仅在取证时搜索；按时间从新到旧排列。
 
+### 会话 2026-09-02 - 托盘 Shell 登记自愈闭环
+
+- 根因复核确认：通知图标真正状态属于 Explorer/Shell，库的 `IsCreated` 只记录本地调用；`H.NotifyIcon.Wpf 2.4.1` 又会在 TaskbarCreated 恢复时吞掉异常，Vok 原先没有后验检查，导致一次外部登记丢失永久持续到重启。
+- 保留现有通知图标与原生 HMENU，新增实际 HWND/GUID Shell 探针和 UI-STA 恢复 coordinator。启动、TaskbarCreated、Resume、Unlock 与 1 分钟 watchdog 请求检查；确定缺失后最多五次有界重建，每次都以后验 Shell 查询定成功，菜单打开、跨代迟到、Dispose 与同轮重入均有门禁。
+- 自动测试原生删除测试图标登记并钉死“Shell 缺失但 IsCreated=true”的原机制；故障注入覆盖 watchdog 复核、耗尽、后验优先和各类竞态。Release 65/65 + 364/364 共 429/429、自包含 win-x64 发布通过。
+- 将 PID 15992 精确替换为 `artifacts/r27-publish/Vok.exe` PID 28424；真实 Vok 登记被可逆删除后从 `0x80004005` 无重启恢复为 `0x00000000`，进程响应且 Ctrl+Space 保持占用。用户反馈基础交互测试基本通过；真实睡眠/Unlock/Explorer 重启物理矩阵仍待方便时执行。
+
 ### 会话 2026-09-02 - M2.4 实库迁移与托盘登记恢复
 
 - 用户报告托盘无 Vok 图标但快捷键仍能呼出。只读诊断确认旧版 PID 14120 仍响应且 `H.NotifyIcon_*` HWND 存活，但 Windows 可见/溢出通知区均无 Vok，正确 GUID 的 `Shell_NotifyIconGetRect` 返回 `0x80004005`；这是 Shell 登记丢失，不是进程退出或图标被折叠。进程期间存在多次睡眠/Modern Standby 恢复，但缺少持久错误，不能精确锁定哪一次边沿。

@@ -11,12 +11,20 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏范围的 M2.0–M2.4 已完成并归档冻结；项目按 `decisions.md §26` 进入 M3 中转站开发基线，Stage 代码尚未创建。主界面的启动台/剪贴板滚动条和设置界面视觉优化已在源码完成，尚未替换当前运行的 `artifacts/r27-publish/Vok.exe`（PID 28424）；M2 归档发布仍位于 `artifacts/m2-archive-20260903-publish/Vok.exe`。
-- **最近进展**：启动台与剪贴板改为隐藏滚动条但保留像素自由滚动；顶栏由固定 320/弹性/320 改为与主体一致的 1:2:1，使右上设置按钮在 520 DIP 窄窗口仍完整；设置弹窗改为响应式最大尺寸，并统一 16/12/10 DIP 层级圆角、卡片、导航选中态和图标按钮。Release 65/65 Core + 364/364 Windows/WPF 共 429/429通过，浅/深真实 WPF 渲染及任意 37.5 DIP 滚动偏移已复核。
-- **下一步**：为中转站编写产品契约与 Gate 0，先锁定文件引用、容量/保留、窗口级 OLE 拖入拖出、操作效果和失败语义，再实施文件型最小纵向切片；此阶段不直接复用 `Clipboard*` 模型，也不提前接入 Stage 图片资产。
-- **已知问题**：R27 的根故障机制和 missed-event watchdog 已验证，但真实 Modern Standby/睡眠、Unlock、Explorer 重启信号仍未物理执行。合法 PNG 轻量 header 仍可能在关闭剪贴板后 codec 失败且没有 DIB 事后后备；真实产品清空、物理磁盘耗尽和跨屏/多屏仍未验证。既有人工验收 PNG/截图继续保留。
+- **状态**：M0、M1 与单屏范围的 M2.0–M2.4 已完成并归档冻结；M3 中转站产品契约和实施路线已按 `decisions.md §27`、`docs/M3_STAGE_PLAN.md` 锁定，Stage 业务代码与 WPF/OLE Gate 0 尚未创建。2026-09-04 只读检查显示原 `artifacts/r27-publish/Vok.exe` PID 28424 已停止，当前运行的是源码 Release 输出 `src/Vok.App/bin/Release/net10.0-windows/Vok.exe` PID 16900；本会话未启动、停止或替换实例。
+- **最近进展**：中转站确定为文件引用型可消费货架：默认 50/首期产品上限 200，固定项计容量，批量超限整批拒绝，重复 canonical path 回顶；成功取用/Copy-only OLE 拖出消费未固定项，仅复制、失败和取消保留。用户进一步确认 200 不应成为永久架构上限；首版须以产品策略/存储契约分离、64 位稀疏排序、keyset、有界 VM 页面窗口和 10,000 条结构门禁保证后续扩容不迁移 Stage 主结构。实现仍采用独立 Stage 聚合/schema 7、单一窗口级入站 router、现有 SQLite/Shell/Clipboard/Workspace 资源所有者和交付/清理双结果，并拆为 M3.0–M3.5。此次仅改文档，429/429 仍是最近一次已验证自动基线，未因文档变更重跑。
+- **下一步**：执行 M3.0 隔离 `Vok.StageDragProbe`：真实验证 WPF UI STA 的 `DoDragDrop(Copy)` 在 OLE 开始后隐藏源 HWND、成功/取消/自吞拒绝和资源归零；只保留通过的 WPF 或窄原生 UI-STA 分支，再进入 M3.1 Core、schema 7 与仓储。
+- **已知问题**：隐藏 WPF 源 HWND 后的出站 OLE 仍未物理验证，当前不能宣称 Stage 拖出方案可用。R27 的根故障机制和 missed-event watchdog 已验证，但真实 Modern Standby/睡眠、Unlock、Explorer 重启信号仍未物理执行。合法 PNG 轻量 header 仍可能在关闭剪贴板后 codec 失败且没有 DIB 事后后备；真实产品清空、物理磁盘耗尽和跨屏/多屏仍未验证。既有人工验收 PNG/截图继续保留。
 
 ## §0A 最近会话
+
+### 会话 2026-09-04 - M3 中转站产品契约与实施计划
+
+- 用户认可前瞻功能与架构分析并要求形成实施计划。`docs/M3_STAGE_PLAN.md` 已锁定 Stage 为引用型可消费货架，首期只做文件/目录/`.lnk`：默认 50、产品上限 200，固定计容量，批量原子拒绝、重复回顶、跨重启保留和 Missing 动态展示。
+- 用户随后确认前期 200 合理，但要求当前架构支持后续高上限。计划已明确 200 只属于组合根策略，不进入 schema/仓储；首版使用 64 位计数与稀疏排序、keyset 和有界 VM 页面窗口，以 10,000 条门禁证明结构，并把未来更高规模限定为策略与性能门禁调整，而非 Stage 主结构迁移。
+- 取用、仅复制和拖出使用 Copy-only；只有真实交付完成才消费未固定项，交付与数据库清理分开收口。Stage 保持独立 Core 聚合/schema 7/仓储/VM，复用现有 SQLite、Shell STA、Clipboard STA、Workspace 目标恢复和输入注入，不复用 `Clipboard*` 业务模型。
+- 实施拆为 M3.0–M3.5：先以隔离 WPF/OLE 探针证明源窗隐藏后的 `DoDragDrop`，再依次接 Core/仓储、统一窗口级入站 router/UI、点击取用、正式拖出和收口归档。`decisions.md §27` 与架构状态已同步；本次未创建 Stage 代码、未运行自动测试或改变运行实例。
+- 只读进程检查发现旧 PID 28424 已停止，当前 Vok 为源码 Release 输出 PID 16900；该变化并非本会话执行。429/429 保持为进入 M3 的最近已验证回归基线。
 
 ### 会话 2026-09-03 - 工作台滚动条与设置界面视觉优化
 
@@ -30,13 +38,6 @@
 - 生成 `artifacts/m2-archive-20260903-publish/Vok.exe` 自包含 win-x64 发布；没有替换当前 PID 28424、执行产品清空或改写真实用户库。首次联网还原仅因 nuget.org 漏洞审计不可达产生 NU1900，使用本地锁定包并仅对本次还原关闭审计后，全量测试和发布通过。
 - `M2_CLIPBOARD_PLAN.md` 已冻结为单屏 M2 实现/验收记录；真实产品清空、物理磁盘耗尽和跨屏/多屏保持显式未物理验证，不冒充完成，也不再阻塞归档。
 - 用户确认下一阶段先开发中转站、剩余设置后置。`decisions.md §26` 锁定独立 Stage 业务模型、文件型首个纵向切片、第二消费者再提取共性，以及图片接入前扩展全局资产引用证明和单一窗口级 OLE 会话所有权。
-
-### 会话 2026-09-02 - 托盘 Shell 登记自愈闭环
-
-- 根因复核确认：通知图标真正状态属于 Explorer/Shell，库的 `IsCreated` 只记录本地调用；`H.NotifyIcon.Wpf 2.4.1` 又会在 TaskbarCreated 恢复时吞掉异常，Vok 原先没有后验检查，导致一次外部登记丢失永久持续到重启。
-- 保留现有通知图标与原生 HMENU，新增实际 HWND/GUID Shell 探针和 UI-STA 恢复 coordinator。启动、TaskbarCreated、Resume、Unlock 与 1 分钟 watchdog 请求检查；确定缺失后最多五次有界重建，每次都以后验 Shell 查询定成功，菜单打开、跨代迟到、Dispose 与同轮重入均有门禁。
-- 自动测试原生删除测试图标登记并钉死“Shell 缺失但 IsCreated=true”的原机制；故障注入覆盖 watchdog 复核、耗尽、后验优先和各类竞态。Release 65/65 + 364/364 共 429/429、自包含 win-x64 发布通过。
-- 将 PID 15992 精确替换为 `artifacts/r27-publish/Vok.exe` PID 28424；真实 Vok 登记被可逆删除后从 `0x80004005` 无重启恢复为 `0x00000000`，进程响应且 Ctrl+Space 保持占用。用户反馈基础交互测试基本通过；真实睡眠/Unlock/Explorer 重启物理矩阵仍待方便时执行。
 
 ## 指引
 
