@@ -1,0 +1,375 @@
+using System.Globalization;
+using Microsoft.Data.Sqlite;
+using Vok.Core.Stage;
+
+namespace Vok.Infrastructure.Windows.Persistence;
+
+public sealed class SqliteStageRepository : IStageRepository, IDisposable
+{
+    internal const long SortOrderStep = 1L << 20;
+    private const int MaximumPageSize = 256;
+    private readonly SqliteStorageExecutor _executor;
+    private readonly StageOptions _options;
+    private readonly bool _ownsExecutor;
+
+    public SqliteStageRepository(
+        string databasePath,
+        StageOptions? options = null)
+        : this(
+            new SqliteStorageExecutor(databasePath),
+            options ?? new StageOptions(),
+            ownsExecutor: true)
+    {
+    }
+
+    public SqliteStageRepository(
+        SqliteStorageExecutor executor,
+        StageOptions options)
+        : this(executor, options, ownsExecutor: false)
+    {
+    }
+
+    private SqliteStageRepository(
+        SqliteStorageExecutor executor,
+        StageOptions options,
+        bool ownsExecutor)
+    {
+        _executor = executor ?? throw new ArgumentNullException(nameof(executor));
+        _options = options ?? throw new ArgumentNullException(nameof(options));
+        _ownsExecutor = ownsExecutor;
+    }
+
+    public Task<StagePage> LoadPageAsync(
+        StagePageCursor? after,
+        int pageSize,
+        CancellationToken cancellationToken = default)
+    {
+        if (after is { Id: var id } && id == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "A Stage page cursor must contain a non-empty item id.",
+                nameof(after));
+        }
+
+        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, MaximumPageSize);
+        return _executor.ExecuteAsync(
+            connection => LoadPage(connection, after, pageSize),
+            cancellationToken);
+    }
+
+    public Task<StageAddOrMoveResult> AddOrMoveAsync(
+        IReadOnlyList<StageTargetDescriptor> targets,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(targets);
+        if (targets.Count == 0)
+        {
+            throw new ArgumentException(
+                "At least one Stage target is required.",
+                nameof(targets));
+        }
+
+        var snapshot = targets.ToArray();
+        foreach (var target in snapshot)
+        {
+            ValidateTarget(target);
+        }
+
+        return _executor.ExecuteAsync(
+            connection => AddOrMove(connection, snapshot, _options.Capacity),
+            cancellationToken);
+    }
+
+    public void Dispose()
+    {
+        if (_ownsExecutor)
+        {
+            _executor.Dispose();
+        }
+    }
+
+    private static StagePage LoadPage(
+        SqliteConnection connection,
+        StagePageCursor? after,
+        int pageSize)
+    {
+        using var countCommand = connection.CreateCommand();
+        countCommand.CommandText = "SELECT COUNT(*) FROM stage_items;";
+        var totalCount = Convert.ToInt64(
+            countCommand.ExecuteScalar(),
+            CultureInfo.InvariantCulture);
+
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, target_kind, target_value, canonical_key,
+                   resolved_name, sort_order, is_pinned, revision,
+                   created_utc, updated_utc
+            FROM stage_items
+            WHERE $afterOrder IS NULL
+               OR sort_order < $afterOrder
+               OR (sort_order = $afterOrder AND id < $afterId)
+            ORDER BY sort_order DESC, id DESC
+            LIMIT $limit;
+            """;
+        command.Parameters.AddWithValue(
+            "$afterOrder",
+            after is null ? DBNull.Value : after.Value.SortOrder);
+        command.Parameters.AddWithValue(
+            "$afterId",
+            after is null ? DBNull.Value : after.Value.Id.ToString("D"));
+        command.Parameters.AddWithValue("$limit", pageSize + 1);
+
+        var items = new List<StageItem>(Math.Min(pageSize + 1, 257));
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            items.Add(ReadItem(reader));
+        }
+
+        var hasMore = items.Count > pageSize;
+        if (hasMore)
+        {
+            items.RemoveAt(items.Count - 1);
+        }
+
+        StagePageCursor? next = hasMore
+            ? new StagePageCursor(items[^1].SortOrder, items[^1].Id)
+            : null;
+        return new StagePage(items.AsReadOnly(), next, totalCount);
+    }
+
+    private static StageAddOrMoveResult AddOrMove(
+        SqliteConnection connection,
+        IReadOnlyList<StageTargetDescriptor> targets,
+        long capacity)
+    {
+        var uniqueTargets = new List<StageTargetDescriptor>(targets.Count);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var target in targets)
+        {
+            if (seen.Add(target.CanonicalKey))
+            {
+                uniqueTargets.Add(target);
+            }
+        }
+
+        using var transaction = connection.BeginTransaction();
+        var countBefore = ReadCount(connection, transaction);
+        var existing = FindExisting(connection, transaction, uniqueTargets);
+        var addedCount = uniqueTargets.Count - existing.Count;
+        if (addedCount > 0 &&
+            (countBefore >= capacity || addedCount > capacity - countBefore))
+        {
+            transaction.Rollback();
+            return new StageAddOrMoveResult(
+                StageAddOrMoveStatus.CapacityExceeded,
+                countBefore,
+                countBefore,
+                0,
+                0,
+                capacity);
+        }
+
+        var maximumSortOrder = ReadMaximumSortOrder(connection, transaction);
+        long highestSortOrder;
+        try
+        {
+            highestSortOrder = checked(
+                maximumSortOrder + checked(uniqueTargets.Count * SortOrderStep));
+        }
+        catch (OverflowException)
+        {
+            transaction.Rollback();
+            return new StageAddOrMoveResult(
+                StageAddOrMoveStatus.SortOrderExhausted,
+                countBefore,
+                countBefore,
+                0,
+                0,
+                capacity);
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        for (var index = 0; index < uniqueTargets.Count; index++)
+        {
+            var target = uniqueTargets[index];
+            var sortOrder = highestSortOrder - (index * SortOrderStep);
+            if (existing.TryGetValue(target.CanonicalKey, out var item))
+            {
+                UpdateExisting(
+                    connection,
+                    transaction,
+                    item,
+                    target,
+                    sortOrder,
+                    now);
+            }
+            else
+            {
+                Insert(
+                    connection,
+                    transaction,
+                    target,
+                    sortOrder,
+                    now);
+            }
+        }
+
+        transaction.Commit();
+        return new StageAddOrMoveResult(
+            StageAddOrMoveStatus.Applied,
+            countBefore,
+            checked(countBefore + addedCount),
+            addedCount,
+            existing.Count,
+            capacity);
+    }
+
+    private static long ReadCount(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT COUNT(*) FROM stage_items;";
+        return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+    }
+
+    private static long ReadMaximumSortOrder(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT MAX(sort_order) FROM stage_items;";
+        var value = command.ExecuteScalar();
+        return value is null or DBNull
+            ? 0
+            : Convert.ToInt64(value, CultureInfo.InvariantCulture);
+    }
+
+    private static Dictionary<string, StageItem> FindExisting(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        IReadOnlyList<StageTargetDescriptor> targets)
+    {
+        var result = new Dictionary<string, StageItem>(StringComparer.OrdinalIgnoreCase);
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT id, target_kind, target_value, canonical_key,
+                   resolved_name, sort_order, is_pinned, revision,
+                   created_utc, updated_utc
+            FROM stage_items
+            WHERE canonical_key = $key COLLATE NOCASE
+            LIMIT 1;
+            """;
+        var key = command.Parameters.Add("$key", SqliteType.Text);
+        foreach (var target in targets)
+        {
+            key.Value = target.CanonicalKey;
+            using var reader = command.ExecuteReader();
+            if (reader.Read())
+            {
+                result.Add(target.CanonicalKey, ReadItem(reader));
+            }
+        }
+
+        return result;
+    }
+
+    private static void Insert(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        StageTargetDescriptor target,
+        long sortOrder,
+        DateTimeOffset now)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO stage_items (
+                id, target_kind, target_value, canonical_key,
+                resolved_name, sort_order, is_pinned, revision,
+                created_utc, updated_utc)
+            VALUES (
+                $id, $kind, $target, $key,
+                $name, $sortOrder, 0, 1,
+                $createdUtc, $updatedUtc);
+            """;
+        command.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("D"));
+        command.Parameters.AddWithValue("$kind", (int)target.Kind);
+        command.Parameters.AddWithValue("$target", target.TargetValue);
+        command.Parameters.AddWithValue("$key", target.CanonicalKey);
+        command.Parameters.AddWithValue("$name", target.ResolvedName);
+        command.Parameters.AddWithValue("$sortOrder", sortOrder);
+        command.Parameters.AddWithValue("$createdUtc", FormatUtc(now));
+        command.Parameters.AddWithValue("$updatedUtc", FormatUtc(now));
+        command.ExecuteNonQuery();
+    }
+
+    private static void UpdateExisting(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        StageItem item,
+        StageTargetDescriptor target,
+        long sortOrder,
+        DateTimeOffset now)
+    {
+        var nextRevision = checked(item.Revision + 1);
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE stage_items
+            SET target_kind = $kind,
+                target_value = $target,
+                canonical_key = $key,
+                resolved_name = $name,
+                sort_order = $sortOrder,
+                revision = $revision,
+                updated_utc = $updatedUtc
+            WHERE id = $id;
+            """;
+        command.Parameters.AddWithValue("$kind", (int)target.Kind);
+        command.Parameters.AddWithValue("$target", target.TargetValue);
+        command.Parameters.AddWithValue("$key", target.CanonicalKey);
+        command.Parameters.AddWithValue("$name", target.ResolvedName);
+        command.Parameters.AddWithValue("$sortOrder", sortOrder);
+        command.Parameters.AddWithValue("$revision", nextRevision);
+        command.Parameters.AddWithValue("$updatedUtc", FormatUtc(now));
+        command.Parameters.AddWithValue("$id", item.Id.ToString("D"));
+        if (command.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException(
+                $"Stage item {item.Id:D} disappeared during AddOrMove.");
+        }
+    }
+
+    private static StageItem ReadItem(SqliteDataReader reader) => new(
+        Guid.Parse(reader.GetString(0)),
+        (StageItemKind)reader.GetInt32(1),
+        reader.GetString(2),
+        reader.GetString(3),
+        reader.GetString(4),
+        reader.GetInt64(5),
+        reader.GetInt64(6) != 0,
+        reader.GetInt64(7),
+        DateTimeOffset.Parse(reader.GetString(8), CultureInfo.InvariantCulture),
+        DateTimeOffset.Parse(reader.GetString(9), CultureInfo.InvariantCulture));
+
+    private static string FormatUtc(DateTimeOffset value) =>
+        value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+
+    private static void ValidateTarget(StageTargetDescriptor target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentException.ThrowIfNullOrWhiteSpace(target.TargetValue);
+        ArgumentException.ThrowIfNullOrWhiteSpace(target.CanonicalKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(target.ResolvedName);
+        if (!Enum.IsDefined(target.Kind))
+        {
+            throw new ArgumentOutOfRangeException(nameof(target), target.Kind, null);
+        }
+    }
+}

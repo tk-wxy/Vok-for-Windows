@@ -11,20 +11,24 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏范围的 M2.0–M2.4 已完成并归档冻结；M3 中转站产品契约和实施路线已按 `decisions.md §27`、`docs/M3_STAGE_PLAN.md` 锁定，Stage 业务代码与 WPF/OLE Gate 0 尚未创建。2026-09-04 只读检查显示原 `artifacts/r27-publish/Vok.exe` PID 28424 已停止，当前运行的是源码 Release 输出 `src/Vok.App/bin/Release/net10.0-windows/Vok.exe` PID 16900；本会话未启动、停止或替换实例。
-- **最近进展**：中转站确定为文件引用型可消费货架：默认 50/首期产品上限 200，固定项计容量，批量超限整批拒绝，重复 canonical path 回顶；成功取用/Copy-only OLE 拖出消费未固定项，仅复制、失败和取消保留。用户进一步确认 200 不应成为永久架构上限；首版须以产品策略/存储契约分离、64 位稀疏排序、keyset、有界 VM 页面窗口和 10,000 条结构门禁保证后续扩容不迁移 Stage 主结构。实现仍采用独立 Stage 聚合/schema 7、单一窗口级入站 router、现有 SQLite/Shell/Clipboard/Workspace 资源所有者和交付/清理双结果，并拆为 M3.0–M3.5。此次仅改文档，429/429 仍是最近一次已验证自动基线，未因文档变更重跑。
-- **下一步**：执行 M3.0 隔离 `Vok.StageDragProbe`：真实验证 WPF UI STA 的 `DoDragDrop(Copy)` 在 OLE 开始后隐藏源 HWND、成功/取消/自吞拒绝和资源归零；只保留通过的 WPF 或窄原生 UI-STA 分支，再进入 M3.1 Core、schema 7 与仓储。
-- **已知问题**：隐藏 WPF 源 HWND 后的出站 OLE 仍未物理验证，当前不能宣称 Stage 拖出方案可用。R27 的根故障机制和 missed-event watchdog 已验证，但真实 Modern Standby/睡眠、Unlock、Explorer 重启信号仍未物理执行。合法 PNG 轻量 header 仍可能在关闭剪贴板后 codec 失败且没有 DIB 事后后备；真实产品清空、物理磁盘耗尽和跨屏/多屏仍未验证。既有人工验收 PNG/截图继续保留。
+- **状态**：M0、M1 与单屏范围的 M2.0–M2.4 已完成并归档冻结；M3 完整文件型合同由 `decisions.md §27` 约束，当前入站 MVP 由 §28 收窄。M3.MVP1 数据内核已完成：独立 Stage Core、schema 7、文件规范化、原子入站仓储与 DI 已落地，但真实 Stage UI 和窗口级路由尚未创建。2026-09-04 再次只读确认源码 Release 输出 PID 16900 仍在运行；本会话未启动、停止或替换实例，也未连接或迁移真实产品数据库。
+- **最近进展**：Stage 默认容量 50 且 Core/schema/SQL 不硬限 200；批内/库内 canonical 去重、容量整批拒绝、重复刷新回顶、64 位稀疏排序与 `(sort_order,id)` keyset 均已实现。文件、目录和 `.lnk` 在共享 Shell STA 上逐项解析，Launcher 旧 canonical/指纹行为有回归门禁。schema 6→7 的忠实临时夹具保留 Launcher、Clipboard 与资产引用元数据并通过 `quick_check`/外键检查；当前版本缺表、错误结构/索引、未来版本及批内后项异常均证明完整回滚。Release 71/71 Core + 385/385 集成共 456/456，构建 0 warning / 0 error，10,000 条分页门禁通过。
+- **下一步**：执行 M3.MVP2：新增真实 `StageView`/有界分页 ViewModel，并把 `MainWindow` 当前 Launcher 专用拖放处理收敛为唯一 `WorkspaceFileDropRouter`；只消费既有 M3.MVP1 接口，不改 Stage 主表、容量事务或 canonical 身份。
+- **已知问题**：用户路径“外部拖动中呼出 → Stage 松手 → 条目可见”仍不可用，Launcher 的既有拖动证据不能替代 Stage UI/router 验收；schema 7 尚未在真实产品库副本或发布候选上迁移。Drop 向 OLE 返回 Copy 与异步落库成功仍须分别表达。隐藏 WPF 源 HWND 的出站 OLE 尚未物理验证但不阻塞入站 MVP；R27 的真实 Modern Standby/睡眠、Unlock、Explorer 重启信号，合法 PNG 轻量 header 的 codec 失败后备、真实产品清空、物理磁盘耗尽和跨屏/多屏仍未验证。
 
 ## §0A 最近会话
 
-### 会话 2026-09-04 - M3 中转站产品契约与实施计划
+### 会话 2026-09-04 - M3 中转站产品契约、扩容与入站 MVP 收窄
 
 - 用户认可前瞻功能与架构分析并要求形成实施计划。`docs/M3_STAGE_PLAN.md` 已锁定 Stage 为引用型可消费货架，首期只做文件/目录/`.lnk`：默认 50、产品上限 200，固定计容量，批量原子拒绝、重复回顶、跨重启保留和 Missing 动态展示。
 - 用户随后确认前期 200 合理，但要求当前架构支持后续高上限。计划已明确 200 只属于组合根策略，不进入 schema/仓储；首版使用 64 位计数与稀疏排序、keyset 和有界 VM 页面窗口，以 10,000 条门禁证明结构，并把未来更高规模限定为策略与性能门禁调整，而非 Stage 主结构迁移。
 - 取用、仅复制和拖出使用 Copy-only；只有真实交付完成才消费未固定项，交付与数据库清理分开收口。Stage 保持独立 Core 聚合/schema 7/仓储/VM，复用现有 SQLite、Shell STA、Clipboard STA、Workspace 目标恢复和输入注入，不复用 `Clipboard*` 业务模型。
 - 实施拆为 M3.0–M3.5：先以隔离 WPF/OLE 探针证明源窗隐藏后的 `DoDragDrop`，再依次接 Core/仓储、统一窗口级入站 router/UI、点击取用、正式拖出和收口归档。`decisions.md §27` 与架构状态已同步；本次未创建 Stage 代码、未运行自动测试或改变运行实例。
 - 只读进程检查发现旧 PID 28424 已停止，当前 Vok 为源码 Release 输出 PID 16900；该变化并非本会话执行。429/429 保持为进入 M3 的最近已验证回归基线。
+- 用户随后将当前最小 MVP 明确收窄为“拖动外部文件 → 呼出界面 → 在中转站松手 → 条目落入”。源码核对证明 Launcher 已验证的 Workspace drag lease/长按松键机制可复用，当前未知量是唯一 Launcher/Stage 路由、独立 Stage schema/仓储和真实展示；因此出站 `DoDragDrop` 探针后置到拖出功能之前。本轮仅更新 `docs/M3_STAGE_PLAN.md`、架构/决策/状态文档，未创建代码或重跑测试。
+- 第一实施步现已细化为独立 `M3_STAGE_MVP1_PLAN.md`：Stage 不复制 Launcher 的 int 总数、单字段游标、尾部追加、重复不移动和全表排序行为；改用 long 总数、`(sort_order,id)`、稀疏头插、重复回顶与单事务容量权威。schema 7 只在临时库和真实库副本验证，MVP2/3 完成前禁止迁移真实库或替换当前实例，避免旧 schema 6 二进制被单向版本边界阻断。
+- M3.MVP1 随后完成实现：新增独立 Stage Core、schema 7、`SqliteStageRepository`、共享 Shell STA 的 `WindowsStageFileService` 与 DI；未接 WPF/OLE 或启动加载。自审补充当前 schema 缺表/错误索引拒绝、未来版本拒绝、容量满时仅重复可回顶，以及批内 revision 溢出回滚前序写入。
+- 使用隔离 `%TEMP%` artifacts 验证 Release 71/71 Core + 385/385 集成共 456/456，10,000 条 keyset 使用顺序索引，构建 0 warning / 0 error；PID 16900 和真实产品数据库未改变。下一步进入 M3.MVP2 UI 与唯一入站路由，不能提前宣称中转站可用。
 
 ### 会话 2026-09-03 - 工作台滚动条与设置界面视觉优化
 

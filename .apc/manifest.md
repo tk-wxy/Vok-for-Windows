@@ -58,16 +58,16 @@
 
 ## 项目结构
 
-M0 生产宿主、M1 启动台和单屏范围的 M2 剪贴板已完成并冻结；项目现进入 M3 中转站开发基线，先完成产品契约与 Gate 0，尚未创建中转站代码或占位 UI。当前实际结构如下：
+M0 生产宿主、M1 启动台和单屏范围的 M2 剪贴板已完成并冻结；项目现进入 M3 中转站开发，产品契约已锁定。“外部拖动中呼出并在 Stage 松手持久落项”的 M3.MVP1 数据内核已经完成，真实 Stage UI 与窗口级入站路由尚未接入。当前实际结构如下：
 
 ```text
 src/
 ├── Vok.sln
 ├── Vok.App/                    # WPF 可执行程序、组合根、产品壳层与启动台/剪贴板表现
-├── Vok.Core/                   # 平台契约、会话状态机与启动台/剪贴板业务模型
-├── Vok.Infrastructure.Windows/ # Win32/Shell/剪贴板 STA、SQLite 与外置资产实现
-├── Vok.Tests/                  # Core 状态机单元测试
-└── Vok.IntegrationTests/       # Windows API、控制器副作用与真实 WPF STA 测试
+├── Vok.Core/                   # 平台契约、会话状态机与启动台/剪贴板/Stage 业务模型
+├── Vok.Infrastructure.Windows/ # Win32/Shell/剪贴板 STA、SQLite、Stage 入站与外置资产实现
+├── Vok.Tests/                  # Core 状态机与 Stage 选项单元测试
+└── Vok.IntegrationTests/       # Windows API、SQLite/Stage、控制器副作用与真实 WPF STA 测试
 docs/
 ├── ARCHITECTURE.md             # 目标架构、数据流、门禁和实施阶段
 ├── M1_LAUNCHER_PLAN.md         # 已完成的启动台实现与验收记录
@@ -79,7 +79,7 @@ tools/
 .apc/                           # 项目知识与开发协议
 ```
 
-中转站在 Gate 0 锁定产品契约前不创建空代码目录或占位 UI；搜索在正式进入里程碑前继续只保留文档边界。
+中转站下一步接真实 Stage UI 与唯一窗口级 `WorkspaceFileDropRouter`，消费已经验证的独立 Core/schema 7 入站仓储；出站 OLE Gate 后置到拖出功能之前。搜索在正式进入里程碑前继续只保留文档边界。
 
 ## 常用命令
 

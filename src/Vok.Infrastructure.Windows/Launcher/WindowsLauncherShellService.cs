@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media.Imaging;
 using Vok.Core.Launcher;
+using Vok.Infrastructure.Windows.Shell;
 
 namespace Vok.Infrastructure.Windows.Launcher;
 
@@ -142,33 +143,25 @@ public sealed partial class WindowsLauncherShellService : ILauncherShellService
 
         try
         {
-            var fullPath = Path.GetFullPath(input.Trim());
-            var attributes = File.GetAttributes(fullPath);
-            var isDirectory = (attributes & FileAttributes.Directory) != 0;
-            var kind = isDirectory
-                ? LauncherItemKind.Directory
-                : string.Equals(
-                    Path.GetExtension(fullPath),
-                    ".lnk",
-                    StringComparison.OrdinalIgnoreCase)
-                    ? LauncherItemKind.ShellLink
-                    : LauncherItemKind.File;
-            var normalizedPath = isDirectory
-                ? Path.TrimEndingDirectorySeparator(fullPath)
-                : fullPath;
-            var name = GetDisplayName(normalizedPath, kind);
-            var fingerprint = GetFingerprint(normalizedPath, attributes);
+            var reference = WindowsFileReferenceResolver.ResolveExisting(input.Trim());
+            var kind = reference.Kind switch
+            {
+                WindowsFileReferenceKind.File => LauncherItemKind.File,
+                WindowsFileReferenceKind.Directory => LauncherItemKind.Directory,
+                WindowsFileReferenceKind.ShellLink => LauncherItemKind.ShellLink,
+                _ => throw new ArgumentOutOfRangeException(nameof(reference)),
+            };
             var canonicalKey = string.Create(
                 CultureInfo.InvariantCulture,
-                $"{(int)kind}:{normalizedPath}");
+                $"{(int)kind}:{reference.NormalizedPath}");
             return new LauncherTargetResolution(
                 input,
                 new LauncherTargetDescriptor(
                     kind,
-                    normalizedPath,
+                    reference.NormalizedPath,
                     canonicalKey,
-                    name,
-                    fingerprint),
+                    reference.DisplayName,
+                    reference.Fingerprint),
                 null);
         }
         catch (Exception exception) when (
@@ -301,34 +294,11 @@ public sealed partial class WindowsLauncherShellService : ILauncherShellService
         }
     }
 
-    private static string GetDisplayName(string path, LauncherItemKind kind)
-    {
-        var name = Path.GetFileName(path);
-        if (kind is LauncherItemKind.ShellLink &&
-            name.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
-        {
-            name = name[..^4];
-        }
-
-        return string.IsNullOrWhiteSpace(name) ? path : name;
-    }
-
-    private static string GetFingerprint(string path, FileAttributes attributes)
-    {
-        var lastWrite = File.GetLastWriteTimeUtc(path).Ticks;
-        var length = (attributes & FileAttributes.Directory) != 0
-            ? 0
-            : new FileInfo(path).Length;
-        return string.Create(
-            CultureInfo.InvariantCulture,
-            $"{lastWrite}:{length}:{(int)attributes}");
-    }
-
     private static string GetFingerprintForItem(LauncherItem item)
     {
         try
         {
-            return GetFingerprint(item.TargetValue, File.GetAttributes(item.TargetValue));
+            return WindowsFileReferenceResolver.GetFingerprint(item.TargetValue);
         }
         catch (Exception exception) when (
             exception is ArgumentException or IOException or UnauthorizedAccessException or

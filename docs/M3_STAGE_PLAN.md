@@ -1,8 +1,43 @@
 # M3 中转站产品契约与实施计划
 
-> **状态（2026-09-04）**：产品边界和实施路线已确认，业务代码尚未创建。200 条是首期产品开放上限，不是 schema、仓储或分页的架构上限；初始实现即保留后续高上限能力。当前 429/429 自动测试是进入 M3 的回归基线；先完成 M3.0 的真实 WPF/OLE Gate 0，再进入正式接线。
+> **状态（2026-09-04）**：产品边界和长期路线已确认，业务代码尚未创建。当前交付被进一步收窄为“外部拖着文件呼出 Vok，在中转站松手后条目持久落入”的入站 MVP；取用、拖出和管理动作全部后置。200 条是首期产品开放上限，不是 schema、仓储或分页的架构上限。当前 429/429 自动测试是进入 M3 的回归基线；下一步先实现入站引用模型与 schema 7，不再以前置出站 OLE 探针阻塞 MVP。
 
-## 1. 目标与完成定义
+## 0. 当前最小 MVP（本轮唯一交付范围）
+
+本轮只证明这一条用户路径：
+
+```text
+Explorer / 桌面选中文件、目录或 .lnk 并保持外部拖动
+  → 按当前全局快捷键呼出 Vok
+  → 指针进入中转站，显示唯一 Copy 命中反馈
+  → 在中转站松开鼠标
+  → Drop 终态只快照一次 FileDrop
+  → Shell STA 规范化
+  → SQLite 单事务加入或去重回顶
+  → 中转站显示对应条目，重启后仍存在
+```
+
+本 MVP 包含：
+
+- 文件、目录、`.lnk` 和同一次多项拖入；只保存源路径引用，不复制、移动、删除或解析源对象；
+- 默认 50、首期策略上限 200，批量超限整批拒绝，canonical path 重复项不新增而回顶；
+- 中转站首屏、空状态、处理中状态、目标命中描边和可观察的成功/部分无效/整批拒绝结果；
+- schema 7、跨重启保留、`(sort_order,id)` keyset 和 64 位稀疏排序；虽然本轮不开放手工排序，重复回顶仍使用同一排序契约；
+- `MainWindow` 唯一 `AllowDrop` 和唯一窗口级外部拖放 generation，同时服务既有 Launcher 与新增 Stage，保留现有“长按呼出后松键等待拖放终态”的宿主语义。
+
+本 MVP 明确不包含：点击取用、仅复制、从中转站拖出、成功消费、固定、手工排序、打开/定位、移除、重新关联、文本、图片、搜索或设置入口。它们继续保留在本文后续路线中，但不得作为当前 MVP 完成条件或前置 Gate。
+
+最小完成定义：
+
+- 从 Explorer 和桌面真实执行“开始拖动 → 呼出 → Stage 松手”，每个有效源对象只形成一个可见且持久的 Stage 条目；
+- Launcher/Stage 跨区移动只改变同一会话的目标，Drop 最多读取一次外国 `IDataObject`，取消、隐藏、关闭和新 DragEnter 均清理视觉与租约；
+- 源文件字节、路径和数量在成功、失败、取消、重复、超限路径中均不变化；
+- Drop 后的异步规范化或 SQLite 失败可观察，不把 OLE `Copy` 光标冒充为已成功落库；
+- 全量基线无回归，10,000 条结构门禁证明提升产品上限无需迁移 Stage 主结构；本 MVP 的真机结论不得外推为拖出或取用已可用。
+
+## 1. 完整文件型切片目标（MVP 后续）
+
+以下内容保留为入站 MVP 之后的完整 M3 路线，不属于本轮完成定义。
 
 中转站是一个**引用型、可消费的临时货架**：用户把稍后要交给其他窗口的文件或目录放入中转站，Vok 持久保存引用；取用成功后默认移除，固定项继续保留。
 
@@ -155,7 +190,7 @@ src/Vok.App/Features/Stage/
 src/Vok.App/Hosting/
   WorkspaceFileDropRouter.cs
 
-tools/Vok.StageDragProbe/            # Gate 0 隔离探针
+tools/Vok.StageDragProbe/            # MVP 后续的出站隔离探针
 ```
 
 ## 4. Core 与持久化设计
@@ -253,7 +288,7 @@ INDEX stage_items_order ON stage_items(sort_order, id)
 
 “仅复制”只执行检查和 clipboard write；成功即为 `CopiedOnly`，不隐藏、不恢复目标、不注入，也不消费条目。
 
-## 7. 出站 OLE 与 M3.0 Gate 0
+## 7. 出站 OLE 与后续独立 Gate
 
 ### 7.1 首选实现
 
@@ -263,7 +298,7 @@ INDEX stage_items_order ON stage_items(sort_order, id)
 - 隐藏失败设置源端取消标志，由后续 OLE 回调安全返回 cancel；所有 claim、事件订阅和视觉只清理一次。
 - `DoDragDrop` 返回 `Copy` 才算 `Completed`；`None`、Esc、目标拒绝或异常均保留条目。取消后不自动重新呼出 Vok，避免抢回用户正在操作的外部窗口。
 
-### 7.2 Gate 0 必须先证明
+### 7.2 出站 Gate 必须先证明
 
 隔离探针不得读写产品数据库，至少覆盖：
 
@@ -274,7 +309,7 @@ INDEX stage_items_order ON stage_items(sort_order, id)
 - 同一 Vok 窗口拒绝自己的出站 token，Launcher/Stage 入站视觉不残留；
 - 20 轮成功/取消交替后线程、句柄、事件订阅和工作区 generation 回到稳定基线。
 
-如果 WPF `DoDragDrop` 在隐藏源 HWND 后无法稳定完成，唯一允许的降级是在 **WPF UI STA** 上封装原生 `DoDragDrop/IDropSource`；不得把 OLE 源放到 Shell STA、增加固定 sleep 或保留不可见源窗骗过测试。Gate 0 只允许保留一个通过真实结果的实现分支。
+如果 WPF `DoDragDrop` 在隐藏源 HWND 后无法稳定完成，唯一允许的降级是在 **WPF UI STA** 上封装原生 `DoDragDrop/IDropSource`；不得把 OLE 源放到 Shell STA、增加固定 sleep 或保留不可见源窗骗过测试。出站 Gate 只允许保留一个通过真实结果的实现分支。
 
 ## 8. 展示、分页与手势
 
@@ -287,47 +322,67 @@ INDEX stage_items_order ON stage_items(sort_order, id)
 
 ## 9. 分阶段实施与提交门禁
 
-### M3.0：产品合同与 OLE 探针
+### M3.MVP1：Core、schema 7 与入站仓储
 
-交付：本计划、`decisions.md §27`、隔离 `Vok.StageDragProbe` 和可重复记录脚本。
+状态：已于 2026-09-04 完成实现与自动门禁；Release 71/71 Core + 385/385 集成共 456/456，构建 0 warning / 0 error。未接 WPF/OLE、未迁移真实产品库，不能据此宣称入站 MVP 已可用。
 
-门禁：上述真实 WPF/OLE 矩阵通过并只留下一个实现方向；未通过前不接产品 Stage UI。本文档和决策已完成，物理探针尚未实施。
+交付：本轮所需的 `StageItem`、`StageTargetDescriptor`、页面/新增结果、`StageOptions`、`IStageRepository`、文件规范化窄接口、`SqliteStageRepository`、schema 6→7 迁移和 DI 注册；不接 WPF/OLE。
 
-### M3.1：Core、schema 7 与仓储
+门禁：文件/目录/`.lnk` 身份、批量原子性、容量、canonical 去重回顶、64 位稀疏排序、10,000 条 keyset 分页、迁移成功/回滚全部通过；首期 200 只来自组合根策略，schema 和仓储 SQL 结构不依赖该数值；全量基线无回归。
 
-交付：Stage 聚合/结果/状态机、`SqliteStageRepository`、schema 6→7 迁移、DI 注册和仓储测试；不接 OLE。
+具体 Core 契约、SQL 算法、迁移风险、实施检查点和自动验收矩阵见 `M3_STAGE_MVP1_PLAN.md`。
 
-门禁：容量/批量原子性、去重回顶、64 位稀疏排序/局部重平衡、revision 冲突、固定消费、10,000 条 keyset 分页、迁移成功/回滚全部通过；首期 200 只来自产品策略，schema 和仓储结构不得依赖该数值；全量基线无回归。
+### M3.MVP2：真实 Stage 展示与唯一入站路由
 
-### M3.2：展示、统一入站路由与管理操作
+交付：用真实 `StageView` 替换中转站空区域，接入分页展示和入站状态；把 `MainWindow` 当前面向 Launcher 的拖放代码收敛为唯一 `WorkspaceFileDropRouter`，由 Launcher/Stage target adapter 分发。现有 Workspace 外部拖放租约继续由宿主拥有，不创建第二套租约。
 
-交付：真实 Stage 区域、分页/虚拟化、图标/失效检查、外部拖入、排序、固定、打开/定位、重新关联和移除；Launcher 改走统一 router。
+门禁：跨 Launcher/Stage/无目标区域移动只更新一个命中目标；Enter/Over 不读取外国数据，Drop 最多读取一次；Drop 先认领并清理视觉再异步入库；DragLeave、Esc/取消、隐藏、设置、关闭、新 DragEnter 和异常均幂等收口；源文件零改动。
 
-门禁：跨 Launcher/Stage 拖动只读一次数据；所有取消/隐藏/关闭路径清理；重启后引用和顺序一致；深度滚动后 VM/图标缓存回到固定窗口预算；源文件零改动。
+### M3.MVP3：入站 MVP 验收
 
-### M3.3：仅复制与点击取用
+交付：schema 6 实库副本迁移、WPF 浅/深与窄窗口渲染、自动回归、自包含发布候选和真机记录。
 
-交付：Stage clipboard adapter、`StageActionController`、`StageTake` 宿主隐藏原因和完整结果提示。
+门禁：Explorer/桌面的文件、目录、`.lnk`、Unicode 路径和批量项完成“拖动中呼出 → Stage 松手 → 当次或下次呼出可见 → 重启仍存在”；重复回顶、超限整批拒绝、无效项结果和 100 次成功/取消交替无租约、线程、句柄或队列单调增长；既有 Launcher 拖入和 429 项基线保持通过。达到此处只宣布“入站 MVP 完成”。
 
-门禁：写入前失败、写入后隐藏/恢复/receipt/注入失败、重复点击、退出、旧代、revision 变化与成功消费全部有自动测试；真实记事本/Office/Explorer 目标完成取用与降级矩阵。
+### M3.1：管理动作（MVP 后续）
 
-### M3.4：卡片拖出
+交付：固定、手工排序、打开/定位、移除、重新关联和 Missing 可见项检查。
 
-交付：正式 `StageDragOutController`、generation-scoped outbound claim、Copy-only DataObject 和成功消费。
+### M3.2：仅复制与点击取用（MVP 后续）
 
-门禁：将 Gate 0 的成功/取消/隐藏/自吞/资源矩阵移入产品集成测试，并通过 Explorer、桌面和至少一个普通接收应用的真机验证。
+交付：Stage clipboard adapter、`StageActionController`、`StageTake` 宿主隐藏原因、成功消费和完整结果提示；按第 6 节矩阵验收。
 
-### M3.5：收口与归档
+### M3.3：出站 Gate 与卡片拖出（MVP 后续）
 
-交付：故障注入、可访问性、响应式视觉、实库副本迁移、自包含发布和文档归档。
+先以隔离探针验证第 7 节的隐藏源 HWND、Copy/None、自吞拒绝和资源闭环；只保留一个通过的实现方向，再接入正式 `StageDragOutController`。出站探针不得阻塞 M3.MVP1–M3.MVP3。
 
-门禁：全量测试与探针通过；schema 6 真实库副本升级后 `quick_check=ok`、外键/既有 Clipboard/Launcher 数量与资产 SHA 不变；启动、剪贴板、托盘和宿主物理回归通过。只有“文件拖入 → 重启 → 取用/拖出 → 正确消费”的真实闭环完成后，M3 文件切片才可归档。
+### M3.4：完整文件切片收口与归档
+
+交付：完整故障注入、可访问性、响应式视觉、取用/拖出物理矩阵、自包含发布和文档归档。只有“文件拖入 → 重启 → 取用/拖出 → 正确消费”的真实闭环完成后，完整 M3 文件切片才可归档。
 
 每个阶段只引入一个主要变量，均以进入阶段时的全量测试为回归底线；一处连续失败两次应回到所有权/时序假设重新诊断，不能叠加延时或旁路。
 
 ## 10. 验收矩阵
 
-### 自动验证
+### 当前入站 MVP 自动验证
+
+- 隐藏态开始的同一次物理按压只能创建一个 Workspace generation；短按保持显示，原始长按松键在真实 FileDrop lease 内只延后到 Drop/取消终态；
+- router 覆盖 Launcher/Stage/无目标跨区、一次 `GetData`、DragLeave 缺失、隐藏、设置、关闭和新会话替换，且不会产生双重 `ExternalDragEnded`；
+- 同批重复、跨批重复、大小写差异、目录尾分隔符和 `.lnk` 身份符合 canonical 规则；
+- 49/50/51 条、混合重复批次、无效项和并发添加遵守容量与整批原子性；
+- schema 6→7 保留现有数据，半迁移、未知结构和未来版本安全拒绝并回滚；
+- 10,000 条分页不使用 OFFSET，回顶不全表改写，页面窗口与图标缓存不随滚动深度增长；
+- Stage 入站的成功、拒绝、取消和异常均不修改任何源文件；现有 429 项基线持续通过。
+
+### 当前入站 MVP 真机验证
+
+- 在 Explorer/桌面按住鼠标拖动文件、目录或 `.lnk`，用当前快捷键呼出 Vok，在 Stage 松手后条目可见且重启仍存在；
+- 一次拖入多个对象保持来源顺序；重复对象回顶但不新增；无效对象和容量拒绝给出真实结果；
+- 指针在 Launcher/Stage 之间来回移动时只有当前区域显示命中反馈；拖到无目标区域或按 Esc 取消后无蓝框/租约残留；
+- 成功、失败和取消前后比较源路径、长度与哈希，确认 Vok 只保存引用；
+- 100 次拖入/取消交替后，UI、热键和剪贴板监听持续响应，线程、句柄和数据库队列无单调增长。
+
+### 完整文件切片自动验证（MVP 后续）
 
 - 同批重复、跨批重复、大小写差异、目录尾分隔符和 `.lnk` 身份符合 canonical 规则；
 - 49/50/51 条、混合重复批次、固定占满和并发添加均遵守 50 容量及整批原子拒绝；
@@ -338,7 +393,7 @@ INDEX stage_items_order ON stage_items(sort_order, id)
 - 拖出覆盖 `Copy/None`、Esc、隐藏失败、源失效、双启动、旧代回调和 Dispose；
 - Stage 删除、容量拒绝、排序和消费均不修改任何源文件；现有 429 项基线测试持续通过。
 
-### 真机验证
+### 完整文件切片真机验证（MVP 后续）
 
 - Explorer/桌面的文件、目录、Unicode 长路径和 `.lnk` 拖入后跨重启可见，重复拖入回顶且不复制源内容；
 - 跨 Launcher/Stage 区域来回移动，蓝框/命中效果准确，取消和窗口隐藏后无残留；

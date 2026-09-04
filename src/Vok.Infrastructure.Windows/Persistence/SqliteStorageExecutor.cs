@@ -7,7 +7,7 @@ namespace Vok.Infrastructure.Windows.Persistence;
 public sealed class SqliteStorageExecutor : IDisposable
 {
     private const int QueueCapacity = 64;
-    private const int CurrentSchemaVersion = 6;
+    private const int CurrentSchemaVersion = 7;
     private static readonly HashSet<string> CurrentLauncherColumns =
     [
         "id",
@@ -97,6 +97,19 @@ public sealed class SqliteStorageExecutor : IDisposable
         "entry_id",
         "role",
         "asset_hash",
+    ];
+    private static readonly HashSet<string> CurrentStageColumns =
+    [
+        "id",
+        "target_kind",
+        "target_value",
+        "canonical_key",
+        "resolved_name",
+        "sort_order",
+        "is_pinned",
+        "revision",
+        "created_utc",
+        "updated_utc",
     ];
     private readonly BlockingCollection<IStorageWorkItem> _queue = new(QueueCapacity);
     private readonly TaskCompletionSource _ready =
@@ -263,6 +276,7 @@ public sealed class SqliteStorageExecutor : IDisposable
 
             EnsureLauncherSchema(connection, transaction);
             EnsureClipboardSchema(connection, transaction);
+            EnsureStageSchema(connection, transaction, schemaVersion);
 
             using (var command = connection.CreateCommand())
             {
@@ -405,6 +419,95 @@ public sealed class SqliteStorageExecutor : IDisposable
                 """;
             command.ExecuteNonQuery();
         }
+    }
+
+    private static void EnsureStageSchema(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        int schemaVersion)
+    {
+        var columns = ReadTableColumns(connection, transaction, "stage_items");
+        if (columns.Count == 0)
+        {
+            if (schemaVersion >= CurrentSchemaVersion)
+            {
+                throw new InvalidOperationException(
+                    "The stage_items table is missing from the current database schema.");
+            }
+
+            CreateStageTable(connection, transaction);
+            CreateStageIndexes(connection, transaction);
+        }
+        else if (!columns.SetEquals(CurrentStageColumns))
+        {
+            throw new InvalidOperationException(
+                "The stage_items table has an unsupported schema. " +
+                $"Found columns: {string.Join(", ", columns.Order())}.");
+        }
+
+        if (!HasIndex(
+                connection,
+                transaction,
+                "stage_items",
+                "ux_stage_items_canonical",
+                isUnique: true,
+                ["canonical_key"]) ||
+            !HasIndexCollation(
+                connection,
+                transaction,
+                "ux_stage_items_canonical",
+                "canonical_key",
+                "NOCASE") ||
+            !HasIndex(
+                connection,
+                transaction,
+                "stage_items",
+                "ix_stage_items_order",
+                isUnique: false,
+                ["sort_order", "id"]))
+        {
+            throw new InvalidOperationException(
+                "The stage_items table has unsupported indexes.");
+        }
+    }
+
+    private static void CreateStageIndexes(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            CREATE UNIQUE INDEX ux_stage_items_canonical
+            ON stage_items(canonical_key COLLATE NOCASE);
+
+            CREATE INDEX ix_stage_items_order
+            ON stage_items(sort_order, id);
+            """;
+        command.ExecuteNonQuery();
+    }
+
+    private static void CreateStageTable(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            CREATE TABLE stage_items (
+                id TEXT NOT NULL PRIMARY KEY,
+                target_kind INTEGER NOT NULL,
+                target_value TEXT NOT NULL,
+                canonical_key TEXT NOT NULL COLLATE NOCASE,
+                resolved_name TEXT NOT NULL,
+                sort_order INTEGER NOT NULL,
+                is_pinned INTEGER NOT NULL,
+                revision INTEGER NOT NULL,
+                created_utc TEXT NOT NULL,
+                updated_utc TEXT NOT NULL
+            );
+            """;
+        command.ExecuteNonQuery();
     }
 
     private static void EnsureClipboardSchema(
@@ -660,6 +763,37 @@ public sealed class SqliteStorageExecutor : IDisposable
         return actualColumns.SequenceEqual(
             expectedColumns,
             StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool HasIndexCollation(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string indexName,
+        string columnName,
+        string collationName)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"PRAGMA index_xinfo({indexName});";
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            if (reader.GetInt32(5) == 0 || reader.IsDBNull(2))
+            {
+                continue;
+            }
+
+            return string.Equals(
+                    reader.GetString(2),
+                    columnName,
+                    StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(
+                    reader.GetString(4),
+                    collationName,
+                    StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
     }
 
     private static void CreateClipboardTables(

@@ -10,7 +10,7 @@ namespace Vok.IntegrationTests.Persistence;
 public sealed class SqliteClipboardHistoryRepositoryTests
 {
     [Fact]
-    public async Task SchemaTwoUpgradesToSixWithoutLosingLauncherRows()
+    public async Task SchemaTwoUpgradesToCurrentWithoutLosingLauncherRows()
     {
         var directory = CreateTestDirectory();
         var databasePath = Path.Combine(directory, "upgrade.db");
@@ -29,7 +29,7 @@ public sealed class SqliteClipboardHistoryRepositoryTests
             }
 
             using var connection = OpenDatabase(databasePath);
-            Assert.Equal(6L, ExecuteInt64(connection, "PRAGMA user_version;"));
+            Assert.Equal(7L, ExecuteInt64(connection, "PRAGMA user_version;"));
             Assert.Equal(
                 "keep-launcher",
                 ExecuteString(
@@ -73,7 +73,7 @@ public sealed class SqliteClipboardHistoryRepositoryTests
             }
 
             using var connection = OpenDatabase(databasePath);
-            Assert.Equal(6L, ExecuteInt64(connection, "PRAGMA user_version;"));
+            Assert.Equal(7L, ExecuteInt64(connection, "PRAGMA user_version;"));
             Assert.Equal(1L, TableExists(connection, "clipboard_files"));
             Assert.Equal(
                 0L,
@@ -151,7 +151,7 @@ public sealed class SqliteClipboardHistoryRepositoryTests
     }
 
     [Fact]
-    public async Task SchemaFourMigratesToSixAndKeepsExistingRowsImageColumnsNull()
+    public async Task SchemaFourMigratesToCurrentAndKeepsExistingRowsImageColumnsNull()
     {
         var directory = CreateTestDirectory();
         var databasePath = Path.Combine(directory, "schema4.db");
@@ -189,7 +189,7 @@ public sealed class SqliteClipboardHistoryRepositoryTests
             }
 
             using var connection = OpenDatabase(databasePath);
-            Assert.Equal(6L, ExecuteInt64(connection, "PRAGMA user_version;"));
+            Assert.Equal(7L, ExecuteInt64(connection, "PRAGMA user_version;"));
             Assert.Equal(1L, TableExists(connection, "content_assets"));
             Assert.Equal(1L, TableExists(connection, "clipboard_asset_refs"));
             Assert.Equal(

@@ -205,10 +205,10 @@
 ### 存储与规模
 
 - [ ] R5：不得在 UI Dispatcher 上执行 Microsoft.Data.Sqlite；数据库写入由显式执行器串行化并使用 WAL。数据库升级必须同时核验版本号与真实表结构，在单事务内迁移并让未知结构原样回滚；`CREATE TABLE IF NOT EXISTS` 只能建新表，不能冒充已有表迁移。大集合必须同时实施 SQL 分页和 WPF 容器虚拟化，不能把 UI 虚拟化当作数据虚拟化。
-  - 范围：SQLite、启动台、剪贴板历史、图片与后续大列表。
-  - 证据：https://learn.microsoft.com/dotnet/standard/data/sqlite/async 说明 Async 方法实际同步；https://learn.microsoft.com/dotnet/desktop/wpf/advanced/optimizing-performance-controls 说明 WPF 没有内建数据虚拟化。2026-08-28 真机旧库因已有 `launcher_items` 使 `CREATE TABLE IF NOT EXISTS` 静默跳过，但代码仍写入版本并查询新列，复现 `no such column: target_kind`；schema 2 改为列集合识别和单事务迁移。M2.1–2 形成 schema 3/4，M2.3.4 形成 schema 5。M2.4 schema 6 在同一事务加入并回填 `clipboard_entries.total_bytes`；损坏 schema 5 外键的迁移失败测试证明 `user_version` 与新增列均回滚，10,000 条元数据验证 keyset 分页不依赖全量加载。
-  - 最后验证：2026-09-01。
-  - 状态：active；设置、启动台与剪贴板共享串行所有权，schema 1→2→3→4→5→6、失败回滚、SQL 分页、WPF 虚拟化、去重/排序、保留与取消一致性均有自动测试；真实用户库已验证 schema 5 持久化，但尚未由当前 schema 6 发布物迁移。
+  - 范围：SQLite、启动台、剪贴板历史、Stage、图片与后续大列表。
+  - 证据：https://learn.microsoft.com/dotnet/standard/data/sqlite/async 说明 Async 方法实际同步；https://learn.microsoft.com/dotnet/desktop/wpf/advanced/optimizing-performance-controls 说明 WPF 没有内建数据虚拟化。2026-08-28 真机旧库因已有 `launcher_items` 使 `CREATE TABLE IF NOT EXISTS` 静默跳过，但代码仍写入版本并查询新列，复现 `no such column: target_kind`；schema 2 改为列集合识别和单事务迁移。M2.1–2 形成 schema 3/4，M2.3.4 形成 schema 5，M2.4 形成 schema 6。2026-09-04 Stage schema 7 只为旧版本创建新表；当前版本缺表、错误列、错误唯一性/排序索引和未来版本均拒绝，建表后的索引冲突与所有前置 schema 写入一起回滚。忠实临时 schema 6 夹具升级后保留 Launcher、Clipboard 和资产引用元数据，`quick_check=ok`、0 外键违规；10,000 条 Stage 复合 keyset 无遗漏并使用顺序索引。
+  - 最后验证：2026-09-04。
+  - 状态：active；设置、启动台、剪贴板与 Stage 共享串行所有权，schema 1→2→3→4→5→6→7、失败回滚、SQL 分页、去重/排序、容量/保留与取消一致性均有自动测试；M3.MVP1 通过 Release 456/456。真实用户库未由 schema 7 代码迁移，Stage 的 WPF 有界页面窗口尚待 M3.MVP2。
 
 ### 发布与互操作
 

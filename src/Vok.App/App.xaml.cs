@@ -8,6 +8,7 @@ using Vok.Core.Diagnostics;
 using Vok.Core.Launcher;
 using Vok.Core.Clipboard;
 using Vok.Core.Platform;
+using Vok.Core.Stage;
 using Vok.Core.Workspace;
 using Vok.Hosting;
 using Vok.Infrastructure.Windows.Diagnostics;
@@ -16,6 +17,7 @@ using Vok.Infrastructure.Windows.Clipboard;
 using Vok.Infrastructure.Windows.Launcher;
 using Vok.Infrastructure.Windows.Persistence;
 using Vok.Infrastructure.Windows.Shell;
+using Vok.Infrastructure.Windows.Stage;
 using Vok.Infrastructure.Windows.Windowing;
 using Vok.Features.Tray;
 using Vok.Presentation;
@@ -105,6 +107,7 @@ public partial class App : Application
         services.AddSingleton(WorkspaceHostOptions.FromEnvironment());
         services.AddSingleton(new ClipboardImageCaptureOptions());
         services.AddSingleton(new ClipboardRetentionOptions());
+        services.AddSingleton(new StageOptions());
         services.AddSingleton(provider => new ClipboardCaptureOptions(
             image: provider.GetRequiredService<ClipboardImageCaptureOptions>()));
         services.AddSingleton<WorkspaceSessionStateMachine>();
@@ -127,6 +130,10 @@ public partial class App : Application
             new SqliteAppSettingsStore(provider.GetRequiredService<SqliteStorageExecutor>()));
         services.AddSingleton<ILauncherRepository>(provider =>
             new SqliteLauncherRepository(provider.GetRequiredService<SqliteStorageExecutor>()));
+        services.AddSingleton<IStageRepository>(provider =>
+            new SqliteStageRepository(
+                provider.GetRequiredService<SqliteStorageExecutor>(),
+                provider.GetRequiredService<StageOptions>()));
         services.AddSingleton(provider =>
             new SqliteClipboardHistoryRepository(
                 provider.GetRequiredService<SqliteStorageExecutor>()));
@@ -139,6 +146,7 @@ public partial class App : Application
         services.AddSingleton<IPasteInputService, Win32PasteInputService>();
         services.AddSingleton<WindowsShellStaExecutor>();
         services.AddSingleton<ILauncherShellService, WindowsLauncherShellService>();
+        services.AddSingleton<IStageFileService, WindowsStageFileService>();
         services.AddSingleton<IClipboardFilePresentationService,
             WindowsClipboardFilePresentationService>();
         services.AddSingleton<IClipboardImageDestinationService>(provider =>
