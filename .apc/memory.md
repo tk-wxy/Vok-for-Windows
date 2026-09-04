@@ -11,10 +11,10 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏范围的 M2.0–M2.4 已完成并归档冻结；M3 完整文件型合同由 `decisions.md §27` 约束，当前入站 MVP 由 §28 收窄。M3.MVP1 数据内核与 M3.MVP2 Stage 展示/统一入站路由均已完成；真实产品库副本、发布候选和 Explorer/桌面物理闭环尚未验收。当前运行的是用户此前“启动”请求产生的源码 Release PID 848（创建于 2026-09-04 20:43:31），MVP2 实施只使用隔离 artifacts，未停止、重启或替换它。
-- **最近进展**：新增固定 64 项、可前后导航的 Stage keyset 页面与真实 WPF 卡片/状态/页脚；唯一 `WorkspaceFileDropRouter` 独占 drag id、三态目标、一次 FileDrop 快照和幂等终态，Launcher/Stage 仅作 adapter，OLE Copy 与异步持久结果分开表达。Launcher 忽略 `canDrop` 的根因已通过 active/targeted 双状态修正；目标切换、重入隐藏、替换/迟到终态、异步失败、提交后刷新失败、10,000 条有界 VM 和浅/深/260 DIP 布局均有门禁。Release 71/71 Core + 395/395 集成共 466/466，构建 0 warning / 0 error；`IWorkspaceWindow`/`WorkspaceController` 与 MVP1 Core/schema/仓储均未修改。
-- **下一步**：进入 M3.MVP3：先只读审计 PID 848 对应真实库状态，再只在数据库副本验证 schema 迁移；随后生成不覆盖当前实例的发布候选，执行 Explorer/桌面“拖动中呼出 → Stage 松手 → 条目显示并跨重启保留”的物理闭环。MVP3 不再重构 Router 或 Stage 页面状态。
-- **已知问题**：当前运行 PID 848 仍是 MVP1 二进制，不包含本次 Stage UI/Router；真实库可能已初始化为 schema 7，但尚未直接读取确认。自动化只证明代码路径就绪，尚不能宣称真实 Explorer/桌面入站可用；Drop 向 OLE 返回 Copy 与异步落库成功仍可能在物理体验上分时出现，需验证状态可在下次呼出看到。隐藏 WPF 源 HWND 的出站 OLE 尚未物理验证但不阻塞入站 MVP；R27 的真实 Modern Standby/睡眠、Unlock、Explorer 重启信号，合法 PNG 轻量 header 的 codec 失败后备、真实产品清空、物理磁盘耗尽和跨屏/多屏仍未验证。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3.MVP1 数据内核、M3.MVP2 Stage/统一 Router 和 M3.MVP3 数据/发布/真机验收已按实际完成范围归档，源码恢复到活动拖动反复显隐问题报告前的 M3.MVP3 行为。
+- **最近进展**：保留 M3.MVP3 的在线备份/迁移探针、物理记录器及两项 100 轮自动门禁；移除后来加入的租约内关闭抑制、对应测试和 DWM/OLE Gate 探针。Explorer/桌面代表矩阵与用户 5 组共 50+ 次循环通过，Release 基线为 468/468。
+- **下一步**：完成本次回退/归档提交后进入 M3.1 管理动作，优先实现只移除 Stage 引用和 Missing 状态；再次触碰活动外部拖动显隐前重新打开 `docs/KNOWN_ISSUES.md` KI-001。
+- **已知问题**：KI-001 已延期：活动 Explorer 拖动中关闭 Vok 可能让松手落回源目录并生成副本。测试产生的 `.lnk` 副本未经授权不得删除；当前运行 PID 7864 仍来自已移除源码的关闭抑制候选，未按本次请求擅自替换；物理稳定性实际为 50+ 次而非计划的 100 次。
 
 ## §0A 最近会话
 
@@ -34,6 +34,12 @@
 - 收口时发现先前 PID 16900 已结束，源码 Release PID 848 于 20:43:31 启动；可执行文件也在该时刻生成，符合此前被中断的用户“启动”请求。本规划没有结束或替换 PID 848。由于正常 App 启动会经 Appearance 初始化共享存储，真实库 schema 7 状态改记为“可能已迁移、尚未直接核验”，后续不得继续沿用“真实库肯定未触碰”的旧假设。
 - 用户要求开始实施 M3.MVP2。Stage 固定 64 项页面、真实 WPF 展示、唯一三态 Router、Launcher active/targeted 修正、异步 Stage 入站状态与组合根已落地；路由先认领/清视觉再读取外国数据，目标切换先全撤销再唯一激活，不修改已验证的 Workspace drag lease。
 - 新增 10 项门禁并通过 Release 71/71 Core + 395/395 集成共 466/466、0 warning 构建与 `git diff --check`；浅/深真实 WPF 渲染目视通过，260×408 DIP 窄列布局通过。PID 848 保持原进程，测试未连接真实产品库。下一步为 M3.MVP3 实库副本、发布候选和 Explorer/桌面物理闭环。
+- 用户要求规划下一阶段。只读核对发现当前进程已变为源码 Release PID 24292，产物包含 Stage UI/Router；真实库已是 schema 7、`quick_check=ok`、0 外键违规并有 1 条 Stage 引用。该进程变化不是本规划执行，Stage 行来源未读取，不能据此宣称物理验收通过。
+- 新增 `docs/M3_STAGE_MVP3_PLAN.md`：因真实首次 6→7 现场已不可回溯，数据门禁改为 SQLite Online Backup 后的当前 schema 7 幂等、真实数据派生 schema 6→7 和历史 schema 5→7 三组互补证据；随后隔离 466+ 回归、独立自包含候选、Explorer/桌面代表矩阵、同一 canonical 文件 100 轮成功/取消、重启/源摘要/资源收尾。容量、无效与提交故障保留在隔离库，避免填满或破坏无移除入口的真实 Stage。
+- 用户要求开始执行 M3.MVP3。`Probe-M3StageData.ps1` 已用 SQLite Online Backup API 创建不覆盖历史的实时备份，并在副本通过 schema 7 幂等、派生 6→7 和历史 5→7；历史样本缺配套资产快照的 8/19 可核验边界已明确保留。新增 Router 与 Stage VM 两项 100 轮门禁后 Release 71/71 + 397/397 共 468/468、0 warning、WPF 浅深/窄列、脚本 AST 和差异检查通过。
+- 从产品源码相对 `40a48c2` 无差异的状态生成独立 win-x64 自包含候选，415 文件清单和关键 SHA-256 已记录；精确停止原 PID 24292 后启动候选 PID 2664，路径/哈希/单实例及启动后真实库 48/48 资产完整性通过。固定 PID/HWND 的只读记录器已启动，下一步必须由用户完成真实 Explorer/桌面物理矩阵，不能用自动 `IDataObject` 冒充。
+- 用户完成 Explorer 四文件批量、桌面目录、`.lnk` 重复、Esc 取消和 Launcher/Stage/None 跨区矩阵并确认全部通过；审计证明 Stage 只从 1 增到预期 6，数据库与资产继续健康。因时间限制，稳定性物理测试实际完成 5 组共 50+ 次且均无异常，不能记作计划的 100 次。
+- 随后确认“活动拖动中呼出再关闭”曾生成同目录 `.lnk` 副本；关闭抑制虽保护源目录却导致拖动时不能关闭，DWM cloak Gate 也因失去 OLE 命中而失败。2026-09-05 用户决定延期该问题：产品与测试源码恢复到问题报告前状态，实验代码移除，简要归档为 `docs/KNOWN_ISSUES.md` KI-001；用户副本与当前运行候选均未擅自改动。
 
 ### 会话 2026-09-03 - 工作台滚动条与设置界面视觉优化
 

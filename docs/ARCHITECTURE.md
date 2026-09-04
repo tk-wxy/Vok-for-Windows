@@ -166,7 +166,7 @@ M0 至各模块都记录：
 
 当前先以文件引用完成最小入站闭环：外部拖动中用快捷键呼出 Vok，在中转站松手后规范化、持久化并展示条目。排序/移除、点击取用和安全拖出随后独立接入；文本再后置，图片必须等模块中立的资产引用与回收边界完成后再进入。中转站与剪贴板保持独立聚合、表和生命周期，只复用经第二消费者证明的底层机制。窗口级外部 OLE 拖放必须由单一会话路由所有，不能为启动台和中转站建立互相竞争的租约。
 
-状态：产品契约与长期路线已于 2026-09-04 锁定，当前交付按 `decisions.md §28` 收窄为拖动呼出入站 MVP。M3.MVP1 数据内核和 M3.MVP2 展示/路由均已完成：独立 Stage Core、schema 7、文件规范化、原子仓储、固定 64 项 VM 页面、真实 Stage WPF 与唯一 `WorkspaceFileDropRouter` 通过 Release 466/466 自动测试和 0 warning 构建；`IWorkspaceWindow`/`WorkspaceController` 保持不变。文件型首期继续采用默认 50/产品上限 200 的引用容量、批量原子拒绝与重复回顶；200 不进入 schema 或仓储结构，首版即使用 64 位稀疏排序和 keyset，以便后续只调整策略和规模门禁即可提高上限。当前尚未读取真实产品库、生成发布候选或执行 Explorer/桌面物理拖入，因此用户可用性结论等待 M3.MVP3；取用、拖出、成功消费和交付/清理双结果继续后置。隐藏 WPF 源窗的出站 OLE Gate 只在实现拖出前执行，不阻塞入站 MVP。见 `M3_STAGE_PLAN.md`、`M3_STAGE_MVP1_PLAN.md`、`M3_STAGE_MVP2_PLAN.md`、`decisions.md §26–§28`。
+状态：产品契约与长期路线已于 2026-09-04 锁定，按 `decisions.md §28` 收窄的拖动呼出入站 MVP 已于 2026-09-05 归档。M3.MVP1–3 已交付独立 Stage Core、schema 7、文件规范化、原子仓储、固定 64 项 VM 页面、真实 Stage WPF、唯一 `WorkspaceFileDropRouter`、数据副本门禁、独立候选和 Explorer/桌面代表矩阵；用户实际完成 5 组共 50+ 次稳定性操作，不写成计划的 100 次。文件型首期继续采用默认 50/产品上限 200 的引用容量、批量原子拒绝与重复回顶；200 不进入 schema 或仓储结构。活动外部拖动中反复显隐的源目录副本风险按用户要求延期为 `KNOWN_ISSUES.md` KI-001，源码恢复到问题报告前行为，未保留关闭抑制或 DWM/OLE Gate 实验代码，也不宣称该路径安全。下一步进入 M3.1；取用、拖出、成功消费和交付/清理双结果继续后置。见 `M3_STAGE_PLAN.md`、`M3_STAGE_MVP1_PLAN.md`、`M3_STAGE_MVP2_PLAN.md`、`M3_STAGE_MVP3_PLAN.md`、`KNOWN_ISSUES.md`、`decisions.md §26–§29`。
 
 ### M4：基础设置与数据保护
 

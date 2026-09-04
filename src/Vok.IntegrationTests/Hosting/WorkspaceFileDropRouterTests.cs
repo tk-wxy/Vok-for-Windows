@@ -171,6 +171,57 @@ public sealed class WorkspaceFileDropRouterTests
         Assert.False(router.IsTracking);
     }
 
+    [Fact]
+    public void HundredAlternatingDropsAndCancellationsLeaveNoSessionOrVisualState()
+    {
+        var visualState = new Dictionary<WorkspaceFileDropTargetKind, bool>();
+        var launcher = new FakeTarget(WorkspaceFileDropTargetKind.Launcher, visualState);
+        var stage = new FakeTarget(WorkspaceFileDropTargetKind.Stage, visualState);
+        var started = new List<long>();
+        var ended = new List<(long Id, bool Accepted)>();
+        using var router = new WorkspaceFileDropRouter(
+            [launcher, stage],
+            started.Add,
+            (id, accepted) => ended.Add((id, accepted)),
+            () => true);
+        var dataObjects = new List<CountingFileDropDataObject>();
+
+        for (var index = 0; index < 100; index++)
+        {
+            var data = new CountingFileDropDataObject([$@"C:\Stage\cycle-{index}.txt"]);
+            dataObjects.Add(data);
+            Assert.True(router.Begin(data, WorkspaceFileDropTargetKind.Launcher));
+            Assert.True(router.Update(WorkspaceFileDropTargetKind.Stage));
+            Assert.False(router.Update(WorkspaceFileDropTargetKind.None));
+            Assert.True(router.Update(WorkspaceFileDropTargetKind.Stage));
+
+            if (index % 2 == 0)
+            {
+                var completion = router.Complete(
+                    data,
+                    WorkspaceFileDropTargetKind.Stage);
+                Assert.True(completion.Accepted);
+            }
+            else
+            {
+                router.Cancel();
+            }
+
+            Assert.False(router.IsTracking);
+            Assert.Equal(WorkspaceFileDropTargetKind.None, router.CurrentTarget);
+            Assert.All(visualState.Values, Assert.False);
+        }
+
+        Assert.Equal(100, started.Count);
+        Assert.Equal(100, ended.Count);
+        Assert.Equal(50, ended.Count(static terminal => terminal.Accepted));
+        Assert.Equal(50, stage.ReceiveCount);
+        Assert.Equal(100, dataObjects.Sum(static data => data.GetDataPresentCallCount));
+        Assert.Equal(50, dataObjects.Sum(static data => data.GetDataCallCount));
+        Assert.True(launcher.MaximumSimultaneouslyTargeted <= 1);
+        Assert.True(stage.MaximumSimultaneouslyTargeted <= 1);
+    }
+
     private sealed class FakeTarget : IWorkspaceFileDropTarget
     {
         private readonly IDictionary<WorkspaceFileDropTargetKind, bool> _visualState;
@@ -194,6 +245,8 @@ public sealed class WorkspaceFileDropRouterTests
         public int MaximumSimultaneouslyTargeted { get; private set; }
 
         public IReadOnlyList<string>? ReceivedPaths { get; private set; }
+
+        public int ReceiveCount { get; private set; }
 
         public Exception? ReportedException { get; private set; }
 
@@ -220,6 +273,7 @@ public sealed class WorkspaceFileDropRouterTests
             IReadOnlyList<string> paths,
             CancellationToken cancellationToken)
         {
+            ReceiveCount++;
             ReceivedPaths = paths;
             Received.TrySetResult();
             return _receiveException is null

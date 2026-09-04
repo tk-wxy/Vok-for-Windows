@@ -58,7 +58,7 @@
 
 ## 项目结构
 
-M0 生产宿主、M1 启动台和单屏范围的 M2 剪贴板已完成并冻结；项目现进入 M3 中转站开发，产品契约已锁定。“外部拖动中呼出并在 Stage 松手持久落项”的 M3.MVP1 数据内核与 M3.MVP2 Stage UI/唯一入站路由已经完成，真实产品库副本、发布候选和 Explorer/桌面物理闭环尚未验收。当前实际结构如下：
+M0 生产宿主、M1 启动台和单屏范围的 M2 剪贴板已完成并冻结；项目现进入 M3 中转站开发，产品契约已锁定。“外部拖动中呼出并在 Stage 松手持久落项”的 M3.MVP1 数据内核、M3.MVP2 Stage UI/唯一入站路由和 M3.MVP3 数据/发布/真机验收均已完成并归档。活动 Explorer 拖动中反复关闭与呼出的源目录副本风险按用户要求延期为 `KNOWN_ISSUES.md` 的 KI-001，源码恢复到问题报告前的 M3.MVP3 行为。当前实际结构如下：
 
 ```text
 src/
@@ -74,15 +74,19 @@ docs/
 ├── M2_CLIPBOARD_PLAN.md        # 已归档的剪贴板实现与验收记录
 ├── M3_STAGE_PLAN.md            # 中转站产品契约、完整路线与分期门禁
 ├── M3_STAGE_MVP1_PLAN.md       # 已完成的 Stage 数据内核实施与验收记录
-└── M3_STAGE_MVP2_PLAN.md       # 下一阶段 Stage 展示与统一入站路由实施规格
+├── M3_STAGE_MVP2_PLAN.md       # 已完成的 Stage 展示与统一入站路由实施记录
+├── M3_STAGE_MVP3_PLAN.md       # 已完成的入站 MVP 数据保护、发布候选与真机验收记录
+└── KNOWN_ISSUES.md             # 已确认但延期处理的问题索引
 tools/
 ├── Probe-M0.ps1                # 结构化同代五门禁烟雾探针
 ├── Measure-HostInteraction.ps1 # 固定 PID/HWND 时延与长期资源探针
-└── Probe-M2Clipboard.ps1        # 独立 Window Station 剪贴板与图片资源探针
+├── Probe-M2Clipboard.ps1        # 独立 Window Station 剪贴板与图片资源探针
+├── Probe-M3StageData.ps1        # Stage 实时只读审计、在线备份与副本回放探针
+└── Record-M3StageInbound.ps1    # 固定候选 PID/HWND 的物理验收记录器
 .apc/                           # 项目知识与开发协议
 ```
 
-中转站下一步进入 M3.MVP3：只读审计真实库状态、在副本验证迁移、生成发布候选并完成 Explorer/桌面物理拖动呼出入站闭环；出站 OLE Gate 后置到拖出功能之前。搜索在正式进入里程碑前继续只保留文档边界。
+中转站 M3.MVP3 已按实际完成范围归档：数据副本门禁、Release 468/468、独立候选、Explorer/桌面代表矩阵和用户 5 组共 50+ 次循环通过；受时间限制未把 50+ 次写成计划中的 100 次。下一步进入 M3.1 管理动作，优先实现安全移除引用与 Missing 状态。KI-001 不阻断该阶段，但在再次修改活动外部拖动显隐前必须重新打开并验证；出站 OLE Gate 仍后置到拖出功能之前。
 
 ## 常用命令
 

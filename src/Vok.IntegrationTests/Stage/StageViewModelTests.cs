@@ -1,6 +1,7 @@
 using System.IO;
 using Vok.Core.Stage;
 using Vok.Features.Stage;
+using Vok.Infrastructure.Windows.Persistence;
 using Xunit;
 
 namespace Vok.IntegrationTests.Stage;
@@ -211,6 +212,77 @@ public sealed class StageViewModelTests
             viewModel.Items.Select(static item => item.Id));
         Assert.False(viewModel.CanLoadNewer);
         Assert.Equal(1, repository.AddCallCount);
+    }
+
+    [Fact]
+    public async Task HundredAlternatingDuplicateDropsAndPrecancellationsStayBounded()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "Vok.IntegrationTests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var databasePath = Path.Combine(directory, "stage-vm-cycles.db");
+            using var repository = new SqliteStageRepository(
+                databasePath,
+                new StageOptions(capacity: 50));
+            var descriptor = new StageTargetDescriptor(
+                StageItemKind.File,
+                @"C:\Stage\repeat.txt",
+                @"C:\STAGE\REPEAT.TXT",
+                "repeat.txt");
+            using var viewModel = new StageViewModel(
+                repository,
+                new StaticStageFileService(
+                    [new StageTargetResolution(
+                        descriptor.TargetValue,
+                        descriptor,
+                        null,
+                        null)]));
+            await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+
+            for (var index = 0; index < 100; index++)
+            {
+                if (index % 2 == 0)
+                {
+                    await viewModel.AddDroppedPathsAsync(
+                        [descriptor.TargetValue],
+                        TestContext.Current.CancellationToken);
+                }
+                else
+                {
+                    using var cancellation = new CancellationTokenSource();
+                    cancellation.Cancel();
+                    await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                        viewModel.AddDroppedPathsAsync(
+                            [descriptor.TargetValue],
+                            cancellation.Token));
+                }
+
+                Assert.InRange(viewModel.Items.Count, 0, StageViewModel.PageSize);
+                Assert.False(viewModel.IsLoading);
+            }
+
+            var item = Assert.Single(viewModel.Items);
+            Assert.Equal(descriptor.TargetValue, item.TargetValue);
+            Assert.Equal(1, viewModel.TotalCount);
+            Assert.False(viewModel.HasError);
+
+            var page = await repository.LoadPageAsync(
+                null,
+                StageViewModel.PageSize,
+                TestContext.Current.CancellationToken);
+            Assert.Equal(50, Assert.Single(page.Items).Revision);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
     }
 
     private static IReadOnlyList<StageItem> CreateItems(

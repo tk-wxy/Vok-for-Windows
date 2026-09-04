@@ -62,9 +62,9 @@
 
 - [ ] R11：`Application.Deactivated` 是整个 Vok 丢失前台的唯一权威信号；宿主不得暴露或转发无消费者的单窗口失活接口。除同代持有由真实外部 OLE `DragEnter` 建立的窄拖放租约外，当前 generation 在下一 Dispatcher 轮次仍为 `Visible` 时必须以 `ForegroundLost` 被动隐藏；真实前台捕获只用于诊断，HWND 为 0 或捕获失败也不得阻断。拖放租约必须在 Drop、窗口级 DragLeave、隐藏、换代、退出或下一次 DragEnter 时收尾，终态先占有后执行，陈旧/重复终态不得影响新代；已经可见时再次显式热键关闭可抢占租约，只有本次长按从隐藏态呼出的原始松键仍等待拖放终态。普通失活必须完成 Hide、退出 Topmost、状态机和诊断收尾，但不得恢复旧捕获目标；状态明确为 `NotRequested`。
   - 范围：M0 Deactivated、前台切换、隐藏策略、诊断和下一代目标捕获。
-  - 证据：2026-08-24 用户确认产品契约；开始菜单首次点击实测揭示前台 HWND 短暂无效会让第一版漏关，现以应用级因果独立于诊断捕获。2026-08-28 的 M1 外部拖放实现仅在存在 `FileDrop` 的真实 DragEnter 后建立同代租约；自动测试覆盖租约内失活、窗口内部取消、接受/重复终态、显式热键优先、原始长按呼出延后及旧终态跨代隔离，见 `decisions.md §19`。
-  - 最后验证：2026-08-28。
-  - 状态：active；普通失活与外部物理拖放均已真机验收，拖放窄抑制和竞态自动验证通过；混合 DPI 跨屏仍是后续专项边界。
+  - 证据：2026-08-24 用户确认产品契约；开始菜单首次点击实测揭示前台 HWND 短暂无效会让第一版漏关，现以应用级因果独立于诊断捕获。2026-08-28 的 M1 外部拖放实现仅在存在 `FileDrop` 的真实 DragEnter 后建立同代租约；自动测试覆盖租约内失活、窗口内部取消、接受/重复终态、显式热键优先、原始长按呼出延后及旧终态跨代隔离，见 `decisions.md §19`。2026-09-04 的源目录副本反例说明显式关闭抢占并非已验证安全路径，已延期为 `docs/KNOWN_ISSUES.md` KI-001。
+  - 最后验证：2026-09-05。
+  - 状态：active；源码按用户要求恢复到问题报告前的既有合同，普通失活与标准外部拖放已真机验收；反复显隐路径不得宣称安全，后续须从 KI-001 重新立项，混合 DPI/跨屏仍未验证。
 
 - [ ] R12：托盘左键和菜单“显示界面/设置”必须进入 `WorkspaceController` 的幂等显示事务，不得直接调用 WPF `Window.Show/Activate`；右键菜单取得本进程前台前先捕获外部目标。设置只作为唯一主 HWND 内的视图切换。窗口、托盘菜单和其他入口的退出必须先占有一次退出事务，完成宿主隐藏/Topmost 清理后再由唯一应用生命周期所有者关闭；退出占有后迟到失活、热键和显示请求不得产生第二条事务。
   - 范围：系统托盘、设置壳层、显隐代次、失活竞态、Alt+F4 与应用退出释放。
@@ -208,7 +208,7 @@
   - 范围：SQLite、启动台、剪贴板历史、Stage、图片与后续大列表。
   - 证据：https://learn.microsoft.com/dotnet/standard/data/sqlite/async 说明 Async 方法实际同步；https://learn.microsoft.com/dotnet/desktop/wpf/advanced/optimizing-performance-controls 说明 WPF 没有内建数据虚拟化。2026-08-28 真机旧库因已有 `launcher_items` 使 `CREATE TABLE IF NOT EXISTS` 静默跳过，但代码仍写入版本并查询新列，复现 `no such column: target_kind`；schema 2 改为列集合识别和单事务迁移。M2.1–2 形成 schema 3/4，M2.3.4 形成 schema 5，M2.4 形成 schema 6。2026-09-04 Stage schema 7 只为旧版本创建新表；当前版本缺表、错误列、错误唯一性/排序索引和未来版本均拒绝，建表后的索引冲突与所有前置 schema 写入一起回滚。忠实临时 schema 6 夹具升级后保留 Launcher、Clipboard 和资产引用元数据，`quick_check=ok`、0 外键违规；10,000 条 Stage 复合 keyset 无遗漏并使用顺序索引。
   - 最后验证：2026-09-04。
-  - 状态：active；设置、启动台、剪贴板与 Stage 共享串行所有权，schema 1→2→3→4→5→6→7、失败回滚、SQL 分页、去重/排序、容量/保留与取消一致性均有自动测试；M3.MVP1 通过 Release 456/456。真实用户库未由 schema 7 代码迁移，Stage 的 WPF 有界页面窗口尚待 M3.MVP2。
+  - 状态：active；设置、启动台、剪贴板与 Stage 共享串行所有权，schema 1→2→3→4→5→6→7、失败回滚、SQL 分页、去重/排序、容量/保留与取消一致性均有自动测试；M3.MVP3 已通过 Release 468/468、固定 64 项 Stage WPF、实时 SQLite Online Backup、当前 schema 7 连续初始化、真实数据派生 schema 6→7 及历史 schema 5→7。实时备份与启动后真实库均为 `quick_check=ok`、0 外键违规且 48/48 Ready 资产文件完整。首次真实 6→7 现场未被预先记录，派生回放不能冒充历史现场；schema 5 备份没有资产目录快照，故其 19 条旧资产只证明元数据迁移，不作为历史文件完整性证据。
 
 ### 发布与互操作
 

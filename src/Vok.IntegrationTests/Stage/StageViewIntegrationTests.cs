@@ -90,6 +90,7 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 window.UpdateLayout();
                 Assert.Equal(260, view.ActualWidth, precision: 3);
                 Assert.Equal(408, view.ActualHeight, precision: 3);
+                CaptureWindowIfRequested(window, "stage-view-narrow-light.png");
 
                 var overlay = Assert.IsType<Border>(view.FindName("DropOverlay"));
                 var interactionSurface = Assert.IsType<Grid>(
