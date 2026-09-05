@@ -11,9 +11,9 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP 已归档，M3.1 管理动作进入实施，首批 revision-safe 移除、可见项 Availability/Missing 与安全移除 UI 已完成自动门禁，固定、Shell/路径动作、重新关联和排序尚未实现。
-- **最近进展**：Stage 删除只按 `id + expected revision` 在 schema 7 单事务移除引用；可用性只检查视口内已实现容器，隐藏/回收/换绑取消且迟到结果按 id+revision 拒绝。成功删除后权威补页，刷新失败不重放写入；Release 为 71/71 + 406/406，共 477/477，WPF 正常/Missing/暗色/窄列通过。
-- **下一步**：继续 M3.1 Checkpoint 4，先实现 revision-safe 固定，再接 Stage 专用打开/定位隐藏事务和复制原路径；随后才进入重新关联与有界排序。不得混入 M3.2 取用、M3.3 拖出或 KI-001 修改。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP 已归档，M3.1 Checkpoint 1–4 已完成自动门禁：revision-safe 移除/固定、可见项 Availability/Missing、安全管理 UI、隐藏后打开/定位和复制原路径均已落地；重新关联、有界排序和候选物理验收尚未实现。
+- **最近进展**：固定按 `id + expected revision` 在 schema 7 单事务返回权威条目，revision 更新会取消并重建可见项 Availability；Stage 使用独立 `StageManagementAction` 且隐藏成功后才经共享 Shell STA 打开/定位，路径文本复制复用唯一 Clipboard STA/self-write 并保持窗口可见。Release 为 74/74 + 420/420，共 494/494，构建零警告/错误，浅色/深色/Missing/固定/260 DIP 通过。
+- **下一步**：进入 M3.1 Checkpoint 5 重新关联：先加入可注入选择器与文件/目录/`.lnk` 类型约束，再完成 Resolve、revision-safe 提交、canonical 冲突和 Availability 换代；随后才进入有界排序。不得混入 M3.2 取用、M3.3 拖出或 KI-001 修改。
 - **已知问题**：KI-001 已延期：活动 Explorer 拖动中关闭 Vok 可能让松手落回源目录并生成副本。测试产生的 `.lnk` 副本未经授权不得删除；当前运行 PID 7864 仍来自已移除源码的关闭抑制候选，未按本次请求擅自替换；物理稳定性实际为 50+ 次而非计划的 100 次。
 
 ## §0A 最近会话
@@ -25,6 +25,9 @@
 - 首批实现新增 `RemoveAsync(id, expectedRevision)` 显式终态；SQLite 只删除 Stage 行，stale revision 拒绝且临时源文件摘要不变。成功后当前页权威补位，末页回退，提交后刷新失败不重放删除。
 - Stage/Clipboard 共用内部 Windows 可用性判定，但保持独立 Core 契约；Stage 只检查视口内已实现卡片，滚动回收、隐藏、换绑和迟到结果均以容器/id/revision 收口。卡片新增 Missing 状态与更多菜单安全移除入口。
 - 新增 9 项门禁后 Release Core 71/71 + Integration 406/406，共 477/477，构建 0 warning / 0 error；正常/Missing/暗色/260 DIP WPF 目视通过。未改 schema、真实库、运行 PID、Router 或 KI-001；下一步进入固定与 Shell/路径动作。
+- Checkpoint 4 新增 revision-safe 固定与权威条目原位回填；revision 变化会让旧 Availability 结果失效并为可见容器重查。固定/取消固定、冲突、NoChange、溢出回滚、跨重开和提交后 UI 应用失败不重放均有门禁。
+- Stage 打开/定位使用独立 `StageManagementAction`，隐藏成功后才经 Launcher/Stage 共用的 internal Shell 动作和唯一 Shell STA 执行；Missing 禁用。复制原路径使用 Stage 自有 Core 契约并在 Windows 内映射唯一 Clipboard STA/self-write，保持 Vok 可见且不改条目。
+- 固定按钮与更多菜单在浅色、深色、Missing、固定和 260 DIP 窄列目视通过；窄列初版曾把更多按钮挤出右侧，调整信息层级与按钮预算后复验通过。最终 Release Core 74/74 + Integration 420/420，共 494/494，构建 0 warning / 0 error；下一步进入重新关联。
 
 ### 会话 2026-09-04 - M3 中转站产品契约、扩容与入站 MVP 收窄
 

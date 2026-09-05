@@ -9,24 +9,50 @@ public sealed class WindowsStageFileService : IStageFileService, IDisposable
 {
     private readonly WindowsShellStaExecutor _executor;
     private readonly bool _ownsExecutor;
+    private readonly Action<string> _openAction;
+    private readonly Action<string> _revealAction;
     private int _disposed;
 
     public WindowsStageFileService()
-        : this(new WindowsShellStaExecutor(), ownsExecutor: true)
+        : this(
+            new WindowsShellStaExecutor(),
+            ownsExecutor: true,
+            WindowsFileShellActions.Open,
+            WindowsFileShellActions.RevealInExplorer)
     {
     }
 
     public WindowsStageFileService(WindowsShellStaExecutor executor)
-        : this(executor, ownsExecutor: false)
+        : this(
+            executor,
+            ownsExecutor: false,
+            WindowsFileShellActions.Open,
+            WindowsFileShellActions.RevealInExplorer)
+    {
+    }
+
+    internal WindowsStageFileService(
+        WindowsShellStaExecutor executor,
+        Action<string> openAction,
+        Action<string> revealAction)
+        : this(
+            executor,
+            ownsExecutor: false,
+            openAction,
+            revealAction)
     {
     }
 
     private WindowsStageFileService(
         WindowsShellStaExecutor executor,
-        bool ownsExecutor)
+        bool ownsExecutor,
+        Action<string> openAction,
+        Action<string> revealAction)
     {
         _executor = executor ?? throw new ArgumentNullException(nameof(executor));
         _ownsExecutor = ownsExecutor;
+        _openAction = openAction ?? throw new ArgumentNullException(nameof(openAction));
+        _revealAction = revealAction ?? throw new ArgumentNullException(nameof(revealAction));
     }
 
     public Task<IReadOnlyList<StageTargetResolution>> ResolveAsync(
@@ -61,6 +87,26 @@ public sealed class WindowsStageFileService : IStageFileService, IDisposable
                 WindowsFileAvailability.Unavailable => StageFileAvailability.Unavailable,
                 _ => throw new InvalidOperationException("Unsupported file availability."),
             },
+            cancellationToken);
+    }
+
+    public Task OpenAsync(
+        StageItem item,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        return ExecuteAsync(
+            () => _openAction(item.TargetValue),
+            cancellationToken);
+    }
+
+    public Task RevealInExplorerAsync(
+        StageItem item,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        return ExecuteAsync(
+            () => _revealAction(item.TargetValue),
             cancellationToken);
     }
 
@@ -146,4 +192,20 @@ public sealed class WindowsStageFileService : IStageFileService, IDisposable
         StageTargetFailureKind failure,
         string error) =>
         new(input, null, failure, error);
+
+    private Task ExecuteAsync(
+        Action operation,
+        CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(
+            Volatile.Read(ref _disposed) != 0,
+            this);
+        return _executor.ExecuteAsync(
+            () =>
+            {
+                operation();
+                return true;
+            },
+            cancellationToken);
+    }
 }

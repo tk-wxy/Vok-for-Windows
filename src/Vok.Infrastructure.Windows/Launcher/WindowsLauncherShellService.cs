@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -74,18 +73,7 @@ public sealed partial class WindowsLauncherShellService : ILauncherShellService
         return ExecuteAsync(
             () =>
             {
-                var started = Process.Start(new ProcessStartInfo
-                {
-                    FileName = item.TargetValue,
-                    UseShellExecute = true,
-                });
-                if (started is null)
-                {
-                    throw new InvalidOperationException(
-                        $"Windows Shell 未能启动目标：{item.TargetValue}");
-                }
-
-                started.Dispose();
+                WindowsFileShellActions.Open(item.TargetValue);
                 return true;
             },
             cancellationToken);
@@ -105,7 +93,7 @@ public sealed partial class WindowsLauncherShellService : ILauncherShellService
         return ExecuteAsync(
             () =>
             {
-                RevealInExplorer(item.TargetValue);
+                WindowsFileShellActions.RevealInExplorer(item.TargetValue);
                 return true;
             },
             cancellationToken);
@@ -261,39 +249,6 @@ public sealed partial class WindowsLauncherShellService : ILauncherShellService
         }
     }
 
-    private static void RevealInExplorer(string target)
-    {
-        var root = Path.GetPathRoot(target);
-        if (string.Equals(
-                Path.TrimEndingDirectorySeparator(target),
-                Path.TrimEndingDirectorySeparator(root ?? string.Empty),
-                StringComparison.OrdinalIgnoreCase))
-        {
-            using var process = Process.Start(new ProcessStartInfo
-            {
-                FileName = target,
-                UseShellExecute = true,
-            });
-            return;
-        }
-
-        var pidl = ILCreateFromPath(target);
-        if (pidl == 0)
-        {
-            throw new InvalidOperationException($"无法解析路径：{target}");
-        }
-
-        try
-        {
-            var hr = SHOpenFolderAndSelectItems(pidl, 0, 0, 0);
-            Marshal.ThrowExceptionForHR(hr);
-        }
-        finally
-        {
-            ILFree(pidl);
-        }
-    }
-
     private static string GetFingerprintForItem(LauncherItem item)
     {
         try
@@ -341,16 +296,4 @@ public sealed partial class WindowsLauncherShellService : ILauncherShellService
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool DeleteObject(nint objectHandle);
 
-    [LibraryImport("shell32.dll", StringMarshalling = StringMarshalling.Utf16)]
-    private static partial nint ILCreateFromPath(string path);
-
-    [LibraryImport("shell32.dll")]
-    private static partial void ILFree(nint itemIdList);
-
-    [LibraryImport("shell32.dll")]
-    private static partial int SHOpenFolderAndSelectItems(
-        nint folderItemIdList,
-        uint itemCount,
-        nint childItemIdLists,
-        uint flags);
 }

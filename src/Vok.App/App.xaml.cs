@@ -65,6 +65,7 @@ public partial class App : Application
         var window = _services.GetRequiredService<MainWindow>();
         var controller = _services.GetRequiredService<WorkspaceController>();
         _ = _services.GetRequiredService<LauncherActionController>();
+        _ = _services.GetRequiredService<StageActionController>();
         _ = _services.GetRequiredService<ClipboardPasteController>();
         var clipboardController = _services.GetRequiredService<ClipboardController>();
         var applicationController = _services.GetRequiredService<ApplicationController>();
@@ -150,6 +151,7 @@ public partial class App : Application
         services.AddSingleton<WindowsShellStaExecutor>();
         services.AddSingleton<ILauncherShellService, WindowsLauncherShellService>();
         services.AddSingleton<IStageFileService, WindowsStageFileService>();
+        services.AddSingleton<IStageClipboardService, WindowsStageClipboardService>();
         services.AddSingleton<IClipboardFilePresentationService,
             WindowsClipboardFilePresentationService>();
         services.AddSingleton<IClipboardImageDestinationService>(provider =>
@@ -187,6 +189,7 @@ public partial class App : Application
         services.AddSingleton<IWorkspaceCommands>(provider =>
             provider.GetRequiredService<WorkspaceController>());
         services.AddSingleton<LauncherActionController>();
+        services.AddSingleton<StageActionController>();
         services.AddSingleton(provider =>
         {
             var images = provider.GetRequiredService<ClipboardImageFeature>();

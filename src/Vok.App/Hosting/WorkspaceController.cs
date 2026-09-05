@@ -121,6 +121,13 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
                 cancellationToken)
             .ConfigureAwait(false)).Hidden;
 
+    public async Task<bool> HideForStageManagementActionAsync(
+        CancellationToken cancellationToken = default) =>
+        (await HideForActionAsync(
+                WorkspaceHideReason.StageManagementAction,
+                cancellationToken)
+            .ConfigureAwait(false)).Hidden;
+
     public Task<WorkspaceActionHideResult> HideForPasteActionAsync(
         CancellationToken cancellationToken = default) =>
         HideForActionAsync(WorkspaceHideReason.ClipboardPaste, cancellationToken);

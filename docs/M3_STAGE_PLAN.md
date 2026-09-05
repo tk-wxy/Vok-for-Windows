@@ -354,7 +354,7 @@ INDEX stage_items_order ON stage_items(sort_order, id)
 
 交付：固定、手工排序、打开/定位、移除、重新关联和 Missing 可见项检查。
 
-状态：已于 2026-09-05 完成规划并开始实施。首批 revision-safe 的“只移除 Stage 引用”、可见项 Availability/Missing 和安全移除 UI 已落地，Release 477/477；固定、Shell/路径动作、重新关联、有界跨页排序及物理验收仍待后续检查点。schema 保持 7，外部拖放 Router 与 KI-001 未修改。详细契约、检查点和实施记录见 `M3_STAGE_M31_PLAN.md`。
+状态：已于 2026-09-05 完成规划并推进至 Checkpoint 4。revision-safe 的安全移除与固定、可见项 Availability/Missing、Stage 专用隐藏后打开/定位以及复制原路径均已落地，Release 494/494；重新关联、有界跨页排序及物理验收仍待后续检查点。schema 保持 7，外部拖放 Router 与 KI-001 未修改。详细契约、检查点和实施记录见 `M3_STAGE_M31_PLAN.md`。
 
 ### M3.2：仅复制与点击取用（MVP 后续）
 

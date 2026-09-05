@@ -11,6 +11,137 @@ namespace Vok.IntegrationTests.Persistence;
 public sealed class SqliteStageRepositoryTests
 {
     [Fact]
+    public async Task SetPinnedRequiresCurrentRevisionAndReturnsTheAuthoritativeItem()
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            var databasePath = Path.Combine(directory, "pin.db");
+            using var repository = new SqliteStageRepository(databasePath);
+            _ = await repository.AddOrMoveAsync(
+                [Target("C:\\Pinned.txt", "Pinned")],
+                TestContext.Current.CancellationToken);
+            var original = Assert.Single((await repository.LoadPageAsync(
+                null,
+                10,
+                TestContext.Current.CancellationToken)).Items);
+
+            var pinned = await repository.SetPinnedAsync(
+                original.Id,
+                original.Revision,
+                isPinned: true,
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(StageItemMutationStatus.Applied, pinned.Status);
+            var authoritative = Assert.IsType<StageItem>(pinned.Item);
+            Assert.True(authoritative.IsPinned);
+            Assert.Equal(original.Id, authoritative.Id);
+            Assert.Equal(original.Kind, authoritative.Kind);
+            Assert.Equal(original.TargetValue, authoritative.TargetValue);
+            Assert.Equal(original.CanonicalKey, authoritative.CanonicalKey);
+            Assert.Equal(original.ResolvedName, authoritative.ResolvedName);
+            Assert.Equal(original.SortOrder, authoritative.SortOrder);
+            Assert.Equal(original.CreatedUtc, authoritative.CreatedUtc);
+            Assert.Equal(original.Revision + 1, authoritative.Revision);
+            Assert.True(authoritative.UpdatedUtc >= original.UpdatedUtc);
+
+            var noChange = await repository.SetPinnedAsync(
+                authoritative.Id,
+                authoritative.Revision,
+                isPinned: true,
+                TestContext.Current.CancellationToken);
+            Assert.Equal(StageItemMutationStatus.NoChange, noChange.Status);
+            Assert.Equal(authoritative, noChange.Item);
+
+            var conflict = await repository.SetPinnedAsync(
+                original.Id,
+                original.Revision,
+                isPinned: false,
+                TestContext.Current.CancellationToken);
+            Assert.Equal(StageItemMutationStatus.RevisionConflict, conflict.Status);
+            Assert.Null(conflict.Item);
+
+            var missing = await repository.SetPinnedAsync(
+                Guid.NewGuid(),
+                expectedRevision: 1,
+                isPinned: true,
+                TestContext.Current.CancellationToken);
+            Assert.Equal(StageItemMutationStatus.NotFound, missing.Status);
+            Assert.Null(missing.Item);
+
+            var unpinned = await repository.SetPinnedAsync(
+                authoritative.Id,
+                authoritative.Revision,
+                isPinned: false,
+                TestContext.Current.CancellationToken);
+            Assert.Equal(StageItemMutationStatus.Applied, unpinned.Status);
+            var authoritativeUnpinned = Assert.IsType<StageItem>(unpinned.Item);
+            Assert.False(authoritativeUnpinned.IsPinned);
+            Assert.Equal(authoritative.Revision + 1, authoritativeUnpinned.Revision);
+
+            using var reopened = new SqliteStageRepository(databasePath);
+            var persisted = Assert.Single((await reopened.LoadPageAsync(
+                null,
+                10,
+                TestContext.Current.CancellationToken)).Items);
+            Assert.Equal(authoritativeUnpinned, persisted);
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task SetPinnedRevisionOverflowRollsBackWithoutChangingTheItem()
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            var databasePath = Path.Combine(directory, "pin-overflow.db");
+            using var executor = new SqliteStorageExecutor(databasePath);
+            using var repository = new SqliteStageRepository(
+                executor,
+                new StageOptions());
+            _ = await repository.AddOrMoveAsync(
+                [Target("C:\\Overflow.txt", "Overflow")],
+                TestContext.Current.CancellationToken);
+            var original = Assert.Single((await repository.LoadPageAsync(
+                null,
+                10,
+                TestContext.Current.CancellationToken)).Items);
+            await executor.ExecuteAsync(
+                connection =>
+                {
+                    using var command = connection.CreateCommand();
+                    command.CommandText = "UPDATE stage_items SET revision = $revision WHERE id = $id;";
+                    command.Parameters.AddWithValue("$revision", long.MaxValue);
+                    command.Parameters.AddWithValue("$id", original.Id.ToString("D"));
+                    Assert.Equal(1, command.ExecuteNonQuery());
+                    return true;
+                },
+                TestContext.Current.CancellationToken);
+
+            await Assert.ThrowsAsync<OverflowException>(() => repository.SetPinnedAsync(
+                original.Id,
+                long.MaxValue,
+                isPinned: true,
+                TestContext.Current.CancellationToken));
+
+            var after = Assert.Single((await repository.LoadPageAsync(
+                null,
+                10,
+                TestContext.Current.CancellationToken)).Items);
+            Assert.False(after.IsPinned);
+            Assert.Equal(long.MaxValue, after.Revision);
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
     public async Task RemoveRequiresCurrentRevisionAndNeverTouchesTheSourceFile()
     {
         var directory = CreateTestDirectory();
@@ -108,16 +239,11 @@ public sealed class SqliteStageRepositoryTests
             var aBefore = initial.Items[0];
             var bBefore = initial.Items[1];
             var cBefore = initial.Items[2];
-            await executor.ExecuteAsync(
-                connection =>
-                {
-                    using var command = connection.CreateCommand();
-                    command.CommandText = "UPDATE stage_items SET is_pinned = 1 WHERE id = $id;";
-                    command.Parameters.AddWithValue("$id", aBefore.Id.ToString("D"));
-                    Assert.Equal(1, command.ExecuteNonQuery());
-                    return true;
-                },
-                TestContext.Current.CancellationToken);
+            var aPinned = Assert.IsType<StageItem>((await repository.SetPinnedAsync(
+                aBefore.Id,
+                aBefore.Revision,
+                isPinned: true,
+                TestContext.Current.CancellationToken)).Item);
 
             var moved = await repository.AddOrMoveAsync(
                 [
@@ -143,9 +269,9 @@ public sealed class SqliteStageRepositoryTests
             Assert.Equal(cBefore.Id, page.Items[0].Id);
             Assert.Equal(aBefore.Id, page.Items[2].Id);
             Assert.True(page.Items[2].IsPinned);
-            Assert.Equal(aBefore.CreatedUtc, page.Items[2].CreatedUtc);
+            Assert.Equal(aPinned.CreatedUtc, page.Items[2].CreatedUtc);
             Assert.Equal(2, page.Items[0].Revision);
-            Assert.Equal(2, page.Items[2].Revision);
+            Assert.Equal(3, page.Items[2].Revision);
             Assert.Equal(bBefore.Id, page.Items[3].Id);
             Assert.Equal(bBefore.Revision, page.Items[3].Revision);
             Assert.Equal(bBefore.SortOrder, page.Items[3].SortOrder);
@@ -524,6 +650,18 @@ public sealed class SqliteStageRepositoryTests
                 repository.RemoveAsync(
                     Guid.NewGuid(),
                     0,
+                    TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+                repository.SetPinnedAsync(
+                    Guid.Empty,
+                    1,
+                    isPinned: true,
+                    TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+                repository.SetPinnedAsync(
+                    Guid.NewGuid(),
+                    0,
+                    isPinned: true,
                     TestContext.Current.CancellationToken));
         }
         finally

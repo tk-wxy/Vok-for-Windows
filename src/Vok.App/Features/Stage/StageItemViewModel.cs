@@ -23,7 +23,7 @@ public sealed class StageItemViewModel : ObservableObject
         };
     }
 
-    public StageItem Item { get; }
+    public StageItem Item { get; private set; }
 
     public Guid Id => Item.Id;
 
@@ -45,11 +45,11 @@ public sealed class StageItemViewModel : ObservableObject
 
     public DateTimeOffset UpdatedUtc => Item.UpdatedUtc;
 
-    public string ParentPath { get; }
+    public string ParentPath { get; private set; }
 
-    public string Glyph { get; }
+    public string Glyph { get; private set; }
 
-    public string TypeText { get; }
+    public string TypeText { get; private set; }
 
     public StageFileAvailability Availability
     {
@@ -63,6 +63,10 @@ public sealed class StageItemViewModel : ObservableObject
     public bool IsMissing =>
         _hasAvailabilityResult && Availability is StageFileAvailability.Missing;
 
+    public bool CanOpenOrReveal => !IsBusy && !IsMissing;
+
+    public bool CanManage => !IsBusy;
+
     public string AvailabilityText => Availability switch
     {
         StageFileAvailability.Missing => "源文件已失效",
@@ -74,12 +78,67 @@ public sealed class StageItemViewModel : ObservableObject
     public bool IsBusy
     {
         get => _isBusy;
-        set => SetProperty(ref _isBusy, value);
+        set
+        {
+            if (!SetProperty(ref _isBusy, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(CanOpenOrReveal));
+            OnPropertyChanged(nameof(CanManage));
+        }
     }
 
-    public string AutomationName => HasAvailabilityStatus
-        ? $"{TypeText}，{DisplayName}，{TargetValue}，{AvailabilityText}"
-        : $"{TypeText}，{DisplayName}，{TargetValue}";
+    public string AutomationName
+    {
+        get
+        {
+            var pinnedText = IsPinned ? "已固定" : "未固定";
+            return HasAvailabilityStatus
+                ? $"{TypeText}，{DisplayName}，{TargetValue}，{pinnedText}，{AvailabilityText}"
+                : $"{TypeText}，{DisplayName}，{TargetValue}，{pinnedText}";
+        }
+    }
+
+    public void Update(StageItem item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        if (item.Id != Id)
+        {
+            throw new ArgumentException(
+                "An authoritative Stage item update must keep the same item id.",
+                nameof(item));
+        }
+
+        Item = item;
+        ParentPath = GetParentPath(item.TargetValue);
+        (Glyph, TypeText) = item.Kind switch
+        {
+            StageItemKind.File => ("\uE8A5", "文件"),
+            StageItemKind.Directory => ("\uE8B7", "文件夹"),
+            StageItemKind.ShellLink => ("\uE71B", "快捷方式"),
+            _ => ("\uE8A5", "项目"),
+        };
+        _hasAvailabilityResult = false;
+        _availability = StageFileAvailability.Unknown;
+
+        OnPropertyChanged(nameof(Item));
+        OnPropertyChanged(nameof(Kind));
+        OnPropertyChanged(nameof(TargetValue));
+        OnPropertyChanged(nameof(CanonicalKey));
+        OnPropertyChanged(nameof(DisplayName));
+        OnPropertyChanged(nameof(SortOrder));
+        OnPropertyChanged(nameof(IsPinned));
+        OnPropertyChanged(nameof(Revision));
+        OnPropertyChanged(nameof(CreatedUtc));
+        OnPropertyChanged(nameof(UpdatedUtc));
+        OnPropertyChanged(nameof(ParentPath));
+        OnPropertyChanged(nameof(Glyph));
+        OnPropertyChanged(nameof(TypeText));
+        OnPropertyChanged(nameof(Availability));
+        NotifyAvailabilityChanged();
+    }
 
     public bool ApplyAvailability(
         long expectedRevision,
@@ -112,6 +171,7 @@ public sealed class StageItemViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(HasAvailabilityStatus));
         OnPropertyChanged(nameof(IsMissing));
+        OnPropertyChanged(nameof(CanOpenOrReveal));
         OnPropertyChanged(nameof(AvailabilityText));
         OnPropertyChanged(nameof(AutomationName));
     }

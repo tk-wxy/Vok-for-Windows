@@ -10,4 +10,5 @@ public enum WorkspaceHideReason
     ForegroundLost,
     LauncherAction,
     ClipboardPaste,
+    StageManagementAction,
 }

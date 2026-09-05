@@ -47,6 +47,14 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<StageItemViewModel> Items { get; } = [];
 
+    internal event Action<StageItemViewModel>? ItemAuthorityChanged;
+
+    internal Func<StageItemViewModel, Task>? OpenActionAsync { get; set; }
+
+    internal Func<StageItemViewModel, Task>? RevealActionAsync { get; set; }
+
+    internal Func<StageItemViewModel, Task>? CopyPathActionAsync { get; set; }
+
     public IAsyncRelayCommand LoadNewerCommand { get; }
 
     public IAsyncRelayCommand LoadOlderCommand { get; }
@@ -325,6 +333,193 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         }
     }
 
+    [RelayCommand]
+    private async Task TogglePinnedAsync(StageItemViewModel? item)
+    {
+        if (item is null || item.IsBusy || _disposed)
+        {
+            return;
+        }
+
+        var gateAcquired = false;
+        try
+        {
+            await _operationGate.WaitAsync(_lifetime.Token).ConfigureAwait(true);
+            gateAcquired = true;
+            if (!Items.Contains(item))
+            {
+                return;
+            }
+
+            var isPinned = !item.IsPinned;
+            item.IsBusy = true;
+            SetLoading(true);
+            HasError = false;
+            StatusText = isPinned
+                ? $"正在固定“{item.DisplayName}”…"
+                : $"正在取消固定“{item.DisplayName}”…";
+            var result = await _repository
+                .SetPinnedAsync(
+                    item.Id,
+                    item.Revision,
+                    isPinned,
+                    _lifetime.Token)
+                .ConfigureAwait(true);
+            switch (result.Status)
+            {
+                case StageItemMutationStatus.Applied:
+                    var completedStatus = isPinned
+                        ? $"已固定“{item.DisplayName}”。"
+                        : $"已取消固定“{item.DisplayName}”。";
+                    try
+                    {
+                        ApplyAuthoritativeItem(
+                            item,
+                            result.Item ?? throw new InvalidOperationException(
+                                "An applied Stage mutation did not return its authoritative item."));
+                        StatusText = completedStatus;
+                    }
+                    catch (Exception exception)
+                    {
+                        await ReloadAfterConfirmedItemMutationAsync(
+                                completedStatus,
+                                exception,
+                                _lifetime.Token)
+                            .ConfigureAwait(true);
+                    }
+
+                    break;
+
+                case StageItemMutationStatus.NoChange:
+                    if (result.Item is { } unchanged && unchanged != item.Item)
+                    {
+                        ApplyAuthoritativeItem(item, unchanged);
+                    }
+
+                    StatusText = isPinned
+                        ? $"“{item.DisplayName}”已经固定。"
+                        : $"“{item.DisplayName}”已经取消固定。";
+                    break;
+
+                case StageItemMutationStatus.NotFound:
+                    await ReloadAfterRejectedItemMutationAsync(
+                            "该项目已不在中转站中，未更改固定状态；列表已刷新。",
+                            _lifetime.Token)
+                        .ConfigureAwait(true);
+                    break;
+
+                case StageItemMutationStatus.RevisionConflict:
+                    await ReloadAfterRejectedItemMutationAsync(
+                            "项目已发生变化，未更改固定状态；列表已刷新。",
+                            _lifetime.Token)
+                        .ConfigureAwait(true);
+                    break;
+
+                default:
+                    throw new InvalidOperationException(
+                        $"Unsupported Stage item mutation result: {result.Status}.");
+            }
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+            // Application lifetime cancellation owns shutdown cleanup.
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            HasError = true;
+            StatusText = $"更新固定状态失败，结果待核对：{exception.Message}";
+        }
+        finally
+        {
+            item.IsBusy = false;
+            if (gateAcquired)
+            {
+                SetLoading(false);
+                _operationGate.Release();
+            }
+        }
+    }
+
+    [RelayCommand]
+    private Task OpenAsync(StageItemViewModel? item) =>
+        RunFileActionAsync(
+            item,
+            OpenActionAsync,
+            "正在打开",
+            "已将目标交给 Windows 打开",
+            "打开中转项目失败");
+
+    [RelayCommand]
+    private Task RevealAsync(StageItemViewModel? item) =>
+        RunFileActionAsync(
+            item,
+            RevealActionAsync,
+            "正在定位",
+            "已在文件资源管理器中定位",
+            "定位中转项目失败");
+
+    [RelayCommand]
+    private Task CopyPathAsync(StageItemViewModel? item) =>
+        RunFileActionAsync(
+            item,
+            CopyPathActionAsync,
+            "正在复制路径",
+            "已复制原路径",
+            "复制原路径失败",
+            allowMissing: true);
+
+    private async Task RunFileActionAsync(
+        StageItemViewModel? item,
+        Func<StageItemViewModel, Task>? action,
+        string progressText,
+        string completedText,
+        string failureText,
+        bool allowMissing = false)
+    {
+        if (item is null || item.IsBusy ||
+            (!allowMissing && item.IsMissing) ||
+            action is null || _disposed)
+        {
+            return;
+        }
+
+        var gateAcquired = false;
+        try
+        {
+            await _operationGate.WaitAsync(_lifetime.Token).ConfigureAwait(true);
+            gateAcquired = true;
+            if (!Items.Contains(item) || (!allowMissing && item.IsMissing))
+            {
+                return;
+            }
+
+            item.IsBusy = true;
+            SetLoading(true);
+            HasError = false;
+            StatusText = $"{progressText}“{item.DisplayName}”…";
+            await action(item).ConfigureAwait(true);
+            StatusText = $"{completedText}“{item.DisplayName}”。";
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+            // Application lifetime cancellation owns shutdown cleanup.
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            HasError = true;
+            StatusText = $"{failureText}：{exception.Message}";
+        }
+        finally
+        {
+            item.IsBusy = false;
+            if (gateAcquired)
+            {
+                SetLoading(false);
+                _operationGate.Release();
+            }
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -334,6 +529,9 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
 
         _disposed = true;
         _lifetime.Cancel();
+        OpenActionAsync = null;
+        RevealActionAsync = null;
+        CopyPathActionAsync = null;
         NotifyPageStateChanged();
     }
 
@@ -492,6 +690,73 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
             HasError = true;
             StatusText = $"未执行移除，且列表刷新失败：{exception.Message}";
         }
+    }
+
+    private async Task ReloadAfterRejectedItemMutationAsync(
+        string successStatus,
+        CancellationToken cancellationToken)
+    {
+        var start = _pageIndex == 0 ? null : _pageStarts[_pageIndex];
+        TruncatePageHistoryAfter(_pageIndex);
+        try
+        {
+            await LoadPageLockedAsync(
+                    start,
+                    _pageIndex,
+                    resetHistory: _pageIndex == 0,
+                    cancellationToken)
+                .ConfigureAwait(true);
+            StatusText = successStatus;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            HasError = true;
+            StatusText = $"未更改固定状态，且列表刷新失败：{exception.Message}";
+        }
+    }
+
+    private async Task ReloadAfterConfirmedItemMutationAsync(
+        string committedStatus,
+        Exception applyException,
+        CancellationToken cancellationToken)
+    {
+        var start = _pageIndex == 0 ? null : _pageStarts[_pageIndex];
+        TruncatePageHistoryAfter(_pageIndex);
+        try
+        {
+            await LoadPageLockedAsync(
+                    start,
+                    _pageIndex,
+                    resetHistory: _pageIndex == 0,
+                    cancellationToken)
+                .ConfigureAwait(true);
+            StatusText = $"{committedStatus} 列表已重新加载。";
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception refreshException)
+        {
+            HasError = true;
+            StatusText = $"{committedStatus} 但列表刷新失败：{refreshException.Message}";
+            System.Diagnostics.Trace.TraceWarning(
+                "Stage item mutation committed but UI apply and refresh failed: {0}; {1}",
+                applyException.GetType().Name,
+                refreshException.GetType().Name);
+        }
+    }
+
+    private void ApplyAuthoritativeItem(
+        StageItemViewModel projection,
+        StageItem authoritativeItem)
+    {
+        projection.Update(authoritativeItem);
+        ItemAuthorityChanged?.Invoke(projection);
     }
 
     private void TruncatePageHistoryAfter(int pageIndex)

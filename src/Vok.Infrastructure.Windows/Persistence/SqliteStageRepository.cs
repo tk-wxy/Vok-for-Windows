@@ -93,6 +93,19 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
             cancellationToken);
     }
 
+    public Task<StageItemMutationResult> SetPinnedAsync(
+        Guid itemId,
+        long expectedRevision,
+        bool isPinned,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfEqual(itemId, Guid.Empty);
+        ArgumentOutOfRangeException.ThrowIfLessThan(expectedRevision, 1);
+        return _executor.ExecuteAsync(
+            connection => SetPinned(connection, itemId, expectedRevision, isPinned),
+            cancellationToken);
+    }
+
     public void Dispose()
     {
         if (_ownsExecutor)
@@ -286,6 +299,91 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
 
         transaction.Commit();
         return new StageRemoveResult(StageRemoveStatus.Removed);
+    }
+
+    private static StageItemMutationResult SetPinned(
+        SqliteConnection connection,
+        Guid itemId,
+        long expectedRevision,
+        bool isPinned)
+    {
+        using var transaction = connection.BeginTransaction();
+        var item = ReadItemById(connection, transaction, itemId);
+        if (item is null)
+        {
+            transaction.Rollback();
+            return new StageItemMutationResult(
+                StageItemMutationStatus.NotFound,
+                null);
+        }
+
+        if (item.Revision != expectedRevision)
+        {
+            transaction.Rollback();
+            return new StageItemMutationResult(
+                StageItemMutationStatus.RevisionConflict,
+                null);
+        }
+
+        if (item.IsPinned == isPinned)
+        {
+            transaction.Rollback();
+            return new StageItemMutationResult(
+                StageItemMutationStatus.NoChange,
+                item);
+        }
+
+        var nextRevision = checked(item.Revision + 1);
+        var updatedUtc = DateTimeOffset.UtcNow;
+        using (var update = connection.CreateCommand())
+        {
+            update.Transaction = transaction;
+            update.CommandText = """
+                UPDATE stage_items
+                SET is_pinned = $isPinned,
+                    revision = $nextRevision,
+                    updated_utc = $updatedUtc
+                WHERE id = $id AND revision = $expectedRevision;
+                """;
+            update.Parameters.AddWithValue("$isPinned", isPinned ? 1 : 0);
+            update.Parameters.AddWithValue("$nextRevision", nextRevision);
+            update.Parameters.AddWithValue("$updatedUtc", FormatUtc(updatedUtc));
+            update.Parameters.AddWithValue("$id", itemId.ToString("D"));
+            update.Parameters.AddWithValue("$expectedRevision", expectedRevision);
+            if (update.ExecuteNonQuery() != 1)
+            {
+                throw new InvalidOperationException(
+                    $"Stage item {itemId:D} changed while updating its pinned state.");
+            }
+        }
+
+        var updated = ReadItemById(connection, transaction, itemId) ??
+            throw new InvalidOperationException(
+                $"Stage item {itemId:D} disappeared after updating its pinned state.");
+        transaction.Commit();
+        return new StageItemMutationResult(
+            StageItemMutationStatus.Applied,
+            updated);
+    }
+
+    private static StageItem? ReadItemById(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid itemId)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT id, target_kind, target_value, canonical_key,
+                   resolved_name, sort_order, is_pinned, revision,
+                   created_utc, updated_utc
+            FROM stage_items
+            WHERE id = $id
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$id", itemId.ToString("D"));
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadItem(reader) : null;
     }
 
     private static long ReadCount(

@@ -15,4 +15,10 @@ public interface IStageRepository
         Guid itemId,
         long expectedRevision,
         CancellationToken cancellationToken = default);
+
+    Task<StageItemMutationResult> SetPinnedAsync(
+        Guid itemId,
+        long expectedRevision,
+        bool isPinned,
+        CancellationToken cancellationToken = default);
 }

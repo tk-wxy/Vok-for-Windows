@@ -405,6 +405,116 @@ public sealed class StageViewModelTests
     }
 
     [Fact]
+    public async Task AppliedPinUsesTheAuthoritativeItemAndInvalidatesOldAvailability()
+    {
+        var original = Assert.Single(CreateItems(1));
+        var authoritative = original with
+        {
+            IsPinned = true,
+            Revision = original.Revision + 1,
+            UpdatedUtc = original.UpdatedUtc.AddSeconds(1),
+        };
+        var repository = new ScriptedStageRepository(
+            pages: [CreatePage([original])],
+            setPinnedResult: new StageItemMutationResult(
+                StageItemMutationStatus.Applied,
+                authoritative));
+        using var viewModel = new StageViewModel(
+            repository,
+            new StaticStageFileService([]));
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+        var projection = Assert.Single(viewModel.Items);
+        Assert.True(projection.ApplyAvailability(
+            projection.Revision,
+            StageFileAvailability.Missing));
+        StageItemViewModel? authorityChanged = null;
+        viewModel.ItemAuthorityChanged += item => authorityChanged = item;
+
+        await viewModel.TogglePinnedCommand.ExecuteAsync(projection);
+
+        Assert.Equal(
+            (original.Id, original.Revision, true),
+            Assert.Single(repository.SetPinnedCalls));
+        Assert.Same(projection, Assert.Single(viewModel.Items));
+        Assert.Same(projection, authorityChanged);
+        Assert.Equal(authoritative, projection.Item);
+        Assert.True(projection.IsPinned);
+        Assert.Equal(original.Revision + 1, projection.Revision);
+        Assert.False(projection.HasAvailabilityStatus);
+        Assert.False(projection.IsMissing);
+        Assert.Contains("已固定", projection.AutomationName, StringComparison.Ordinal);
+        Assert.Contains("已固定", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.False(viewModel.HasError);
+        Assert.False(viewModel.IsLoading);
+    }
+
+    [Fact]
+    public async Task PinRevisionConflictReloadsAuthorityInsteadOfOverwritingIt()
+    {
+        var original = Assert.Single(CreateItems(1));
+        var refreshed = original with
+        {
+            ResolvedName = "外部已更新",
+            Revision = original.Revision + 1,
+            UpdatedUtc = original.UpdatedUtc.AddSeconds(1),
+        };
+        var repository = new ScriptedStageRepository(
+            pages:
+            [
+                CreatePage([original]),
+                CreatePage([refreshed]),
+            ],
+            setPinnedResult: new StageItemMutationResult(
+                StageItemMutationStatus.RevisionConflict,
+                null));
+        using var viewModel = new StageViewModel(
+            repository,
+            new StaticStageFileService([]));
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+
+        await viewModel.TogglePinnedCommand.ExecuteAsync(viewModel.Items[0]);
+
+        var current = Assert.Single(viewModel.Items);
+        Assert.Equal(refreshed, current.Item);
+        Assert.False(current.IsPinned);
+        Assert.Contains("未更改固定状态", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.False(viewModel.HasError);
+    }
+
+    [Fact]
+    public async Task ConfirmedPinIsNotReplayedWhenProjectionApplyNeedsAuthorityReload()
+    {
+        var original = Assert.Single(CreateItems(1));
+        var authoritative = original with
+        {
+            IsPinned = true,
+            Revision = original.Revision + 1,
+            UpdatedUtc = original.UpdatedUtc.AddSeconds(1),
+        };
+        var invalidProjectionResult = authoritative with { Id = Guid.NewGuid() };
+        var repository = new ScriptedStageRepository(
+            pages:
+            [
+                CreatePage([original]),
+                CreatePage([authoritative]),
+            ],
+            setPinnedResult: new StageItemMutationResult(
+                StageItemMutationStatus.Applied,
+                invalidProjectionResult));
+        using var viewModel = new StageViewModel(
+            repository,
+            new StaticStageFileService([]));
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+
+        await viewModel.TogglePinnedCommand.ExecuteAsync(viewModel.Items[0]);
+
+        Assert.Single(repository.SetPinnedCalls);
+        Assert.Equal(authoritative, Assert.Single(viewModel.Items).Item);
+        Assert.Contains("列表已重新加载", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.False(viewModel.HasError);
+    }
+
+    [Fact]
     public void AvailabilityOnlyAppliesToTheExpectedItemRevision()
     {
         var item = new StageItemViewModel(Assert.Single(CreateItems(1)));
@@ -513,6 +623,13 @@ public sealed class StageViewModelTests
             long expectedRevision,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
+
+        public Task<StageItemMutationResult> SetPinnedAsync(
+            Guid itemId,
+            long expectedRevision,
+            bool isPinned,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     private sealed class StaticStageFileService(
@@ -532,6 +649,16 @@ public sealed class StageViewModelTests
             StageItem item,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(StageFileAvailability.Available);
+
+        public Task OpenAsync(
+            StageItem item,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task RevealInExplorerAsync(
+            StageItem item,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     private sealed class ScriptedStageRepository : IStageRepository
@@ -540,6 +667,7 @@ public sealed class StageViewModelTests
         private readonly StageAddOrMoveResult? _addResult;
         private readonly Exception? _addException;
         private readonly StageRemoveResult? _removeResult;
+        private readonly StageItemMutationResult? _setPinnedResult;
         private readonly int? _failPageLoadAfter;
         private int _pageLoadCount;
 
@@ -548,18 +676,22 @@ public sealed class StageViewModelTests
             StageAddOrMoveResult? addResult = null,
             Exception? addException = null,
             StageRemoveResult? removeResult = null,
+            StageItemMutationResult? setPinnedResult = null,
             int? failPageLoadAfter = null)
         {
             _pages = new Queue<StagePage>(pages);
             _addResult = addResult;
             _addException = addException;
             _removeResult = removeResult;
+            _setPinnedResult = setPinnedResult;
             _failPageLoadAfter = failPageLoadAfter;
         }
 
         public List<IReadOnlyList<StageTargetDescriptor>> AddCalls { get; } = [];
 
         public List<(Guid ItemId, long ExpectedRevision)> RemoveCalls { get; } = [];
+
+        public List<(Guid ItemId, long ExpectedRevision, bool IsPinned)> SetPinnedCalls { get; } = [];
 
         public Task<StagePage> LoadPageAsync(
             StagePageCursor? after,
@@ -598,6 +730,18 @@ public sealed class StageViewModelTests
             RemoveCalls.Add((itemId, expectedRevision));
             return Task.FromResult(
                 _removeResult ?? throw new InvalidOperationException());
+        }
+
+        public Task<StageItemMutationResult> SetPinnedAsync(
+            Guid itemId,
+            long expectedRevision,
+            bool isPinned,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            SetPinnedCalls.Add((itemId, expectedRevision, isPinned));
+            return Task.FromResult(
+                _setPinnedResult ?? throw new InvalidOperationException());
         }
     }
 
@@ -659,6 +803,13 @@ public sealed class StageViewModelTests
         public Task<StageRemoveResult> RemoveAsync(
             Guid itemId,
             long expectedRevision,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<StageItemMutationResult> SetPinnedAsync(
+            Guid itemId,
+            long expectedRevision,
+            bool isPinned,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
     }

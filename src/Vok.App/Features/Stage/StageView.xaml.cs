@@ -52,6 +52,11 @@ public partial class StageView : UserControl
         object sender,
         DependencyPropertyChangedEventArgs e)
     {
+        if (e.OldValue is StageViewModel oldViewModel)
+        {
+            oldViewModel.ItemAuthorityChanged -= OnItemAuthorityChanged;
+        }
+
         if (_observedItems is not null)
         {
             _observedItems.CollectionChanged -= OnItemsCollectionChanged;
@@ -59,10 +64,26 @@ public partial class StageView : UserControl
 
         CancelAllAvailabilityBindings();
 
-        _observedItems = (e.NewValue as StageViewModel)?.Items;
-        if (_observedItems is not null)
+        if (e.NewValue is StageViewModel newViewModel)
         {
+            _observedItems = newViewModel.Items;
             _observedItems.CollectionChanged += OnItemsCollectionChanged;
+            newViewModel.ItemAuthorityChanged += OnItemAuthorityChanged;
+        }
+        else
+        {
+            _observedItems = null;
+        }
+
+        ScheduleAvailabilityRefresh();
+    }
+
+    private void OnItemAuthorityChanged(StageItemViewModel item)
+    {
+        foreach (var card in _availabilityCards.Where(
+                     card => ReferenceEquals(card.DataContext, item)).ToArray())
+        {
+            CancelAvailabilityBinding(card, resetState: false);
         }
 
         ScheduleAvailabilityRefresh();

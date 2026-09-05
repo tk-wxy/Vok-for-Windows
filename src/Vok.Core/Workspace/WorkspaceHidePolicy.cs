@@ -28,6 +28,7 @@ public readonly record struct WorkspaceHidePolicy
         WorkspaceHideReason.Escape or
         WorkspaceHideReason.UserAction or
         WorkspaceHideReason.LauncherAction or
+        WorkspaceHideReason.StageManagementAction or
         WorkspaceHideReason.ClipboardPaste or
         WorkspaceHideReason.ApplicationExit or
         WorkspaceHideReason.ShowFailure =>

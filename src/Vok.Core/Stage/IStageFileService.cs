@@ -9,4 +9,12 @@ public interface IStageFileService
     Task<StageFileAvailability> InspectAsync(
         StageItem item,
         CancellationToken cancellationToken = default);
+
+    Task OpenAsync(
+        StageItem item,
+        CancellationToken cancellationToken = default);
+
+    Task RevealInExplorerAsync(
+        StageItem item,
+        CancellationToken cancellationToken = default);
 }

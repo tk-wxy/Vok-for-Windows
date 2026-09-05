@@ -485,6 +485,35 @@ public sealed class WorkspaceControllerTests
     }
 
     [Fact]
+    public async Task StageManagementActionUsesItsOwnCompletedHideTransaction()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+
+        var hidden = await rig.Controller.HideForStageManagementActionAsync(
+            TestContext.Current.CancellationToken);
+
+        Assert.True(hidden);
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        AssertOrdered(rig.Log, "window.hide", "placement.exit", "foreground.restore");
+        Assert.Equal(
+            WorkspaceHideReason.StageManagementAction,
+            rig.Publisher.Last.Restore.HideReason);
+    }
+
+    [Fact]
+    public async Task StageManagementActionIsRejectedWhenHideRollsBack()
+    {
+        using var rig = await TestRig.CreateVisibleAsync();
+        rig.Window.HideFailuresRemaining = 1;
+
+        var hidden = await rig.Controller.HideForStageManagementActionAsync(
+            TestContext.Current.CancellationToken);
+
+        Assert.False(hidden);
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+    }
+
+    [Fact]
     public async Task PasteActionReturnsCapturedTargetAndConfirmedRestore()
     {
         using var rig = await TestRig.CreateVisibleAsync();

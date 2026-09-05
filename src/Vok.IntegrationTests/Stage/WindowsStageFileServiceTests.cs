@@ -1,5 +1,6 @@
 using System.IO;
 using Vok.Core.Stage;
+using Vok.Infrastructure.Windows.Launcher;
 using Vok.Infrastructure.Windows.Stage;
 using Xunit;
 
@@ -144,6 +145,45 @@ public sealed class WindowsStageFileServiceTests
             service.InspectAsync(
                 Item(Environment.ProcessPath!),
                 cancellation.Token));
+    }
+
+    [Fact]
+    public async Task OpenAndRevealUseTheSharedShellStaWithTheExactStoredPath()
+    {
+        var calls = new List<(string Action, string Path, ApartmentState Apartment, int Thread)>();
+        using var executor = new WindowsShellStaExecutor();
+        using var service = new WindowsStageFileService(
+            executor,
+            path => calls.Add((
+                "open",
+                path,
+                Thread.CurrentThread.GetApartmentState(),
+                Environment.CurrentManagedThreadId)),
+            path => calls.Add((
+                "reveal",
+                path,
+                Thread.CurrentThread.GetApartmentState(),
+                Environment.CurrentManagedThreadId)));
+        var item = Item(@"C:\Stage\Ä exact target.lnk");
+
+        await service.OpenAsync(item, TestContext.Current.CancellationToken);
+        await service.RevealInExplorerAsync(item, TestContext.Current.CancellationToken);
+
+        Assert.Collection(
+            calls,
+            call =>
+            {
+                Assert.Equal("open", call.Action);
+                Assert.Equal(item.TargetValue, call.Path);
+                Assert.Equal(ApartmentState.STA, call.Apartment);
+            },
+            call =>
+            {
+                Assert.Equal("reveal", call.Action);
+                Assert.Equal(item.TargetValue, call.Path);
+                Assert.Equal(ApartmentState.STA, call.Apartment);
+            });
+        Assert.Equal(calls[0].Thread, calls[1].Thread);
     }
 
     private static StageItem Item(string path)

@@ -22,7 +22,11 @@ public sealed class StageCompositionRootTests
         Assert.Single(services, static service =>
             service.ServiceType == typeof(IStageFileService));
         Assert.Single(services, static service =>
+            service.ServiceType == typeof(IStageClipboardService));
+        Assert.Single(services, static service =>
             service.ServiceType == typeof(StageViewModel));
+        Assert.Single(services, static service =>
+            service.ServiceType == typeof(StageActionController));
 
         using var provider = services.BuildServiceProvider(new ServiceProviderOptions
         {

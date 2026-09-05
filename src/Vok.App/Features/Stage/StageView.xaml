@@ -19,7 +19,7 @@
     <Style x:Key="StageItemActionButtonStyle"
            TargetType="Button"
            BasedOn="{StaticResource {x:Type Button}}">
-      <Setter Property="Width" Value="28" />
+      <Setter Property="Width" Value="24" />
       <Setter Property="Height" Value="28" />
       <Setter Property="Padding" Value="0" />
       <Setter Property="FontFamily" Value="Segoe Fluent Icons" />
@@ -158,68 +158,106 @@
                     <Grid.RowDefinitions>
                       <RowDefinition Height="Auto" />
                       <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <TextBlock Text="{Binding DisplayName}"
                                FontSize="12"
                                FontWeight="SemiBold"
                                TextTrimming="CharacterEllipsis" />
-                    <TextBlock Grid.Row="1"
-                               Margin="0,2,0,0"
-                               Text="{Binding ParentPath}"
-                               FontSize="10.5"
-                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                               TextTrimming="CharacterEllipsis" />
+                    <Grid Grid.Row="1"
+                          Margin="0,2,0,0">
+                      <TextBlock Text="{Binding ParentPath}"
+                                 FontSize="10.5"
+                                 Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                 TextTrimming="CharacterEllipsis" />
+                    </Grid>
+                    <Grid Grid.Row="2"
+                          Margin="0,2,0,0">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Text="已固定"
+                                 FontSize="9.5"
+                                 Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}">
+                        <TextBlock.Style>
+                          <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                              <DataTrigger Binding="{Binding IsPinned}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                              </DataTrigger>
+                            </Style.Triggers>
+                          </Style>
+                        </TextBlock.Style>
+                      </TextBlock>
+                      <TextBlock Grid.Column="1"
+                                 Margin="6,0,0,0"
+                                 Text="{Binding AvailabilityText}"
+                                 FontSize="9.5"
+                                 TextTrimming="CharacterEllipsis">
+                        <TextBlock.Style>
+                          <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+                            <Style.Triggers>
+                              <DataTrigger Binding="{Binding HasAvailabilityStatus}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                              </DataTrigger>
+                              <DataTrigger Binding="{Binding Availability}" Value="Missing">
+                                <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}" />
+                              </DataTrigger>
+                            </Style.Triggers>
+                          </Style>
+                        </TextBlock.Style>
+                      </TextBlock>
+                    </Grid>
                   </Grid>
-                  <StackPanel Grid.Column="2"
-                              HorizontalAlignment="Right"
-                              VerticalAlignment="Center">
-                    <TextBlock Text="{Binding TypeText}"
-                               FontSize="9.5"
-                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
-                    <TextBlock Margin="0,2,0,0"
-                               Text="已固定"
-                               FontSize="9.5"
-                               Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}">
-                      <TextBlock.Style>
-                        <Style TargetType="TextBlock">
-                          <Setter Property="Visibility" Value="Collapsed" />
-                          <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsPinned}" Value="True">
-                              <Setter Property="Visibility" Value="Visible" />
-                            </DataTrigger>
-                          </Style.Triggers>
-                        </Style>
-                      </TextBlock.Style>
-                    </TextBlock>
-                    <TextBlock Margin="0,2,0,0"
-                               Text="{Binding AvailabilityText}"
-                               FontSize="9.5">
-                      <TextBlock.Style>
-                        <Style TargetType="TextBlock">
-                          <Setter Property="Visibility" Value="Collapsed" />
-                          <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
-                          <Style.Triggers>
-                            <DataTrigger Binding="{Binding HasAvailabilityStatus}" Value="True">
-                              <Setter Property="Visibility" Value="Visible" />
-                            </DataTrigger>
-                            <DataTrigger Binding="{Binding Availability}" Value="Missing">
-                              <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}" />
-                            </DataTrigger>
-                          </Style.Triggers>
-                        </Style>
-                      </TextBlock.Style>
-                    </TextBlock>
-                  </StackPanel>
+                  <Button Grid.Column="2"
+                          Margin="2,0,0,0"
+                          Content="&#xE718;"
+                          IsEnabled="{Binding CanManage}"
+                          Command="{Binding DataContext.TogglePinnedCommand, RelativeSource={RelativeSource AncestorType={x:Type stage:StageView}}}"
+                          CommandParameter="{Binding}">
+                    <Button.Style>
+                      <Style TargetType="Button"
+                             BasedOn="{StaticResource StageItemActionButtonStyle}">
+                        <Setter Property="ToolTip" Value="固定" />
+                        <Setter Property="automation:AutomationProperties.Name" Value="固定中转项目" />
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding IsPinned}" Value="True">
+                            <Setter Property="Foreground" Value="{DynamicResource AccentTextFillColorPrimaryBrush}" />
+                            <Setter Property="ToolTip" Value="取消固定" />
+                            <Setter Property="automation:AutomationProperties.Name" Value="取消固定中转项目" />
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </Button.Style>
+                  </Button>
                   <Button Grid.Column="3"
-                          Margin="8,0,0,0"
+                          Margin="2,0,0,0"
                           Style="{StaticResource StageItemActionButtonStyle}"
                           Content="&#xE712;"
+                          IsEnabled="{Binding CanManage}"
                           ToolTip="更多管理操作"
                           Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType={x:Type stage:StageView}}}"
                           Click="OnStageItemMenuClick"
                           automation:AutomationProperties.Name="打开中转站项目菜单">
                     <Button.ContextMenu>
                       <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                        <MenuItem Header="打开"
+                                  IsEnabled="{Binding CanOpenOrReveal}"
+                                  Command="{Binding PlacementTarget.Tag.OpenCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                                  CommandParameter="{Binding}" />
+                        <MenuItem Header="在文件资源管理器中定位"
+                                  IsEnabled="{Binding CanOpenOrReveal}"
+                                  Command="{Binding PlacementTarget.Tag.RevealCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                                  CommandParameter="{Binding}" />
+                        <MenuItem Header="复制原路径"
+                                  IsEnabled="{Binding CanManage}"
+                                  Command="{Binding PlacementTarget.Tag.CopyPathCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                                  CommandParameter="{Binding}" />
+                        <Separator />
                         <MenuItem Header="从中转站移除"
                                   ToolTip="只移除引用，不删除原文件"
                                   Command="{Binding PlacementTarget.Tag.RemoveCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"

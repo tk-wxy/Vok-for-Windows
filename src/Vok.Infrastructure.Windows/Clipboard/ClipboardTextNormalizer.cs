@@ -1,7 +1,6 @@
 using System.Buffers.Binary;
 using System.Globalization;
 using System.Net;
-using System.Security.Cryptography;
 using System.Text;
 using Vok.Core.Clipboard;
 
@@ -92,7 +91,7 @@ public sealed class ClipboardTextNormalizer
 
         var frozen = Array.AsReadOnly(representations.ToArray());
         return new ClipboardTextContent(
-            ComputeSemanticHash(frozen),
+            ClipboardRepresentationSemanticHash.Compute(frozen),
             plainText,
             CreatePreview(plainText),
             frozen);
@@ -511,24 +510,6 @@ public sealed class ClipboardTextNormalizer
         }
 
         return builder.ToString();
-    }
-
-    private static string ComputeSemanticHash(
-        IReadOnlyList<ClipboardStoredRepresentation> representations)
-    {
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        Span<byte> length = stackalloc byte[sizeof(int)];
-        foreach (var representation in representations.OrderBy(static value => value.Kind))
-        {
-            BinaryPrimitives.WriteInt32LittleEndian(length, (int)representation.Kind);
-            hash.AppendData(length);
-            var bytes = Encoding.UTF8.GetBytes(representation.InlineText);
-            BinaryPrimitives.WriteInt32LittleEndian(length, bytes.Length);
-            hash.AppendData(length);
-            hash.AppendData(bytes);
-        }
-
-        return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
     }
 
     private string CreatePreview(string text)

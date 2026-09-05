@@ -367,3 +367,12 @@ git diff --check
 - 卡片新增 Missing/Unavailable/Unknown 文字状态与“更多”菜单；“从中转站移除”绑定 Stage 命令，成功后从 SQLite 权威重载当前页，末页最后一项移除会回到上一页。提交已经确认但刷新失败时不重放删除，并从当前投影移除已确认删除的卡片。
 - 新增 9 项自动门禁；最终 Release 为 Core 71/71、Integration 406/406，共 477/477。真实 WPF 正常、Missing、暗色和 260×408 DIP 窄列快照已生成并目视通过；`git diff --check` 通过。
 - 本批未修改 schema 7、Stage 入站 Router、Workspace 外部拖放 lease、KI-001、真实数据库或当前运行实例。下一批进入固定、打开/定位和复制原路径，并在需要时补齐对应 mutation contract。
+
+## 13. Checkpoint 4 实施结果（2026-09-05）
+
+- 新增 revision-safe `SetPinnedAsync(id, expectedRevision, isPinned)`，在 schema 7 单事务内区分 `Applied / NoChange / NotFound / RevisionConflict`，成功返回完整权威条目并只更新固定状态、revision 与更新时间。固定/取消固定跨重开保留，revision 溢出完整回滚，既有 `AddOrMove` 回顶继续保留固定状态。
+- `StageItemViewModel` 可由权威条目原位更新；revision 改变会重置瞬时 Availability，并通知 `StageView` 取消旧绑定、按新 revision 重新检查。提交已确认但投影应用失败时只重载当前权威页面，不重放固定写入。
+- Windows 层从 Launcher 提取共享 internal Shell 文件动作，Launcher 与 Stage 继续共用唯一 `WindowsShellStaExecutor`。Stage 新增独立 `StageManagementAction` 隐藏原因和 `StageActionController`，只有隐藏事务成功后才打开或定位；隐藏回滚时 Shell 零副作用，Missing 项禁用两项动作。
+- 新增 Stage 自有路径文本 clipboard adapter；Windows 实现内部映射到既有 `IClipboardPlatformService`，沿用 Unicode 文本、语义哈希、self-write marker 和唯一 Clipboard STA。复制原路径保持 Vok 可见，不修改条目/revision，也不引入 M3.2 的 `CF_HDROP`。
+- 卡片增加独立固定按钮以及打开、定位、复制原路径菜单；卡片主体继续无命令。视觉复验发现并修复 260 DIP 下新增按钮挤出右边界的问题，浅色、深色、Missing、固定和窄列状态均通过。
+- 最终 Release 为 Core 74/74、Integration 420/420，共 494/494，构建 0 warning / 0 error；schema 仍为 7，真实数据库、运行实例、Router 与 KI-001 均未修改。下一步进入 Checkpoint 5 重新关联。

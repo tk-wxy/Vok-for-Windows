@@ -23,6 +23,9 @@ public sealed class WorkspaceSessionStateMachineTests
     [InlineData(WorkspaceHideReason.UserAction)]
     [InlineData(WorkspaceHideReason.ApplicationExit)]
     [InlineData(WorkspaceHideReason.ShowFailure)]
+    [InlineData(WorkspaceHideReason.LauncherAction)]
+    [InlineData(WorkspaceHideReason.StageManagementAction)]
+    [InlineData(WorkspaceHideReason.ClipboardPaste)]
     public void ExplicitHidePoliciesRestoreTheCapturedTarget(WorkspaceHideReason reason)
     {
         var policy = WorkspaceHidePolicy.For(reason);

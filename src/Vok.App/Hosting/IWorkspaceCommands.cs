@@ -11,6 +11,10 @@ public interface IWorkspaceCommands
 
     Task<bool> HideForLauncherActionAsync(CancellationToken cancellationToken = default);
 
+    Task<bool> HideForStageManagementActionAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(false);
+
     Task<WorkspaceActionHideResult> HideForPasteActionAsync(
         CancellationToken cancellationToken = default) =>
         Task.FromResult(WorkspaceActionHideResult.NotHidden);

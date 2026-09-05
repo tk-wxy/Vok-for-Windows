@@ -92,13 +92,35 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                         AutomationProperties.GetName(button),
                         "打开中转站项目菜单",
                         StringComparison.Ordinal));
+                var pinButton = Assert.Single(
+                    FindVisualDescendants<Button>(firstCard),
+                    button => string.Equals(
+                        AutomationProperties.GetName(button),
+                        "固定中转项目",
+                        StringComparison.Ordinal));
+                Assert.Same(viewModel.TogglePinnedCommand, pinButton.Command);
+                Assert.Same(viewModel.Items[0], pinButton.CommandParameter);
                 var menu = Assert.IsType<ContextMenu>(menuButton.ContextMenu);
-                var removeItem = Assert.IsType<MenuItem>(Assert.Single(menu.Items));
+                Assert.Equal(5, menu.Items.Count);
+                var openItem = Assert.IsType<MenuItem>(menu.Items[0]);
+                var revealItem = Assert.IsType<MenuItem>(menu.Items[1]);
+                var copyPathItem = Assert.IsType<MenuItem>(menu.Items[2]);
+                _ = Assert.IsType<Separator>(menu.Items[3]);
+                var removeItem = Assert.IsType<MenuItem>(menu.Items[4]);
+                Assert.Equal("打开", openItem.Header);
+                Assert.Equal("在文件资源管理器中定位", revealItem.Header);
+                Assert.Equal("复制原路径", copyPathItem.Header);
                 Assert.Equal("从中转站移除", removeItem.Header);
                 menuButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 window.Dispatcher.Invoke(DispatcherPriority.ApplicationIdle, static () => { });
                 Assert.True(menu.IsOpen);
+                Assert.Same(viewModel.OpenCommand, openItem.Command);
+                Assert.Same(viewModel.RevealCommand, revealItem.Command);
+                Assert.Same(viewModel.CopyPathCommand, copyPathItem.Command);
                 Assert.Same(viewModel.RemoveCommand, removeItem.Command);
+                Assert.Same(viewModel.Items[0], openItem.CommandParameter);
+                Assert.Same(viewModel.Items[0], revealItem.CommandParameter);
+                Assert.Same(viewModel.Items[0], copyPathItem.CommandParameter);
                 Assert.Same(viewModel.Items[0], removeItem.CommandParameter);
                 menu.IsOpen = false;
                 Assert.InRange(fileService.InspectedIds.Count, 1, realized.Length);
@@ -108,6 +130,9 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                     viewModel.Items[0].Revision,
                     StageFileAvailability.Missing));
                 window.UpdateLayout();
+                Assert.False(openItem.IsEnabled);
+                Assert.False(revealItem.IsEnabled);
+                Assert.True(copyPathItem.IsEnabled);
                 var missingText = Assert.Single(
                     FindVisualDescendants<TextBlock>(firstCard),
                     text => string.Equals(
@@ -206,6 +231,75 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
         });
     }
 
+    [Fact]
+    public void AuthoritativePinRevisionRebindsTheVisibleAvailabilityCheck()
+    {
+        wpf.Invoke(() =>
+        {
+            var repository = new StaticStageRepository(20);
+            var fileService = new DeferredStageFileService();
+            using var viewModel = new StageViewModel(repository, fileService);
+            viewModel.InitializeAsync().GetAwaiter().GetResult();
+            var view = new StageView
+            {
+                DataContext = viewModel,
+            };
+            var window = new Window
+            {
+                Width = 520,
+                Height = 320,
+                Content = view,
+                ShowInTaskbar = false,
+                WindowStyle = WindowStyle.None,
+            };
+
+            window.Show();
+            try
+            {
+                window.UpdateLayout();
+                window.Dispatcher.Invoke(DispatcherPriority.ApplicationIdle, static () => { });
+                var projection = viewModel.Items[0];
+                var originalRequest = Assert.Single(
+                    fileService.Requests,
+                    request => request.Item.Id == projection.Id);
+                originalRequest.Completion.SetResult(StageFileAvailability.Missing);
+                window.Dispatcher.Invoke(DispatcherPriority.ApplicationIdle, static () => { });
+                Assert.True(projection.IsMissing);
+
+                viewModel.TogglePinnedCommand.ExecuteAsync(projection).GetAwaiter().GetResult();
+                window.Dispatcher.Invoke(DispatcherPriority.Loaded, static () => { });
+                window.Dispatcher.Invoke(DispatcherPriority.ApplicationIdle, static () => { });
+
+                Assert.True(projection.IsPinned);
+                Assert.Equal(2, projection.Revision);
+                Assert.False(projection.HasAvailabilityStatus);
+                Assert.Contains(
+                    fileService.Requests,
+                    request => request.Item.Id == projection.Id &&
+                        request.Item.Revision == projection.Revision);
+                var list = Assert.IsType<ListBox>(view.FindName("StageItemsList"));
+                var card = Assert.Single(
+                    FindVisualDescendants<Border>(list),
+                    border => Equals(border.ToolTip, projection.TargetValue));
+                Assert.Contains(
+                    FindVisualDescendants<Button>(card),
+                    button => string.Equals(
+                        AutomationProperties.GetName(button),
+                        "取消固定中转项目",
+                        StringComparison.Ordinal));
+                var pinnedText = Assert.Single(
+                    FindVisualDescendants<TextBlock>(card),
+                    text => string.Equals(text.Text, "已固定", StringComparison.Ordinal));
+                Assert.Equal(Visibility.Visible, pinnedText.Visibility);
+                CaptureWindowIfRequested(window, "stage-view-pinned-light.png");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
     private static IEnumerable<T> FindVisualDescendants<T>(DependencyObject root)
         where T : DependencyObject
     {
@@ -249,7 +343,7 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
 
     private sealed class StaticStageRepository : IStageRepository
     {
-        private readonly IReadOnlyList<StageItem> _items;
+        private readonly StageItem[] _items;
 
         public StaticStageRepository(int count)
         {
@@ -279,7 +373,7 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
             return Task.FromResult(new StagePage(
                 page,
                 new StagePageCursor(page[^1].SortOrder, page[^1].Id),
-                _items.Count));
+                _items.Length));
         }
 
         public Task<StageAddOrMoveResult> AddOrMoveAsync(
@@ -292,6 +386,48 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
             long expectedRevision,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
+
+        public Task<StageItemMutationResult> SetPinnedAsync(
+            Guid itemId,
+            long expectedRevision,
+            bool isPinned,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var index = Array.FindIndex(_items, item => item.Id == itemId);
+            if (index < 0)
+            {
+                return Task.FromResult(new StageItemMutationResult(
+                    StageItemMutationStatus.NotFound,
+                    null));
+            }
+
+            var item = _items[index];
+            if (item.Revision != expectedRevision)
+            {
+                return Task.FromResult(new StageItemMutationResult(
+                    StageItemMutationStatus.RevisionConflict,
+                    null));
+            }
+
+            if (item.IsPinned == isPinned)
+            {
+                return Task.FromResult(new StageItemMutationResult(
+                    StageItemMutationStatus.NoChange,
+                    item));
+            }
+
+            var updated = item with
+            {
+                IsPinned = isPinned,
+                Revision = checked(item.Revision + 1),
+                UpdatedUtc = DateTimeOffset.UtcNow,
+            };
+            _items[index] = updated;
+            return Task.FromResult(new StageItemMutationResult(
+                StageItemMutationStatus.Applied,
+                updated));
+        }
     }
 
     private sealed class NoopStageFileService : IStageFileService
@@ -311,6 +447,16 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
             InspectedIds.Add(item.Id);
             return Task.FromResult(StageFileAvailability.Available);
         }
+
+        public Task OpenAsync(
+            StageItem item,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task RevealInExplorerAsync(
+            StageItem item,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     private sealed class DeferredStageFileService : IStageFileService
@@ -330,6 +476,16 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
             Requests.Add(request);
             return request.Completion.Task;
         }
+
+        public Task OpenAsync(
+            StageItem item,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task RevealInExplorerAsync(
+            StageItem item,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     private sealed record InspectionRequest(
