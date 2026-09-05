@@ -23,7 +23,8 @@ public sealed class StageActionControllerTests
             viewModel,
             new FakeWorkspace(log, hideSucceeds: true),
             files,
-            new FakeClipboard(log));
+            new FakeClipboard(log),
+            new FakeRelinkTargetPicker());
 
         await viewModel.OpenCommand.ExecuteAsync(viewModel.Items[0]);
 
@@ -44,7 +45,8 @@ public sealed class StageActionControllerTests
             viewModel,
             new FakeWorkspace(log, hideSucceeds: false),
             files,
-            new FakeClipboard(log));
+            new FakeClipboard(log),
+            new FakeRelinkTargetPicker());
 
         await viewModel.RevealCommand.ExecuteAsync(viewModel.Items[0]);
 
@@ -66,7 +68,8 @@ public sealed class StageActionControllerTests
             viewModel,
             new FakeWorkspace(log, hideSucceeds: true),
             files,
-            new FakeClipboard(log));
+            new FakeClipboard(log),
+            new FakeRelinkTargetPicker());
         var projection = viewModel.Items[0];
         Assert.True(projection.ApplyAvailability(
             projection.Revision,
@@ -93,7 +96,8 @@ public sealed class StageActionControllerTests
             viewModel,
             new FakeWorkspace(log, hideSucceeds: true),
             files,
-            clipboard);
+            clipboard,
+            new FakeRelinkTargetPicker());
         var projection = viewModel.Items[0];
         var before = projection.Item;
         Assert.True(projection.ApplyAvailability(
@@ -106,6 +110,41 @@ public sealed class StageActionControllerTests
         Assert.Equal(before.TargetValue, Assert.Single(clipboard.Paths));
         Assert.Equal(before, projection.Item);
         Assert.Contains("已复制原路径", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.False(viewModel.HasError);
+    }
+
+    [Fact]
+    public async Task RelinkUsesThePickerWithoutHidingAndAppliesTheResolvedTarget()
+    {
+        var log = new List<string>();
+        var item = CreateItem();
+        var target = new StageTargetDescriptor(
+            StageItemKind.ShellLink,
+            @"C:\Stage\Replacement.lnk",
+            @"C:\STAGE\REPLACEMENT.LNK",
+            "Replacement");
+        var files = new FakeFiles(log, target);
+        var picker = new FakeRelinkTargetPicker(
+            log,
+            StageRelinkSelection.Selected(target.TargetValue));
+        using var viewModel = new StageViewModel(
+            new StaticRepository(item),
+            files);
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+        using var controller = new StageActionController(
+            viewModel,
+            new FakeWorkspace(log, hideSucceeds: true),
+            files,
+            new FakeClipboard(log),
+            picker);
+
+        await viewModel.RelinkCommand.ExecuteAsync(viewModel.Items[0]);
+
+        Assert.Equal(["picker.select", "files.resolve"], log);
+        var updated = Assert.Single(viewModel.Items);
+        Assert.Equal(target.TargetValue, updated.TargetValue);
+        Assert.Equal(item.Revision + 1, updated.Revision);
+        Assert.Contains("重新关联到", viewModel.StatusText, StringComparison.Ordinal);
         Assert.False(viewModel.HasError);
     }
 
@@ -150,14 +189,49 @@ public sealed class StageActionControllerTests
             bool isPinned,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
+
+        public Task<StageRelinkResult> RelinkAsync(
+            Guid itemId,
+            long expectedRevision,
+            StageTargetDescriptor target,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Assert.Equal(item.Id, itemId);
+            Assert.Equal(item.Revision, expectedRevision);
+            Assert.Equal(item.Kind, target.Kind);
+            return Task.FromResult(new StageRelinkResult(
+                StageRelinkStatus.Applied,
+                item with
+                {
+                    Kind = target.Kind,
+                    TargetValue = target.TargetValue,
+                    CanonicalKey = target.CanonicalKey,
+                    ResolvedName = target.ResolvedName,
+                    Revision = item.Revision + 1,
+                    UpdatedUtc = item.UpdatedUtc.AddSeconds(1),
+                }));
+        }
     }
 
-    private sealed class FakeFiles(List<string> log) : IStageFileService
+    private sealed class FakeFiles(
+        List<string> log,
+        StageTargetDescriptor? relinkTarget = null) : IStageFileService
     {
         public Task<IReadOnlyList<StageTargetResolution>> ResolveAsync(
             IReadOnlyList<string> inputs,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<StageTargetResolution>>([]);
+            CancellationToken cancellationToken = default)
+        {
+            log.Add("files.resolve");
+            return Task.FromResult<IReadOnlyList<StageTargetResolution>>(
+                relinkTarget is null
+                    ? []
+                    : [new StageTargetResolution(
+                        Assert.Single(inputs),
+                        relinkTarget,
+                        null,
+                        null)]);
+        }
 
         public Task<StageFileAvailability> InspectAsync(
             StageItem item,
@@ -178,6 +252,19 @@ public sealed class StageActionControllerTests
         {
             log.Add("shell.reveal");
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakeRelinkTargetPicker(
+        List<string>? log = null,
+        StageRelinkSelection? selection = null) : IStageRelinkTargetPicker
+    {
+        public StageRelinkSelection SelectTarget(
+            StageItem item,
+            CancellationToken cancellationToken = default)
+        {
+            log?.Add("picker.select");
+            return selection ?? StageRelinkSelection.Cancelled;
         }
     }
 

@@ -152,6 +152,11 @@ public partial class App : Application
         services.AddSingleton<ILauncherShellService, WindowsLauncherShellService>();
         services.AddSingleton<IStageFileService, WindowsStageFileService>();
         services.AddSingleton<IStageClipboardService, WindowsStageClipboardService>();
+        services.AddSingleton<IStageRelinkDialogFactory, WpfStageRelinkDialogFactory>();
+        services.AddSingleton<IStageRelinkTargetPicker>(provider =>
+            new WpfStageRelinkTargetPicker(
+                provider.GetRequiredService<IStageRelinkDialogFactory>(),
+                () => Current?.MainWindow));
         services.AddSingleton<IClipboardFilePresentationService,
             WindowsClipboardFilePresentationService>();
         services.AddSingleton<IClipboardImageDestinationService>(provider =>

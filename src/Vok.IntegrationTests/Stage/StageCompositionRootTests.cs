@@ -27,6 +27,8 @@ public sealed class StageCompositionRootTests
             service.ServiceType == typeof(StageViewModel));
         Assert.Single(services, static service =>
             service.ServiceType == typeof(StageActionController));
+        Assert.Single(services, static service =>
+            service.ServiceType == typeof(IStageRelinkTargetPicker));
 
         using var provider = services.BuildServiceProvider(new ServiceProviderOptions
         {

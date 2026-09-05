@@ -515,6 +515,234 @@ public sealed class StageViewModelTests
     }
 
     [Fact]
+    public async Task CancelledRelinkDoesNotResolveOrCallTheRepository()
+    {
+        var original = Assert.Single(CreateItems(1));
+        var repository = new ScriptedStageRepository(
+            pages: [CreatePage([original])]);
+        var files = new StaticStageFileService([]);
+        using var viewModel = new StageViewModel(repository, files)
+        {
+            RelinkTargetPickerAsync = static (_, _) =>
+                Task.FromResult(StageRelinkSelection.Cancelled),
+        };
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+
+        await viewModel.RelinkCommand.ExecuteAsync(viewModel.Items[0]);
+
+        Assert.Empty(files.Inputs);
+        Assert.Empty(repository.RelinkCalls);
+        Assert.Contains("已取消重新关联", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.False(viewModel.HasError);
+        Assert.False(viewModel.IsLoading);
+    }
+
+    [Fact]
+    public async Task AppliedRelinkUsesAuthorityAndInvalidatesOldAvailability()
+    {
+        var original = Assert.Single(CreateItems(1));
+        var target = new StageTargetDescriptor(
+            StageItemKind.File,
+            @"C:\Stage\Replacement.txt",
+            @"C:\STAGE\REPLACEMENT.TXT",
+            "Replacement.txt");
+        var authoritative = original with
+        {
+            TargetValue = target.TargetValue,
+            CanonicalKey = target.CanonicalKey,
+            ResolvedName = target.ResolvedName,
+            Revision = original.Revision + 1,
+            UpdatedUtc = original.UpdatedUtc.AddSeconds(1),
+        };
+        var repository = new ScriptedStageRepository(
+            pages: [CreatePage([original])],
+            relinkResult: new StageRelinkResult(
+                StageRelinkStatus.Applied,
+                authoritative));
+        var files = new StaticStageFileService(
+            [new StageTargetResolution(target.TargetValue, target, null, null)]);
+        using var viewModel = new StageViewModel(repository, files)
+        {
+            RelinkTargetPickerAsync = (_, _) => Task.FromResult(
+                StageRelinkSelection.Selected(target.TargetValue)),
+        };
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+        var projection = Assert.Single(viewModel.Items);
+        Assert.True(projection.ApplyAvailability(
+            projection.Revision,
+            StageFileAvailability.Missing));
+        StageItemViewModel? authorityChanged = null;
+        viewModel.ItemAuthorityChanged += item => authorityChanged = item;
+
+        await viewModel.RelinkCommand.ExecuteAsync(projection);
+
+        Assert.Equal([target.TargetValue], Assert.Single(files.Inputs));
+        var call = Assert.Single(repository.RelinkCalls);
+        Assert.Equal(original.Id, call.ItemId);
+        Assert.Equal(original.Revision, call.ExpectedRevision);
+        Assert.Equal(target, call.Target);
+        Assert.Same(projection, Assert.Single(viewModel.Items));
+        Assert.Same(projection, authorityChanged);
+        Assert.Equal(authoritative, projection.Item);
+        Assert.False(projection.HasAvailabilityStatus);
+        Assert.Contains("重新关联到", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.False(viewModel.HasError);
+        Assert.False(viewModel.IsLoading);
+    }
+
+    [Fact]
+    public async Task RelinkResolutionAndKindFailuresNeverReachTheRepository()
+    {
+        var original = Assert.Single(CreateItems(1));
+        var repository = new ScriptedStageRepository(
+            pages:
+            [
+                CreatePage([original]),
+                CreatePage([original]),
+            ]);
+        var missingFiles = new StaticStageFileService(
+            [new StageTargetResolution(
+                @"C:\Missing.txt",
+                null,
+                StageTargetFailureKind.Missing,
+                "目标不存在。")]);
+        using (var missingViewModel = new StageViewModel(repository, missingFiles)
+        {
+            RelinkTargetPickerAsync = static (_, _) => Task.FromResult(
+                StageRelinkSelection.Selected(@"C:\Missing.txt")),
+        })
+        {
+            await missingViewModel.InitializeAsync(TestContext.Current.CancellationToken);
+            await missingViewModel.RelinkCommand.ExecuteAsync(missingViewModel.Items[0]);
+            Assert.Contains("目标不存在", missingViewModel.StatusText, StringComparison.Ordinal);
+        }
+
+        var directoryTarget = new StageTargetDescriptor(
+            StageItemKind.Directory,
+            @"C:\Folder",
+            @"C:\FOLDER",
+            "Folder");
+        var wrongKindFiles = new StaticStageFileService(
+            [new StageTargetResolution(
+                directoryTarget.TargetValue,
+                directoryTarget,
+                null,
+                null)]);
+        using (var wrongKindViewModel = new StageViewModel(repository, wrongKindFiles)
+        {
+            RelinkTargetPickerAsync = (_, _) => Task.FromResult(
+                StageRelinkSelection.Selected(directoryTarget.TargetValue)),
+        })
+        {
+            await wrongKindViewModel.InitializeAsync(TestContext.Current.CancellationToken);
+            await wrongKindViewModel.RelinkCommand.ExecuteAsync(wrongKindViewModel.Items[0]);
+            Assert.Contains("不是文件", wrongKindViewModel.StatusText, StringComparison.Ordinal);
+        }
+
+        Assert.Empty(repository.RelinkCalls);
+    }
+
+    [Fact]
+    public async Task RelinkConflictIsExplicitAndConfirmedWriteIsNotReplayed()
+    {
+        var original = Assert.Single(CreateItems(1));
+        var target = new StageTargetDescriptor(
+            StageItemKind.File,
+            @"C:\Stage\Existing.txt",
+            @"C:\STAGE\EXISTING.TXT",
+            "Existing.txt");
+        var conflictRepository = new ScriptedStageRepository(
+            pages: [CreatePage([original])],
+            relinkResult: new StageRelinkResult(
+                StageRelinkStatus.CanonicalConflict,
+                null));
+        var files = new StaticStageFileService(
+            [new StageTargetResolution(target.TargetValue, target, null, null)]);
+        using (var conflictViewModel = new StageViewModel(conflictRepository, files)
+        {
+            RelinkTargetPickerAsync = (_, _) => Task.FromResult(
+                StageRelinkSelection.Selected(target.TargetValue)),
+        })
+        {
+            await conflictViewModel.InitializeAsync(TestContext.Current.CancellationToken);
+            await conflictViewModel.RelinkCommand.ExecuteAsync(conflictViewModel.Items[0]);
+            Assert.Contains("已在中转站", conflictViewModel.StatusText, StringComparison.Ordinal);
+            Assert.Equal(original, Assert.Single(conflictViewModel.Items).Item);
+        }
+
+        var authoritative = original with
+        {
+            TargetValue = target.TargetValue,
+            CanonicalKey = target.CanonicalKey,
+            ResolvedName = target.ResolvedName,
+            Revision = original.Revision + 1,
+        };
+        var invalidAuthority = authoritative with { Id = Guid.NewGuid() };
+        var committedRepository = new ScriptedStageRepository(
+            pages:
+            [
+                CreatePage([original]),
+                CreatePage([authoritative]),
+            ],
+            relinkResult: new StageRelinkResult(
+                StageRelinkStatus.Applied,
+                invalidAuthority));
+        using var committedViewModel = new StageViewModel(committedRepository, files)
+        {
+            RelinkTargetPickerAsync = (_, _) => Task.FromResult(
+                StageRelinkSelection.Selected(target.TargetValue)),
+        };
+        await committedViewModel.InitializeAsync(TestContext.Current.CancellationToken);
+
+        await committedViewModel.RelinkCommand.ExecuteAsync(committedViewModel.Items[0]);
+
+        Assert.Single(committedRepository.RelinkCalls);
+        Assert.Equal(authoritative, Assert.Single(committedViewModel.Items).Item);
+        Assert.Contains("列表已重新加载", committedViewModel.StatusText, StringComparison.Ordinal);
+        Assert.False(committedViewModel.HasError);
+    }
+
+    [Fact]
+    public async Task DisposedRelinkCannotResolveOrCommitALatePickerResult()
+    {
+        var original = Assert.Single(CreateItems(1));
+        var repository = new ScriptedStageRepository(
+            pages: [CreatePage([original])]);
+        var files = new StaticStageFileService([]);
+        var pickerStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var pickerResult = new TaskCompletionSource<StageRelinkSelection>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var viewModel = new StageViewModel(repository, files)
+        {
+            RelinkTargetPickerAsync = (_, _) =>
+            {
+                pickerStarted.TrySetResult();
+                return pickerResult.Task;
+            },
+        };
+        try
+        {
+            await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+            var operation = viewModel.RelinkCommand.ExecuteAsync(viewModel.Items[0]);
+            await pickerStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+            viewModel.Dispose();
+            pickerResult.SetResult(
+                StageRelinkSelection.Selected(@"C:\Stage\Late.txt"));
+            await operation;
+
+            Assert.Empty(files.Inputs);
+            Assert.Empty(repository.RelinkCalls);
+            Assert.False(viewModel.IsLoading);
+        }
+        finally
+        {
+            viewModel.Dispose();
+        }
+    }
+
+    [Fact]
     public void AvailabilityOnlyAppliesToTheExpectedItemRevision()
     {
         var item = new StageItemViewModel(Assert.Single(CreateItems(1)));
@@ -630,6 +858,13 @@ public sealed class StageViewModelTests
             bool isPinned,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
+
+        public Task<StageRelinkResult> RelinkAsync(
+            Guid itemId,
+            long expectedRevision,
+            StageTargetDescriptor target,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     private sealed class StaticStageFileService(
@@ -668,6 +903,7 @@ public sealed class StageViewModelTests
         private readonly Exception? _addException;
         private readonly StageRemoveResult? _removeResult;
         private readonly StageItemMutationResult? _setPinnedResult;
+        private readonly StageRelinkResult? _relinkResult;
         private readonly int? _failPageLoadAfter;
         private int _pageLoadCount;
 
@@ -677,6 +913,7 @@ public sealed class StageViewModelTests
             Exception? addException = null,
             StageRemoveResult? removeResult = null,
             StageItemMutationResult? setPinnedResult = null,
+            StageRelinkResult? relinkResult = null,
             int? failPageLoadAfter = null)
         {
             _pages = new Queue<StagePage>(pages);
@@ -684,6 +921,7 @@ public sealed class StageViewModelTests
             _addException = addException;
             _removeResult = removeResult;
             _setPinnedResult = setPinnedResult;
+            _relinkResult = relinkResult;
             _failPageLoadAfter = failPageLoadAfter;
         }
 
@@ -692,6 +930,8 @@ public sealed class StageViewModelTests
         public List<(Guid ItemId, long ExpectedRevision)> RemoveCalls { get; } = [];
 
         public List<(Guid ItemId, long ExpectedRevision, bool IsPinned)> SetPinnedCalls { get; } = [];
+
+        public List<(Guid ItemId, long ExpectedRevision, StageTargetDescriptor Target)> RelinkCalls { get; } = [];
 
         public Task<StagePage> LoadPageAsync(
             StagePageCursor? after,
@@ -742,6 +982,18 @@ public sealed class StageViewModelTests
             SetPinnedCalls.Add((itemId, expectedRevision, isPinned));
             return Task.FromResult(
                 _setPinnedResult ?? throw new InvalidOperationException());
+        }
+
+        public Task<StageRelinkResult> RelinkAsync(
+            Guid itemId,
+            long expectedRevision,
+            StageTargetDescriptor target,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            RelinkCalls.Add((itemId, expectedRevision, target));
+            return Task.FromResult(
+                _relinkResult ?? throw new InvalidOperationException());
         }
     }
 
@@ -810,6 +1062,13 @@ public sealed class StageViewModelTests
             Guid itemId,
             long expectedRevision,
             bool isPinned,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<StageRelinkResult> RelinkAsync(
+            Guid itemId,
+            long expectedRevision,
+            StageTargetDescriptor target,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
     }

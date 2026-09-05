@@ -9,6 +9,7 @@ public sealed class StageActionController : IDisposable
     private readonly IWorkspaceCommands _workspace;
     private readonly IStageFileService _files;
     private readonly IStageClipboardService _clipboard;
+    private readonly IStageRelinkTargetPicker _relinkTargetPicker;
     private readonly SemaphoreSlim _actionGate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
     private bool _disposed;
@@ -17,15 +18,19 @@ public sealed class StageActionController : IDisposable
         StageViewModel viewModel,
         IWorkspaceCommands workspace,
         IStageFileService files,
-        IStageClipboardService clipboard)
+        IStageClipboardService clipboard,
+        IStageRelinkTargetPicker relinkTargetPicker)
     {
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         _files = files ?? throw new ArgumentNullException(nameof(files));
         _clipboard = clipboard ?? throw new ArgumentNullException(nameof(clipboard));
+        _relinkTargetPicker = relinkTargetPicker ??
+            throw new ArgumentNullException(nameof(relinkTargetPicker));
         _viewModel.OpenActionAsync = OpenAsync;
         _viewModel.RevealActionAsync = RevealAsync;
         _viewModel.CopyPathActionAsync = CopyPathAsync;
+        _viewModel.RelinkTargetPickerAsync = SelectRelinkTargetAsync;
     }
 
     public void Dispose()
@@ -50,6 +55,11 @@ public sealed class StageActionController : IDisposable
         if (_viewModel.CopyPathActionAsync == CopyPathAsync)
         {
             _viewModel.CopyPathActionAsync = null;
+        }
+
+        if (_viewModel.RelinkTargetPickerAsync == SelectRelinkTargetAsync)
+        {
+            _viewModel.RelinkTargetPickerAsync = null;
         }
     }
 
@@ -80,6 +90,17 @@ public sealed class StageActionController : IDisposable
         {
             _actionGate.Release();
         }
+    }
+
+    private Task<StageRelinkSelection> SelectRelinkTargetAsync(
+        StageItemViewModel item,
+        CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
+        var selection = _relinkTargetPicker.SelectTarget(item.Item, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(selection);
     }
 
     private async Task RunAsync(

@@ -106,6 +106,20 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
             cancellationToken);
     }
 
+    public Task<StageRelinkResult> RelinkAsync(
+        Guid itemId,
+        long expectedRevision,
+        StageTargetDescriptor target,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfEqual(itemId, Guid.Empty);
+        ArgumentOutOfRangeException.ThrowIfLessThan(expectedRevision, 1);
+        ValidateTarget(target);
+        return _executor.ExecuteAsync(
+            connection => Relink(connection, itemId, expectedRevision, target),
+            cancellationToken);
+    }
+
     public void Dispose()
     {
         if (_ownsExecutor)
@@ -364,6 +378,99 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
         return new StageItemMutationResult(
             StageItemMutationStatus.Applied,
             updated);
+    }
+
+    private static StageRelinkResult Relink(
+        SqliteConnection connection,
+        Guid itemId,
+        long expectedRevision,
+        StageTargetDescriptor target)
+    {
+        using var transaction = connection.BeginTransaction();
+        var current = ReadItemById(connection, transaction, itemId);
+        if (current is null)
+        {
+            transaction.Rollback();
+            return new StageRelinkResult(StageRelinkStatus.NotFound, null);
+        }
+
+        if (current.Revision != expectedRevision)
+        {
+            transaction.Rollback();
+            return new StageRelinkResult(StageRelinkStatus.RevisionConflict, null);
+        }
+
+        if (current.Kind != target.Kind)
+        {
+            transaction.Rollback();
+            return new StageRelinkResult(StageRelinkStatus.KindMismatch, null);
+        }
+
+        if (string.Equals(
+                current.CanonicalKey,
+                target.CanonicalKey,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            transaction.Rollback();
+            return new StageRelinkResult(StageRelinkStatus.NoChange, current);
+        }
+
+        using (var conflict = connection.CreateCommand())
+        {
+            conflict.Transaction = transaction;
+            conflict.CommandText = """
+                SELECT 1
+                FROM stage_items
+                WHERE canonical_key = $key COLLATE NOCASE
+                  AND id <> $id
+                LIMIT 1;
+                """;
+            conflict.Parameters.AddWithValue("$key", target.CanonicalKey);
+            conflict.Parameters.AddWithValue("$id", itemId.ToString("D"));
+            if (conflict.ExecuteScalar() is not null)
+            {
+                transaction.Rollback();
+                return new StageRelinkResult(
+                    StageRelinkStatus.CanonicalConflict,
+                    null);
+            }
+        }
+
+        var nextRevision = checked(current.Revision + 1);
+        var updatedUtc = DateTimeOffset.UtcNow;
+        using (var update = connection.CreateCommand())
+        {
+            update.Transaction = transaction;
+            update.CommandText = """
+                UPDATE stage_items
+                SET target_kind = $kind,
+                    target_value = $target,
+                    canonical_key = $key,
+                    resolved_name = $name,
+                    revision = $nextRevision,
+                    updated_utc = $updatedUtc
+                WHERE id = $id AND revision = $expectedRevision;
+                """;
+            update.Parameters.AddWithValue("$kind", (int)target.Kind);
+            update.Parameters.AddWithValue("$target", target.TargetValue);
+            update.Parameters.AddWithValue("$key", target.CanonicalKey);
+            update.Parameters.AddWithValue("$name", target.ResolvedName);
+            update.Parameters.AddWithValue("$nextRevision", nextRevision);
+            update.Parameters.AddWithValue("$updatedUtc", FormatUtc(updatedUtc));
+            update.Parameters.AddWithValue("$id", itemId.ToString("D"));
+            update.Parameters.AddWithValue("$expectedRevision", expectedRevision);
+            if (update.ExecuteNonQuery() != 1)
+            {
+                throw new InvalidOperationException(
+                    $"Stage item {itemId:D} changed while relinking its target.");
+            }
+        }
+
+        var updated = ReadItemById(connection, transaction, itemId) ??
+            throw new InvalidOperationException(
+                $"Stage item {itemId:D} disappeared after relinking its target.");
+        transaction.Commit();
+        return new StageRelinkResult(StageRelinkStatus.Applied, updated);
     }
 
     private static StageItem? ReadItemById(

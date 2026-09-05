@@ -1,6 +1,6 @@
 # M3.1 中转站管理动作实施计划
 
-> **状态（2026-09-05）**：实施中。首批纵向切片已完成 revision-safe 移除仓储、可见项 Availability、Missing 展示和安全移除 UI；Release Core 71/71、Windows/WPF Integration 406/406，共 477/477，构建 0 warning / 0 error。固定、Shell/路径动作、重新关联、排序、发布候选与物理验收尚未实施。当前运行 PID 7864 来自已移除源码的拖动关闭实验候选；本阶段尚未停止或替换它，也未连接或改写真实产品库。
+> **状态（2026-09-06）**：实施中。Checkpoint 0–4 已完成；Checkpoint 5 重新关联的 Core/SQLite、ViewModel、WPF picker、正式菜单、自动回归与隔离候选均已完成，Release Core 74/74、Windows/WPF Integration 433/433，共 507/507，构建 0 warning / 0 error。真实原生文件/目录 owned-dialog 自动 Gate 已连续 5 轮、共 10 次通过；实际候选首项发现的菜单中文方框已作根因修复并发布新候选，实际渲染及三类真实选择、Alt+Tab 与退出路径仍待用户物理验收，通过后才可进入 Checkpoint 6 有界排序。外部入站 Router 与 KI-001 未修改。
 
 ## 1. 阶段目标与完成边界
 
@@ -107,7 +107,7 @@ Unavailable  路径合法，但权限、设备或 I/O 状态令本次检查无�
 - 新目标先经 `IStageFileService.ResolveAsync` 完整规范化，再用 `id + expected revision` 提交。
 - 成功保留原 `id / sort_order / is_pinned / created_utc`，更新 kind、target、canonical、name、updated 和 revision。
 - 新 canonical 已属于另一条 Stage 记录时返回 `CanonicalConflict`，保留两条原记录，不静默合并、删除或回顶。
-- 目标在选择与提交之间失效、解析失败或 SQL 提交失败时，旧引用保持不变。
+- 对话框只返回原始路径；选择完成后、提交前必须重新经 `IStageFileService.ResolveAsync` 规范化。解析时已失效、解析失败或 SQL 提交失败时旧引用保持不变。文件系统与 SQLite 不能组成跨资源原子事务：若目标在解析成功后才消失，允许保存“解析时有效”的引用，并在权威条目换代后立即通过新 revision 的 Availability 重查显示 Missing；不得为消除这段不可避免的 TOCTOU 窗口而跨 Shell/SQLite executor 持有句柄或同步等待。
 
 ### 3.7 排序
 
@@ -376,3 +376,112 @@ git diff --check
 - 新增 Stage 自有路径文本 clipboard adapter；Windows 实现内部映射到既有 `IClipboardPlatformService`，沿用 Unicode 文本、语义哈希、self-write marker 和唯一 Clipboard STA。复制原路径保持 Vok 可见，不修改条目/revision，也不引入 M3.2 的 `CF_HDROP`。
 - 卡片增加独立固定按钮以及打开、定位、复制原路径菜单；卡片主体继续无命令。视觉复验发现并修复 260 DIP 下新增按钮挤出右边界的问题，浅色、深色、Missing、固定和窄列状态均通过。
 - 最终 Release 为 Core 74/74、Integration 420/420，共 494/494，构建 0 warning / 0 error；schema 仍为 7，真实数据库、运行实例、Router 与 KI-001 均未修改。下一步进入 Checkpoint 5 重新关联。
+
+## 14. Checkpoint 5 重新关联实施计划（2026-09-05）
+
+### 14.1 当前源码诊断
+
+- `IStageRepository` 当前只有分页、入站、移除和固定，没有重新关联契约；`StageItemMutationStatus` 只表达固定动作能够产生的四种终态，不能精确表达 canonical 冲突或类型不匹配。
+- `WindowsStageFileService.ResolveAsync` 已在唯一 Shell STA 上把原始路径解析为 `StageTargetDescriptor`，并能严格区分普通文件、目录和 `.lnk`；重新关联应复用它，不新增第二套路由或同步文件系统访问。
+- `StageViewModel` 的 `_operationGate` 已串行化分页、入站和管理写入；`ApplyAuthoritativeItem` 会让 `StageItemViewModel.Update` 重置 Availability，再由 `StageView` 按新 revision 取消旧绑定并重查，所需换代机制已经存在。
+- 当前 App 没有文件/目录选择器。目标框架的 `Microsoft.Win32.OpenFileDialog` 和 `OpenFolderDialog` 均可用；选择 `.lnk` 时必须设置 `DereferenceLinks=false`，否则系统对话框可能返回快捷方式目标而不是 `.lnk` 自身。
+- 选择器属于 WPF/App 边界。若直接让选择器构造函数依赖 `MainWindow`，会与 `MainWindow -> StageViewModel` 形成 DI 环；owner 应在调用时由窄 provider 取得，或由已在窗口创建后接线的 Stage controller 提供。
+- 原生 owned dialog 与当前 `Application.Deactivated -> ForegroundLost` 隐藏规则的真实组合尚未验证。没有证据前不得增加全局失活抑制、固定延时或新的宿主 lease。
+
+### 14.2 本检查点的完成边界
+
+本检查点只交付“把一条现有 Stage 引用改绑到同种类的新目标”：
+
+- 普通文件只能重新关联到普通文件，目录只能到目录，`.lnk` 只能到 `.lnk`；对话框过滤只是提示，`ResolveAsync` 返回的真实种类与仓储事务都必须再次校验。
+- 成功保留 `id / sort_order / is_pinned / created_utc`，只更新 kind、target、canonical、name、`updated_utc`，revision 精确增加一次；容量与页面位置不变。
+- 取消、解析失败、类型不匹配、NotFound、RevisionConflict、CanonicalConflict、revision 溢出和 SQL 异常均不改旧条目，也不触碰任一源文件。
+- canonical 已属于另一条记录时明确拒绝，不能合并、删除冲突项、回顶或继承另一条记录的固定/顺序。
+- 卡片主体仍无取用或拖出动作；只在更多菜单加入“重新关联…”，不修改 Router、Workspace drag lease、M3.2、M3.3 或 KI-001。
+
+### 14.3 契约与所有权
+
+采用专用结果而不是把重新关联专属状态塞入固定动作的结果集合：
+
+```text
+StageRelinkStatus =
+  Applied | NoChange | NotFound | RevisionConflict |
+  CanonicalConflict | KindMismatch
+
+StageRelinkResult(Status, Item?)
+
+IStageRepository.RelinkAsync(
+  itemId,
+  expectedRevision,
+  StageTargetDescriptor target,
+  cancellationToken)
+```
+
+- `Applied / NoChange` 返回权威条目；其余终态不返回猜测条目。
+- 同一 `id` 且 canonical key 相同视为 `NoChange`，不增加 revision；路径大小写或对话框返回形式的差异不制造无意义版本。
+- 仓储即使被非 UI 调用，也必须比较旧 `StageItem.Kind` 与新 descriptor kind；不把 WPF filter 当作领域约束。
+- SQLite executor 内只运行数据库事务，Shell STA 只负责解析；两者之间传递不可变 descriptor，不交叉持有资源。
+- App 层增加可注入的单项 picker 契约。Stage controller 负责把 WPF picker 接到 ViewModel；ViewModel 继续拥有 `_operationGate`、解析、仓储提交、权威投影和用户状态文本，避免 controller 形成第二条 mutation 顺序。
+- WPF picker 内部再以窄 dialog factory 隔离真实 `OpenFileDialog/OpenFolderDialog` 创建；自动测试只捕获配置与 owner，不弹系统窗口。生产 owner 在调用时取得，避免构造期 `MainWindow` 依赖环。
+
+### 14.4 单事务算法
+
+`SqliteStageRepository.RelinkAsync` 在现有 executor 的一个事务内按以下顺序执行：
+
+1. 读取 `itemId` 的完整权威行；不存在返回 `NotFound`。
+2. 比较 revision；不一致返回 `RevisionConflict`。
+3. 比较旧种类与新 descriptor；不同返回 `KindMismatch`。
+4. canonical 与当前条目相同返回 `NoChange`；不更新 target/name，也不增加 revision。
+5. 查询同 canonical 且 `id <> itemId` 的记录；存在则返回 `CanonicalConflict`。
+6. 以 `checked(current.revision + 1)` 计算新 revision，使用 `WHERE id = $id AND revision = $expectedRevision` 更新四个目标字段、revision 与更新时间。
+7. 重读完整权威条目，提交后返回 `Applied`；任何异常和溢出回滚全部字段。
+
+事务不得读取、删除、移动、重命名或写入目标文件；schema 和 `user_version` 保持 7。
+
+### 14.5 UI 与选择器流程
+
+1. ViewModel 在 `_operationGate` 内确认条目仍属于当前页，快照 `id + revision + kind`，设置单项 Busy；整个 owned dialog、解析和提交期间保持唯一 Stage mutation 顺序。
+2. picker 必须在 WPF UI STA 上同步显示 owned dialog，不得用 `Task.Run`。普通文件使用单选 `OpenFileDialog`；目录使用单选 `OpenFolderDialog`；`.lnk` 使用 `*.lnk` filter 且 `DereferenceLinks=false`。
+3. 对话框取消返回显式 Cancelled，零次 Resolve、零次 Repository。对话框返回后还要复核 owner 可见性和应用 lifetime；窗口已经隐藏或应用正在退出时同样按 Cancelled 收口，不得继续迟到提交。是否需要主动关闭仍打开的 owned dialog 由 5D 的真实 Gate 决定，不能预设系统行为。
+4. 选择成功后只解析这一个 raw path。失败显示具体类别；解析种类与快照种类不同则显示类型约束并保持旧引用。
+5. 调用 `RelinkAsync(id, expectedRevision, descriptor)`：
+   - `Applied`：原位应用权威条目，触发旧 Availability 取消和新 revision 重查；
+   - `NoChange`：保留当前投影并报告目标未变化；
+   - `NotFound / RevisionConflict`：不乐观覆盖，重载当前权威页；
+   - `CanonicalConflict`：保留当前页两条记录并明确指出目标已在中转站；
+   - `KindMismatch`：作为防御性终态报告，不尝试改类型。
+6. 已提交后若投影应用失败，只重载当前页并报告“重新关联已保存，列表已重新加载/刷新失败”；不得重放仓储调用。
+
+“重新关联…”放在复制原路径之后、危险的移除区之前。它只增加 ContextMenu 项，不占卡片横向按钮预算；仍需复验 Missing、长 Unicode、浅色/深色和 260×408 DIP。
+
+### 14.6 实施顺序与停止条件
+
+每步只引入一个主要变量：
+
+1. **5A：Core/SQLite**——先增加专用契约和单事务实现，完成所有结果、字段保持、溢出回滚和源摘要门禁；不接 App。
+2. **5B：ViewModel**——用假的 picker/解析/仓储接入命令，覆盖取消、无效、类型错误、冲突、权威更新和提交后 UI 失败；不显示真实对话框。
+3. **5C：WPF picker**——实现文件/目录/`.lnk` 三种配置和 owner provider，自动测试配置、owner、单选及 `.lnk` 不解引用。
+4. **5D：owned-dialog Gate**——在独立候选上实测打开、选择、取消、Esc、Alt+Tab 和应用退出，记录 `Application.Deactivated`、主窗可见性、Topmost 与遗留对话框。正常则保持宿主代码不变；若真实出现误隐藏或孤儿窗口，停止 Checkpoint 5，先形成 generation-scoped owned-modal 生命周期方案并重新评审 R11，不在本切片叠加延时或全局 suppression。
+5. **5E：菜单与回归**——加入菜单、自动化文案和视觉复验，再跑 Stage 定向门禁、Workspace/Launcher/Clipboard 邻接回归和完整 Release。
+
+若同一失败点连续出现两次，回到 picker owner、Application activation、revision 或 canonical 假设重新诊断；不得绕开 `_operationGate`、直接写 SQLite 或让 picker 自己提交。
+
+### 14.7 自动与物理验收增量
+
+- SQLite：六种终态、同 canonical NoChange、冲突两行字节语义不变、字段保持、revision +1/溢出、预取消/已入队事务边界、schema 7 重开；普通文件、目录和 `.lnk` 前后路径/长度/时间戳/SHA 或目录摘要不变。
+- ViewModel：取消与解析失败零仓储、类型不匹配双层拒绝、stale revision 重载、canonical 冲突不合并、成功换代丢弃旧 Availability、提交后投影失败不重放、Dispose/隐藏后不迟到提交；可控 fake 覆盖“选择后、解析前失效”为零写入，以及“解析成功后才失效”为提交后 Missing 重查。
+- Picker/WPF：三类对话框配置、owner、单选、`.lnk` 不解引用、菜单绑定与自动化名称、Missing/固定/窄列/浅深主题无回归。
+- 物理最小矩阵：分别把 Missing 文件、目录、`.lnk` 关联到同类新目标并重启；三类取消；三类错误选择；冲突目标；成功后立即删除新目标并确认下次显示 Missing；对话框打开期间 Alt+Tab/退出无孤儿窗口；旧目标与新目标所在目录摘要除验收者主动操作外始终不变。
+- 完整门禁从当前 494/494 基线只增不减；通过 Checkpoint 5 只能宣布“重新关联代码与候选路径就绪”，M3.1 仍须继续 Checkpoint 6 排序和 Checkpoint 7 最终物理验收。
+
+## 15. Checkpoint 5 自动实施结果（2026-09-05）
+
+- Core 新增专用 `StageRelinkStatus/StageRelinkResult` 和 `RelinkAsync(id, expectedRevision, target)`。SQLite 在 schema 7 单事务内依次核对 NotFound、revision、原种类、同 canonical NoChange 和其他条目 canonical 冲突；成功只更新目标四字段、revision 与更新时间，返回完整权威条目。
+- 仓储门禁证明 Applied 保留 id/order/pinned/created、revision 精确 +1；NoChange 不制造版本；NotFound、RevisionConflict、KindMismatch、CanonicalConflict、revision 溢出均零部分写入。旧/新真实临时文件的长度、mtime 与 SHA-256 在重新关联前后不变，schema 未升级。
+- ViewModel 在既有 `_operationGate` 内串行 picker、单目标 Resolve 和仓储提交；取消、解析失败和类型不匹配不会调用仓储。成功原位应用权威条目并触发现有 id/revision Availability 换代；Dispose 后迟到 picker 结果不能解析或提交，提交已确认但投影失败只重载页面、不重放写入。
+- App 新增可注入 WPF picker 与 dialog factory；文件、目录和 `.lnk` 分别使用单选原生对话框，全部关闭 link dereference，避免普通文件选择静默跟随 `.lnk`。owner 在调用时取得，未引入 `MainWindow -> StageViewModel` DI 环；对话框返回后会复核 owner 可见性和应用 lifetime。
+- 更多菜单已加入“重新关联…”并保持 Missing 可用；卡片横向结构未增加按钮。浅色、深色、Missing、固定与 260×408 DIP 快照目视无回归；Stage 定向 65/65、最终 Release Core 74/74 + Integration 433/433，共 507/507，构建 0 warning / 0 error，`git diff --check` 通过。
+- 新增真实 Windows owned-dialog 自动 Gate：在 WPF STA 上以 Topmost owner 实际打开原生 `OpenFileDialog` 与 `OpenFolderDialog`，按精确标题、进程与 owner HWND 关闭并核验 Cancel 终态、owner 可见/Topmost、`Application.Deactivated=0` 和无遗留 `#32770`。独立命令连续 5 轮、共 10 次对话框全部通过；第一次 UI Automation 关闭方案无法命中模态窗，已中止测试宿主且未保留该死路实现，改用窄 `FindWindowEx/GetWindow/PostMessage(WM_CLOSE)` 后稳定通过。
+- 首次物理 Gate 发现更多菜单中文呈方框：`StageItemActionButtonStyle` 在 Button 级设置 `Segoe Fluent Icons`，由 PlacementTarget 向 ContextMenu 传播了不含中文字形的图标字体。修复将字体与字号收窄到固定/更多按钮各自的图标 TextBlock，Button 与 MenuItem 恢复应用默认字体；WPF 回归同时锁定图标仍用图标字体、Button/ContextMenu/MenuItem 均不使用图标字体。Stage 65/65、完整 Release 507/507、构建 0 warning / 0 error 与 `git diff --check` 通过。
+- 已生成字体修复后的独立 win-x64 自包含候选，共 415 个文件：`%TEMP%\Vok-M31-Relink-FontFix-Candidate-37fa4941a8b74dedb9b7848c3e7bd326`，`Vok.exe` SHA-256 为 `356DE006EF7CEC4B388EFEEDD59D03F3D46DB4176604B4F99376A20FC56C1838`，`Vok.dll` SHA-256 为 `782BDAA39FAC80E2B99557243BC884B61D7E2748037DD18975F4484011826CE9`。已停止旧候选 PID 17988 并启动修复候选 PID 25008 供物理 Gate；实例切换本身未执行数据编辑动作。
+- 2026-09-06 提交前复验再次通过真实原生 owned-dialog 5 轮（共 10 个文件/目录对话框）、完整 Release Core 74/74 + Integration 433/433 共 507/507、构建 0 warning / 0 error 与 `git diff --check`；实际 `.lnk` 选择、Alt+Tab、应用退出与重启持久化继续保留为用户物理 Gate。
+- 尚未完成 5D 的实际候选物理部分：必须覆盖文件/目录/`.lnk` 真实选择、Alt+Tab、Esc/关闭和应用退出，并再次确认 Topmost、`Application.Deactivated` 与孤儿窗口。该部分通过前不能宣布 Checkpoint 5 完成，也不能进入 Checkpoint 6；若出现误隐藏/孤儿窗口，按 §14.6 停止并重新评审 R11，不叠加延时或全局失活抑制。

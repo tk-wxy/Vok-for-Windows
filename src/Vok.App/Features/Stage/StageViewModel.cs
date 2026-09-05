@@ -55,6 +55,9 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
 
     internal Func<StageItemViewModel, Task>? CopyPathActionAsync { get; set; }
 
+    internal Func<StageItemViewModel, CancellationToken, Task<StageRelinkSelection>>?
+        RelinkTargetPickerAsync { get; set; }
+
     public IAsyncRelayCommand LoadNewerCommand { get; }
 
     public IAsyncRelayCommand LoadOlderCommand { get; }
@@ -468,6 +471,157 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
             "复制原路径失败",
             allowMissing: true);
 
+    [RelayCommand]
+    private async Task RelinkAsync(StageItemViewModel? item)
+    {
+        if (item is null || item.IsBusy ||
+            RelinkTargetPickerAsync is null || _disposed)
+        {
+            return;
+        }
+
+        var gateAcquired = false;
+        try
+        {
+            await _operationGate.WaitAsync(_lifetime.Token).ConfigureAwait(true);
+            gateAcquired = true;
+            if (!Items.Contains(item) || RelinkTargetPickerAsync is null)
+            {
+                return;
+            }
+
+            var original = item.Item;
+            item.IsBusy = true;
+            SetLoading(true);
+            HasError = false;
+            StatusText = $"请选择用于重新关联“{item.DisplayName}”的{item.TypeText}…";
+            var selection = await RelinkTargetPickerAsync(item, _lifetime.Token)
+                .ConfigureAwait(true);
+            _lifetime.Token.ThrowIfCancellationRequested();
+            if (selection.Status is StageRelinkSelectionStatus.Cancelled)
+            {
+                StatusText = $"已取消重新关联“{original.ResolvedName}”。";
+                return;
+            }
+
+            if (selection.Status is not StageRelinkSelectionStatus.Selected ||
+                string.IsNullOrWhiteSpace(selection.Path))
+            {
+                throw new InvalidOperationException(
+                    "The Stage relink picker returned an invalid selection.");
+            }
+
+            StatusText = $"正在验证“{original.ResolvedName}”的新目标…";
+            var resolutions = await _fileService
+                .ResolveAsync([selection.Path], _lifetime.Token)
+                .ConfigureAwait(true);
+            if (resolutions.Count != 1)
+            {
+                throw new InvalidOperationException(
+                    "The Stage relink resolver did not return exactly one result.");
+            }
+
+            var resolution = resolutions[0];
+            if (resolution.Target is not { } target)
+            {
+                StatusText = CreateRelinkResolutionFailureStatus(original, resolution);
+                return;
+            }
+
+            if (target.Kind != original.Kind)
+            {
+                StatusText = $"所选目标不是{item.TypeText}，未更改“{original.ResolvedName}”。";
+                return;
+            }
+
+            StatusText = $"正在重新关联“{original.ResolvedName}”…";
+            var result = await _repository
+                .RelinkAsync(
+                    original.Id,
+                    original.Revision,
+                    target,
+                    _lifetime.Token)
+                .ConfigureAwait(true);
+            switch (result.Status)
+            {
+                case StageRelinkStatus.Applied:
+                    var authoritative = result.Item ??
+                        throw new InvalidOperationException(
+                            "An applied Stage relink did not return its authoritative item.");
+                    var completedStatus =
+                        $"已将“{original.ResolvedName}”重新关联到“{authoritative.ResolvedName}”。";
+                    try
+                    {
+                        ApplyAuthoritativeItem(item, authoritative);
+                        StatusText = completedStatus;
+                    }
+                    catch (Exception exception)
+                    {
+                        await ReloadAfterConfirmedItemMutationAsync(
+                                completedStatus,
+                                exception,
+                                _lifetime.Token)
+                            .ConfigureAwait(true);
+                    }
+
+                    break;
+
+                case StageRelinkStatus.NoChange:
+                    if (result.Item is { } unchanged && unchanged != item.Item)
+                    {
+                        ApplyAuthoritativeItem(item, unchanged);
+                    }
+
+                    StatusText = $"“{original.ResolvedName}”已经关联到该目标。";
+                    break;
+
+                case StageRelinkStatus.NotFound:
+                    await ReloadAfterRejectedRelinkAsync(
+                            "该项目已不在中转站中，未执行重新关联；列表已刷新。",
+                            _lifetime.Token)
+                        .ConfigureAwait(true);
+                    break;
+
+                case StageRelinkStatus.RevisionConflict:
+                    await ReloadAfterRejectedRelinkAsync(
+                            "项目已发生变化，未执行重新关联；列表已刷新。",
+                            _lifetime.Token)
+                        .ConfigureAwait(true);
+                    break;
+
+                case StageRelinkStatus.CanonicalConflict:
+                    StatusText = $"“{target.ResolvedName}”已在中转站中，未更改“{original.ResolvedName}”。";
+                    break;
+
+                case StageRelinkStatus.KindMismatch:
+                    StatusText = $"所选目标类型已变化，未更改“{original.ResolvedName}”。";
+                    break;
+
+                default:
+                    throw new InvalidOperationException(
+                        $"Unsupported Stage relink result: {result.Status}.");
+            }
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+            // Application lifetime cancellation owns shutdown cleanup.
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            HasError = true;
+            StatusText = $"重新关联中转项目失败，结果待核对：{exception.Message}";
+        }
+        finally
+        {
+            item.IsBusy = false;
+            if (gateAcquired)
+            {
+                SetLoading(false);
+                _operationGate.Release();
+            }
+        }
+    }
+
     private async Task RunFileActionAsync(
         StageItemViewModel? item,
         Func<StageItemViewModel, Task>? action,
@@ -532,6 +686,7 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         OpenActionAsync = null;
         RevealActionAsync = null;
         CopyPathActionAsync = null;
+        RelinkTargetPickerAsync = null;
         NotifyPageStateChanged();
     }
 
@@ -751,6 +906,33 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         }
     }
 
+    private async Task ReloadAfterRejectedRelinkAsync(
+        string successStatus,
+        CancellationToken cancellationToken)
+    {
+        var start = _pageIndex == 0 ? null : _pageStarts[_pageIndex];
+        TruncatePageHistoryAfter(_pageIndex);
+        try
+        {
+            await LoadPageLockedAsync(
+                    start,
+                    _pageIndex,
+                    resetHistory: _pageIndex == 0,
+                    cancellationToken)
+                .ConfigureAwait(true);
+            StatusText = successStatus;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            HasError = true;
+            StatusText = $"未执行重新关联，且列表刷新失败：{exception.Message}";
+        }
+    }
+
     private void ApplyAuthoritativeItem(
         StageItemViewModel projection,
         StageItem authoritativeItem)
@@ -855,6 +1037,16 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
             _ => "没有有效的文件系统目标",
         };
         return $"未放入任何项目；{count} 项无效（{reason}）。";
+    }
+
+    private static string CreateRelinkResolutionFailureStatus(
+        StageItem original,
+        StageTargetResolution resolution)
+    {
+        var reason = string.IsNullOrWhiteSpace(resolution.Error)
+            ? resolution.Failure?.ToString() ?? "未知原因"
+            : resolution.Error;
+        return $"无法重新关联“{original.ResolvedName}”：{reason}";
     }
 
     private static string CreateAppliedStatus(

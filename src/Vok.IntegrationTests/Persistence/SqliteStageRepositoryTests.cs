@@ -11,6 +11,198 @@ namespace Vok.IntegrationTests.Persistence;
 public sealed class SqliteStageRepositoryTests
 {
     [Fact]
+    public async Task RelinkRequiresMatchingKindAndRevisionAndPreservesItemIdentity()
+    {
+        var directory = CreateTestDirectory();
+        var oldSource = Path.Combine(directory, "old.txt");
+        var newSource = Path.Combine(directory, "new.txt");
+        try
+        {
+            await File.WriteAllTextAsync(
+                oldSource,
+                "old-source",
+                TestContext.Current.CancellationToken);
+            await File.WriteAllTextAsync(
+                newSource,
+                "new-source",
+                TestContext.Current.CancellationToken);
+            var oldSnapshot = await FileSnapshot.CreateAsync(oldSource);
+            var newSnapshot = await FileSnapshot.CreateAsync(newSource);
+            var databasePath = Path.Combine(directory, "relink.db");
+            using var repository = new SqliteStageRepository(databasePath);
+            _ = await repository.AddOrMoveAsync(
+                [Target(oldSource, "old.txt"), Target("C:\\Neighbor.txt", "Neighbor")],
+                TestContext.Current.CancellationToken);
+            var original = (await repository.LoadPageAsync(
+                    null,
+                    10,
+                    TestContext.Current.CancellationToken))
+                .Items
+                .Single(item => item.TargetValue == oldSource);
+            var pinned = Assert.IsType<StageItem>((await repository.SetPinnedAsync(
+                original.Id,
+                original.Revision,
+                isPinned: true,
+                TestContext.Current.CancellationToken)).Item);
+
+            var applied = await repository.RelinkAsync(
+                pinned.Id,
+                pinned.Revision,
+                Target(newSource, "new.txt"),
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(StageRelinkStatus.Applied, applied.Status);
+            var authoritative = Assert.IsType<StageItem>(applied.Item);
+            Assert.Equal(pinned.Id, authoritative.Id);
+            Assert.Equal(StageItemKind.File, authoritative.Kind);
+            Assert.Equal(newSource, authoritative.TargetValue);
+            Assert.Equal(newSource.ToUpperInvariant(), authoritative.CanonicalKey);
+            Assert.Equal("new.txt", authoritative.ResolvedName);
+            Assert.Equal(pinned.SortOrder, authoritative.SortOrder);
+            Assert.True(authoritative.IsPinned);
+            Assert.Equal(pinned.CreatedUtc, authoritative.CreatedUtc);
+            Assert.Equal(pinned.Revision + 1, authoritative.Revision);
+            Assert.True(authoritative.UpdatedUtc >= pinned.UpdatedUtc);
+
+            var noChange = await repository.RelinkAsync(
+                authoritative.Id,
+                authoritative.Revision,
+                Target(newSource.ToUpperInvariant(), "ignored casing update"),
+                TestContext.Current.CancellationToken);
+            Assert.Equal(StageRelinkStatus.NoChange, noChange.Status);
+            Assert.Equal(authoritative, noChange.Item);
+
+            var stale = await repository.RelinkAsync(
+                authoritative.Id,
+                pinned.Revision,
+                Target(oldSource, "old.txt"),
+                TestContext.Current.CancellationToken);
+            Assert.Equal(StageRelinkStatus.RevisionConflict, stale.Status);
+            Assert.Null(stale.Item);
+
+            var wrongKind = await repository.RelinkAsync(
+                authoritative.Id,
+                authoritative.Revision,
+                Target(directory, "folder", StageItemKind.Directory),
+                TestContext.Current.CancellationToken);
+            Assert.Equal(StageRelinkStatus.KindMismatch, wrongKind.Status);
+            Assert.Null(wrongKind.Item);
+
+            var missing = await repository.RelinkAsync(
+                Guid.NewGuid(),
+                expectedRevision: 1,
+                Target(newSource, "new.txt"),
+                TestContext.Current.CancellationToken);
+            Assert.Equal(StageRelinkStatus.NotFound, missing.Status);
+            Assert.Null(missing.Item);
+
+            using var reopened = new SqliteStageRepository(databasePath);
+            var persisted = (await reopened.LoadPageAsync(
+                    null,
+                    10,
+                    TestContext.Current.CancellationToken))
+                .Items
+                .Single(item => item.Id == original.Id);
+            Assert.Equal(authoritative, persisted);
+            await oldSnapshot.AssertUnchangedAsync();
+            await newSnapshot.AssertUnchangedAsync();
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task RelinkCanonicalConflictRejectsWithoutChangingEitherItem()
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            using var repository = new SqliteStageRepository(
+                Path.Combine(directory, "relink-conflict.db"));
+            _ = await repository.AddOrMoveAsync(
+                [Target("C:\\A.txt", "A"), Target("C:\\B.txt", "B")],
+                TestContext.Current.CancellationToken);
+            var before = await repository.LoadPageAsync(
+                null,
+                10,
+                TestContext.Current.CancellationToken);
+            var source = before.Items.Single(item => item.ResolvedName == "A");
+
+            var conflict = await repository.RelinkAsync(
+                source.Id,
+                source.Revision,
+                Target("c:\\b.TXT", "B replacement"),
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(StageRelinkStatus.CanonicalConflict, conflict.Status);
+            Assert.Null(conflict.Item);
+            var after = await repository.LoadPageAsync(
+                null,
+                10,
+                TestContext.Current.CancellationToken);
+            Assert.Equal(before.TotalCount, after.TotalCount);
+            Assert.Equal(before.NextCursor, after.NextCursor);
+            Assert.Equal(before.Items, after.Items);
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task RelinkRevisionOverflowRollsBackWithoutChangingTheItem()
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            var databasePath = Path.Combine(directory, "relink-overflow.db");
+            using var executor = new SqliteStorageExecutor(databasePath);
+            using var repository = new SqliteStageRepository(
+                executor,
+                new StageOptions());
+            _ = await repository.AddOrMoveAsync(
+                [Target("C:\\Original.txt", "Original")],
+                TestContext.Current.CancellationToken);
+            var original = Assert.Single((await repository.LoadPageAsync(
+                null,
+                10,
+                TestContext.Current.CancellationToken)).Items);
+            await executor.ExecuteAsync(
+                connection =>
+                {
+                    using var command = connection.CreateCommand();
+                    command.CommandText = "UPDATE stage_items SET revision = $revision WHERE id = $id;";
+                    command.Parameters.AddWithValue("$revision", long.MaxValue);
+                    command.Parameters.AddWithValue("$id", original.Id.ToString("D"));
+                    Assert.Equal(1, command.ExecuteNonQuery());
+                    return true;
+                },
+                TestContext.Current.CancellationToken);
+
+            await Assert.ThrowsAsync<OverflowException>(() => repository.RelinkAsync(
+                original.Id,
+                long.MaxValue,
+                Target("C:\\Replacement.txt", "Replacement"),
+                TestContext.Current.CancellationToken));
+
+            var after = Assert.Single((await repository.LoadPageAsync(
+                null,
+                10,
+                TestContext.Current.CancellationToken)).Items);
+            Assert.Equal(original.TargetValue, after.TargetValue);
+            Assert.Equal(original.ResolvedName, after.ResolvedName);
+            Assert.Equal(long.MaxValue, after.Revision);
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
     public async Task SetPinnedRequiresCurrentRevisionAndReturnsTheAuthoritativeItem()
     {
         var directory = CreateTestDirectory();
@@ -663,6 +855,24 @@ public sealed class SqliteStageRepositoryTests
                     0,
                     isPinned: true,
                     TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+                repository.RelinkAsync(
+                    Guid.Empty,
+                    1,
+                    Target("C:\\A", "A"),
+                    TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+                repository.RelinkAsync(
+                    Guid.NewGuid(),
+                    0,
+                    Target("C:\\A", "A"),
+                    TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                repository.RelinkAsync(
+                    Guid.NewGuid(),
+                    1,
+                    Target("", "A"),
+                    TestContext.Current.CancellationToken));
         }
         finally
         {
@@ -711,6 +921,33 @@ public sealed class SqliteStageRepositoryTests
         if (Directory.Exists(directory))
         {
             Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private sealed record FileSnapshot(
+        string Path,
+        long Length,
+        DateTime LastWriteUtc,
+        byte[] Hash)
+    {
+        public static async Task<FileSnapshot> CreateAsync(string path) => new(
+            path,
+            new FileInfo(path).Length,
+            File.GetLastWriteTimeUtc(path),
+            SHA256.HashData(await File.ReadAllBytesAsync(
+                path,
+                TestContext.Current.CancellationToken)));
+
+        public async Task AssertUnchangedAsync()
+        {
+            Assert.True(File.Exists(Path));
+            Assert.Equal(Length, new FileInfo(Path).Length);
+            Assert.Equal(LastWriteUtc, File.GetLastWriteTimeUtc(Path));
+            Assert.Equal(
+                Hash,
+                SHA256.HashData(await File.ReadAllBytesAsync(
+                    Path,
+                    TestContext.Current.CancellationToken)));
         }
     }
 

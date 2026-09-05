@@ -11,10 +11,10 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP 已归档，M3.1 Checkpoint 1–4 已完成自动门禁：revision-safe 移除/固定、可见项 Availability/Missing、安全管理 UI、隐藏后打开/定位和复制原路径均已落地；重新关联、有界排序和候选物理验收尚未实现。
-- **最近进展**：固定按 `id + expected revision` 在 schema 7 单事务返回权威条目，revision 更新会取消并重建可见项 Availability；Stage 使用独立 `StageManagementAction` 且隐藏成功后才经共享 Shell STA 打开/定位，路径文本复制复用唯一 Clipboard STA/self-write 并保持窗口可见。Release 为 74/74 + 420/420，共 494/494，构建零警告/错误，浅色/深色/Missing/固定/260 DIP 通过。
-- **下一步**：进入 M3.1 Checkpoint 5 重新关联：先加入可注入选择器与文件/目录/`.lnk` 类型约束，再完成 Resolve、revision-safe 提交、canonical 冲突和 Availability 换代；随后才进入有界排序。不得混入 M3.2 取用、M3.3 拖出或 KI-001 修改。
-- **已知问题**：KI-001 已延期：活动 Explorer 拖动中关闭 Vok 可能让松手落回源目录并生成副本。测试产生的 `.lnk` 副本未经授权不得删除；当前运行 PID 7864 仍来自已移除源码的关闭抑制候选，未按本次请求擅自替换；物理稳定性实际为 50+ 次而非计划的 100 次。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP 已归档。M3.1 Checkpoint 1–4 已完成；Checkpoint 5 重新关联的产品代码、自动回归、真实原生对话框自动 Gate 与隔离候选已完成，实际候选的三类选择/Alt+Tab/退出物理路径尚待用户验收；有界排序未开始。字体修复候选现以 PID 25008 运行。
+- **最近进展**：重新关联按 `id + expected revision` 在 schema 7 单事务区分 Applied/NoChange/NotFound/RevisionConflict/CanonicalConflict/KindMismatch，保留 id/order/pinned/created，成功权威换代 Availability；原生 picker 同类约束且禁止 link dereference，取消/解析失败/Dispose 迟到均零写入。用户物理 Gate 首项发现更多菜单中文呈方框；根因为操作按钮样式把 `Segoe Fluent Icons` 设在 Button 上并传播给 ContextMenu，现已将图标字体收窄到图标 TextBlock，并增加字体链回归。2026-09-06 提交前再次通过真实 owned-dialog 5 轮/10 窗口、完整 Release 74/74 + 433/433 共 507/507 及零警告构建；415 文件修复候选运行于 PID 25008。
+- **下一步**：在独立候选只补 M3.1 Checkpoint 5D 人工 Gate：文件/目录/`.lnk` 真实选择与取消、Alt+Tab、Esc/关闭、应用退出和无孤儿窗口；通过后进入 Checkpoint 6 有界排序。若出现误隐藏或孤儿窗口，停止并重新评审 R11，不混入 M3.2、M3.3 或 KI-001。
+- **已知问题**：KI-001 已延期：活动 Explorer 拖动中关闭 Vok 可能让松手落回源目录并生成副本。测试产生的 `.lnk` 副本未经授权不得删除；旧重新关联候选 PID 17988 已停止，当前 PID 25008 为菜单字体修复候选；菜单中文实际渲染仍待用户复验，物理稳定性实际为 50+ 次而非计划的 100 次。
 
 ## §0A 最近会话
 
@@ -28,6 +28,10 @@
 - Checkpoint 4 新增 revision-safe 固定与权威条目原位回填；revision 变化会让旧 Availability 结果失效并为可见容器重查。固定/取消固定、冲突、NoChange、溢出回滚、跨重开和提交后 UI 应用失败不重放均有门禁。
 - Stage 打开/定位使用独立 `StageManagementAction`，隐藏成功后才经 Launcher/Stage 共用的 internal Shell 动作和唯一 Shell STA 执行；Missing 禁用。复制原路径使用 Stage 自有 Core 契约并在 Windows 内映射唯一 Clipboard STA/self-write，保持 Vok 可见且不改条目。
 - 固定按钮与更多菜单在浅色、深色、Missing、固定和 260 DIP 窄列目视通过；窄列初版曾把更多按钮挤出右侧，调整信息层级与按钮预算后复验通过。最终 Release Core 74/74 + Integration 420/420，共 494/494，构建 0 warning / 0 error；下一步进入重新关联。
+- Checkpoint 5 重新关联已完成源码级实施规划并写入 `docs/M3_STAGE_M31_PLAN.md §14`：采用专用 Relink 终态、同类目标双层约束、SQLite revision/canonical 单事务、现有 Availability 换代和 WPF owned-dialog Gate，按 5A–5E 实施。目标框架已核实具备 `OpenFileDialog/OpenFolderDialog`，`.lnk` 必须关闭 `DereferenceLinks`；解析成功后目标再次消失属于文件系统/SQLite 不可原子化窗口，提交后以新 revision 重查 Missing，不跨 executor 持有资源。本次只修改计划与状态记录，未改产品代码、真实库、运行实例、Router 或 KI-001。
+- Checkpoint 5 随后完成自动实施：专用 Relink 事务、ViewModel 单一操作顺序、WPF picker/dialog factory、菜单和迟到取消均落地；源文件摘要、canonical/type/revision 失败方向、Availability 换代及投影失败不重放有门禁。真实原生 file/folder dialog 又以 Topmost owner 连续 5 轮共 10 次自动打开/取消，证明 Deactivated=0、owner 可见且无孤儿窗。最终 Release Core 74/74 + Integration 433/433，共 507/507，构建 0 warning / 0 error；浅深/Missing/固定/260 DIP 复验通过。415 文件独立候选已发布；经用户明确要求，核对 `Vok.dll` SHA-256 后停止旧 PID 7864，并启动候选 PID 17988。下一步只补实际候选人工 Gate。
+- 用户开始物理 Gate 后，首项发现 Stage 更多菜单中文全部呈方框。机制根因为 `StageItemActionButtonStyle` 在 Button 级设置 `Segoe Fluent Icons`，ContextMenu 由 PlacementTarget 继承到不含中文字形的图标字体；修复把 FontFamily/FontSize 收窄到两个图标 TextBlock，按钮和菜单恢复应用默认字体，并新增图标字体保留、Button/ContextMenu/MenuItem 非图标字体的 WPF 回归。Stage 65/65、完整 Release 507/507、构建 0 warning / 0 error；直接渲染 Popup 的附加截图尝试会阻塞 WPF 测试宿主，已精确终止并撤掉该测试死路，无残留进程。415 文件修复候选 `Vok.dll` SHA-256 为 `782BDAA39FAC80E2B99557243BC884B61D7E2748037DD18975F4484011826CE9`，已停止 PID 17988 并启动 PID 25008，下一步先由用户复验菜单中文。
+- 2026-09-06 提交前复验再次通过真实原生 owned-dialog 5 轮（共 10 个文件/目录对话框）、完整 Release Core 74/74 + Integration 433/433 共 507/507、构建 0 warning / 0 error 与 `git diff --check`；PID 25008 候选仍在运行。`.lnk` 实际选择、Alt+Tab、应用退出与重启持久化仍是用户物理 Gate，不记作自动通过。
 
 ### 会话 2026-09-04 - M3 中转站产品契约、扩容与入站 MVP 收窄
 

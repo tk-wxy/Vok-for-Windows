@@ -21,4 +21,10 @@ public interface IStageRepository
         long expectedRevision,
         bool isPinned,
         CancellationToken cancellationToken = default);
+
+    Task<StageRelinkResult> RelinkAsync(
+        Guid itemId,
+        long expectedRevision,
+        StageTargetDescriptor target,
+        CancellationToken cancellationToken = default);
 }

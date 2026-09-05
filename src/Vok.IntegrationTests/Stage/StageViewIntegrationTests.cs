@@ -100,27 +100,41 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                         StringComparison.Ordinal));
                 Assert.Same(viewModel.TogglePinnedCommand, pinButton.Command);
                 Assert.Same(viewModel.Items[0], pinButton.CommandParameter);
+                var pinGlyph = Assert.IsType<TextBlock>(pinButton.Content);
+                var menuGlyph = Assert.IsType<TextBlock>(menuButton.Content);
+                Assert.Equal("Segoe Fluent Icons", pinGlyph.FontFamily.Source);
+                Assert.Equal("Segoe Fluent Icons", menuGlyph.FontFamily.Source);
+                Assert.NotEqual("Segoe Fluent Icons", pinButton.FontFamily.Source);
+                Assert.NotEqual("Segoe Fluent Icons", menuButton.FontFamily.Source);
                 var menu = Assert.IsType<ContextMenu>(menuButton.ContextMenu);
-                Assert.Equal(5, menu.Items.Count);
+                Assert.Equal(6, menu.Items.Count);
                 var openItem = Assert.IsType<MenuItem>(menu.Items[0]);
                 var revealItem = Assert.IsType<MenuItem>(menu.Items[1]);
                 var copyPathItem = Assert.IsType<MenuItem>(menu.Items[2]);
-                _ = Assert.IsType<Separator>(menu.Items[3]);
-                var removeItem = Assert.IsType<MenuItem>(menu.Items[4]);
+                var relinkItem = Assert.IsType<MenuItem>(menu.Items[3]);
+                _ = Assert.IsType<Separator>(menu.Items[4]);
+                var removeItem = Assert.IsType<MenuItem>(menu.Items[5]);
                 Assert.Equal("打开", openItem.Header);
                 Assert.Equal("在文件资源管理器中定位", revealItem.Header);
                 Assert.Equal("复制原路径", copyPathItem.Header);
+                Assert.Equal("重新关联…", relinkItem.Header);
                 Assert.Equal("从中转站移除", removeItem.Header);
                 menuButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 window.Dispatcher.Invoke(DispatcherPriority.ApplicationIdle, static () => { });
                 Assert.True(menu.IsOpen);
+                Assert.NotEqual("Segoe Fluent Icons", menu.FontFamily.Source);
+                Assert.All(
+                    menu.Items.OfType<MenuItem>(),
+                    item => Assert.NotEqual("Segoe Fluent Icons", item.FontFamily.Source));
                 Assert.Same(viewModel.OpenCommand, openItem.Command);
                 Assert.Same(viewModel.RevealCommand, revealItem.Command);
                 Assert.Same(viewModel.CopyPathCommand, copyPathItem.Command);
+                Assert.Same(viewModel.RelinkCommand, relinkItem.Command);
                 Assert.Same(viewModel.RemoveCommand, removeItem.Command);
                 Assert.Same(viewModel.Items[0], openItem.CommandParameter);
                 Assert.Same(viewModel.Items[0], revealItem.CommandParameter);
                 Assert.Same(viewModel.Items[0], copyPathItem.CommandParameter);
+                Assert.Same(viewModel.Items[0], relinkItem.CommandParameter);
                 Assert.Same(viewModel.Items[0], removeItem.CommandParameter);
                 menu.IsOpen = false;
                 Assert.InRange(fileService.InspectedIds.Count, 1, realized.Length);
@@ -132,6 +146,7 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 window.UpdateLayout();
                 Assert.False(openItem.IsEnabled);
                 Assert.False(revealItem.IsEnabled);
+                Assert.True(relinkItem.IsEnabled);
                 Assert.True(copyPathItem.IsEnabled);
                 var missingText = Assert.Single(
                     FindVisualDescendants<TextBlock>(firstCard),
@@ -428,6 +443,13 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 StageItemMutationStatus.Applied,
                 updated));
         }
+
+        public Task<StageRelinkResult> RelinkAsync(
+            Guid itemId,
+            long expectedRevision,
+            StageTargetDescriptor target,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     private sealed class NoopStageFileService : IStageFileService
