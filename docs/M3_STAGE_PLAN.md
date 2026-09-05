@@ -1,6 +1,6 @@
 # M3 中转站产品契约与实施计划
 
-> **状态（2026-09-06）**：产品边界和长期路线已确认，“外部拖着文件呼出 Vok，在中转站松手后条目持久落入”的入站 MVP 已完成并归档。M3.MVP1 数据内核、M3.MVP2 展示/路由和 M3.MVP3 数据/发布/真机验收均完成；Explorer/桌面代表矩阵与用户 5 组共 50+ 次循环通过，受时间限制不把它记作计划的 100 次。M3.1 已完成 Checkpoint 0–5，Missing、安全移除、固定、打开/定位、复制原路径和重新关联均已落地并通过重新关联候选人工 Gate；Checkpoint 6 有界排序已完成源码诊断和实施规划，产品代码尚未开始。用户已确认排序前采用单一自适应卡片布局、不提供列表/卡片切换；Card Gate 0/1 的组件、持久化、交互与验收方案已细化，下一步先实施卡片基础，再以二维几何进入 Checkpoint 6。活动 Explorer 拖动中反复关闭/呼出的源目录副本风险仍按用户要求延期为 `KNOWN_ISSUES.md` KI-001；200 条仍是首期产品开放上限，不是 schema、仓储或分页的架构上限。
+> **状态（2026-09-06）**：产品边界和长期路线已确认，“外部拖着文件呼出 Vok，在中转站松手后条目持久落入”的入站 MVP 已完成并归档。M3.MVP1 数据内核、M3.MVP2 展示/路由和 M3.MVP3 数据/发布/真机验收均完成；Explorer/桌面代表矩阵与用户 5 组共 50+ 次循环通过，受时间限制不把它记作计划的 100 次。M3.1 已完成 Checkpoint 0–5，Missing、安全移除、固定、打开/定位、复制原路径和重新关联均已落地并通过重新关联候选人工 Gate；Checkpoint 6 有界排序已完成源码诊断和实施规划，产品代码尚未开始。用户已确认排序前采用单一自适应卡片布局、不提供列表/卡片切换；Card 0A 纯布局模型与计算门禁已完成，下一步执行 Card 0B 视觉择优和 Card Gate 1，再以二维几何进入 Checkpoint 6。活动 Explorer 拖动中反复关闭/呼出的源目录副本风险仍按用户要求延期为 `KNOWN_ISSUES.md` KI-001；200 条仍是首期产品开放上限，不是 schema、仓储或分页的架构上限。
 
 ## 0. 当前最小 MVP（本轮唯一交付范围）
 
@@ -354,7 +354,7 @@ INDEX stage_items_order ON stage_items(sort_order, id)
 
 交付：固定、手工排序、打开/定位、移除、重新关联和 Missing 可见项检查。
 
-状态：已推进至 Checkpoint 6 前置卡片 Gate。Checkpoint 0–5 已完成：revision-safe 的安全移除与固定、可见项 Availability/Missing、Stage 专用隐藏后打开/定位、复制原路径和重新关联均已落地；重新关联通过 Release 507/507、零警告构建、原生 owned-dialog 自动 Gate 及用户实际候选物理 Gate。用户已确认单一自适应卡片布局，Card Gate 0/1 的纯布局计算、运行时行投影、逐卡 Availability 回收、现有管理动作复接和物理门禁均已规划；产品代码尚未开始。完成卡片 Gate 后，Checkpoint 6 先实施布局无关的 6A/6B，再以真实二维卡片容器完成 6C–6F。schema 仍保持 7，`AppSettings`、外部拖放 Router 与 KI-001 不修改。详细卡片方案见 `M3_STAGE_CARD_LAYOUT_PLAN.md`，排序契约与实施记录见 `M3_STAGE_M31_PLAN.md`。
+状态：已推进至 Checkpoint 6 前置卡片 Gate。Checkpoint 0–5 已完成：revision-safe 的安全移除与固定、可见项 Availability/Missing、Stage 专用隐藏后打开/定位、复制原路径和重新关联均已落地；重新关联通过 Release 507/507、零警告构建、原生 owned-dialog 自动 Gate 及用户实际候选物理 Gate。用户已确认单一自适应卡片布局；Card 0A 的纯布局模型、两个显式候选档和 35 项计算门禁已完成，完整 Release 542/542，Card Gate 1 的运行时行投影、逐卡 Availability 回收、现有管理动作复接和物理门禁仍待实施。下一步先执行 Card 0B 视觉择优；完成卡片 Gate 后，Checkpoint 6 先实施布局无关的 6A/6B，再以真实二维卡片容器完成 6C–6F。schema 仍保持 7，`AppSettings`、外部拖放 Router 与 KI-001 不修改。详细卡片方案见 `M3_STAGE_CARD_LAYOUT_PLAN.md`，排序契约与实施记录见 `M3_STAGE_M31_PLAN.md`。
 
 ### M3.2：仅复制与点击取用（MVP 后续）
 

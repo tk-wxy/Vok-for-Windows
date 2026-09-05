@@ -11,9 +11,9 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP 已归档。M3.1 Checkpoint 1–5 已完成并通过重新关联候选人工 Gate；用户已确认排序前采用单一自适应卡片布局、不提供布局切换。Card Gate 0/1 实施方案已细化，卡片与 Checkpoint 6 产品代码均尚未开始。字体修复候选仍以 PID 25008 运行。
-- **最近进展**：卡片方案把 `StageViewModel.Items` 保持为唯一扁平 64 项业务顺序，在 App 层新增纯布局计算与运行时行投影，以外层行 Recycling + 内层定列卡片呈现；schema 7、`AppSettings`、Router 和现有管理事务均不改变。源码核对发现当前虚拟化清理只找一个 `StageItemCard`，改为一行多卡后必须逐卡取消 `id + revision + container` Availability 绑定。卡片主体/排序把手/固定/菜单命中区、尺寸候选、逐步文件清单、自动/物理矩阵以及与二维排序的交接已写入 `docs/M3_STAGE_CARD_LAYOUT_PLAN.md`；决定见 `decisions.md §30`。
-- **下一步**：从 Card 0A 开始，只增加 `StageCardLayoutCalculator/Profile` 和纯计算测试；再在 Card 0B 以 92×112、104×124 两个命名候选完成浅/深、260/520 DIP 与真实 DPI 渲染择优。尺寸冻结后依次实施行投影、XAML 卡片、逐卡 Availability/外部拖入回归和独立候选；全部通过后进入 Checkpoint 6A–6F。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP 已归档。M3.1 Checkpoint 1–5 已完成并通过重新关联候选人工 Gate；用户已确认排序前采用单一自适应卡片布局、不提供布局切换。Card 0A 已完成，Card 0B/1 与 Checkpoint 6 尚未开始。字体修复候选仍以 PID 25008 运行。
+- **最近进展**：App 层已新增纯 `StageCardLayoutCalculator/Profile` 与两个显式候选档：Compact 92–104×112 DIP、ManagementSafe 104–124×124 DIP；260 DIP 均为 2 列，520 DIP 分别为 5/4 列，最大 5 列，超窄安全单列，剩余宽度对称归入侧边距。35 项定向门禁与完整 Release Core 74/74 + Integration 468/468 共 542/542、0 warning 构建通过；XAML、行投影、schema 7、`AppSettings`、Router、真实库和运行候选均未改变。详细方案与二维排序交接见 `docs/M3_STAGE_CARD_LAYOUT_PLAN.md`，决定见 `decisions.md §30`。
+- **下一步**：执行 Card 0B，以同一内容结构渲染 Compact 与 ManagementSafe，覆盖浅/深、260/520 DIP、长 Unicode、文件/目录/`.lnk`、Missing/Pinned；冻结尺寸后删除落选候选和临时默认语义，再依次实施行投影、XAML 卡片、逐卡 Availability/外部拖入回归和独立候选，全部通过后进入 Checkpoint 6A–6F。
 - **已知问题**：KI-001 已延期：活动 Explorer 拖动中关闭 Vok 可能让松手落回源目录并生成副本。测试产生的 `.lnk` 副本未经授权不得删除；旧重新关联候选 PID 17988 已停止，当前 PID 25008 为已通过 Checkpoint 5 人工 Gate 的字体修复候选；M3 入站物理稳定性实际为 50+ 次而非计划的 100 次。
 
 ## §0A 最近会话
@@ -35,6 +35,7 @@
 - 2026-09-06 用户确认 Checkpoint 5D 人工 Gate 全部通过：菜单中文实际渲染正常，文件/目录/`.lnk` 真实选择与取消、Alt+Tab、Esc/关闭、应用退出、无孤儿窗口和重启持久化均通过；Checkpoint 5 完成，下一步进入 Checkpoint 6 有界排序。只读进程核对显示候选 PID 25008 仍在运行。
 - Checkpoint 6 规划核对了 Stage 仓储、64 项 keyset 页面、VM mutation gate、WPF Recycling 容器、Launcher 内部排序参照、MainWindow Esc/设置入口和唯一外部 Drop target。计划选择源 revision + 目标两侧复合邻接锚点，而不是 UI 连续索引；普通情况只更新源项，数值间隔耗尽时由仓储在真实数据库顺序中选择不超过 64 项的局部窗口。跨页成功后只重载源页/目标页中较新的安全页并截断后续历史，避免陈旧 page-start、`OFFSET` 或从首页遍历。详细 6A–6F 和门禁写入 `docs/M3_STAGE_M31_PLAN.md §16`；本轮未改产品代码、schema、真实库、运行实例、Router 或 KI-001。
 - 用户确认中转站采用单一自适应卡片布局、不提供列表/卡片切换。实施方案将响应式行列留在 App 层，扁平 64 项页面继续作为唯一业务顺序；Card Gate 0/1 先于排序 UI，现有 schema 7、`AppSettings` 和 Router 不变。源码发现一行多卡会要求虚拟化清理逐张撤销 Availability 绑定；组件、命中区、文件顺序、测试矩阵及 Checkpoint 6 二维交接已细化到 `docs/M3_STAGE_CARD_LAYOUT_PLAN.md`，并记录 `decisions.md §30`。本轮仍未改产品代码、真实库或运行候选。
+- Card 0A 已新增纯布局 Profile/Calculator 和 35 项门禁。两个候选档都保证 260 DIP 两列，520 DIP 分别为 Compact 五列、ManagementSafe 四列；非法/断点/超窄/超宽/卡宽/余量/值稳定性均覆盖。完整 Release Core 74/74 + Integration 468/468 共 542/542、构建 0 warning / 0 error；未改 XAML、schema、设置、Router、真实库或 PID 25008。下一步 Card 0B 视觉择优后删除落选档。
 
 ### 会话 2026-09-04 - M3 中转站产品契约、扩容与入站 MVP 收窄
 

@@ -1,6 +1,6 @@
 # M3 中转站卡片布局时机分析与决策门禁
 
-> **状态（2026-09-06）**：用户已确认采用单一自适应卡片布局，不提供列表/卡片切换。实施方案已细化，尚未修改产品代码、schema、真实数据库或运行候选。下一步先完成 Card Gate 0/1，再进入 M3.1 Checkpoint 6；Checkpoint 6 的 Core/SQLite 排序算法保持不变，WPF 部分改用二维卡片几何。
+> **状态（2026-09-06）**：用户已确认采用单一自适应卡片布局，不提供列表/卡片切换。Card 0A 已完成纯布局模型、计算器和门禁，尚未修改 XAML、schema、真实数据库或运行候选。下一步执行 Card 0B 视觉候选择优，再完成 Card Gate 1 并进入 M3.1 Checkpoint 6；Checkpoint 6 的 Core/SQLite 排序算法保持不变，WPF 部分改用二维卡片几何。
 
 ## 1. 结论
 
@@ -210,6 +210,13 @@ Calculate(viewportWidthDip)
 - `src/Vok.IntegrationTests/Stage/StageCardLayoutTests.cs`
 
 先锁定无效输入、断点两侧、260/520 DIP、尾部剩余宽度、卡宽上下限和重复相同 Profile。此步不改 `StageView.xaml`，可以单独构建和回归。
+
+完成记录（2026-09-06）：
+
+- 已新增不可变 `StageCardLayoutProfile`、`StageCardLayoutTier` 和无 WPF 控件依赖的 `StageCardLayoutCalculator`；计算只接收正有限 viewport DIP 宽度，最大列数、8 DIP 横纵间距和 4 DIP 最小侧边距均为命名常量。
+- 两个候选仍显式隔离：Compact 为 92–104×112 DIP，ManagementSafe 为 104–124×124 DIP。260 DIP 下两者均为 2 列；520 DIP 下分别为 5/4 列。单参数入口暂以 ManagementSafe 作为 Card 0B 前的候选默认值，不代表视觉 Gate 已冻结；Card 0B 必须移除落选档及临时默认语义。
+- 计算器对超窄正宽安全降为单列，对超宽限制为 5 列，并把卡宽达到上限后的余量对称放入 `SideInset`；没有引入 Timer、Dispatcher、ViewModel、设置或持久化依赖。
+- 新增纯计算门禁 35/35；完整 Release 为 Core 74/74 + Integration 468/468，共 542/542，构建 0 warning / 0 error。
 
 ### Card 0B：卡片视觉候选择优
 

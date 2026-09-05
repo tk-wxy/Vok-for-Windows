@@ -1,6 +1,6 @@
 # M3.1 中转站管理动作实施计划
 
-> **状态（2026-09-06）**：实施中。Checkpoint 0–5 已完成；Checkpoint 5 重新关联通过 Release Core 74/74、Windows/WPF Integration 433/433，共 507/507，构建 0 warning / 0 error，以及用户实际候选物理 Gate。Checkpoint 6 有界排序已完成源码诊断和实施规划，产品代码尚未开始。用户已确认先采用单一自适应卡片布局、不提供布局切换；下一步按 `M3_STAGE_CARD_LAYOUT_PLAN.md` 完成 Card Gate 0/1，再实施布局无关的 6A/6B 与基于二维卡片几何的 6C–6F。外部入站 Router、M3.2/M3.3 与 KI-001 不在本检查点范围内。
+> **状态（2026-09-06）**：实施中。Checkpoint 0–5 已完成；Checkpoint 5 重新关联通过 Release Core 74/74、Windows/WPF Integration 433/433，共 507/507，构建 0 warning / 0 error，以及用户实际候选物理 Gate。Checkpoint 6 有界排序已完成源码诊断和实施规划，产品代码尚未开始。用户已确认先采用单一自适应卡片布局、不提供布局切换；Card 0A 纯布局模型与 35 项计算门禁已完成，完整 Release 542/542。下一步按 `M3_STAGE_CARD_LAYOUT_PLAN.md` 执行 Card 0B 和 Card Gate 1，再实施布局无关的 6A/6B 与基于二维卡片几何的 6C–6F。外部入站 Router、M3.2/M3.3 与 KI-001 不在本检查点范围内。
 
 ## 1. 阶段目标与完成边界
 
