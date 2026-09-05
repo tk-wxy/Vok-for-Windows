@@ -11,10 +11,10 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP 已归档。M3.1 Checkpoint 1–4 已完成；Checkpoint 5 重新关联的产品代码、自动回归、真实原生对话框自动 Gate 与隔离候选已完成，实际候选的三类选择/Alt+Tab/退出物理路径尚待用户验收；有界排序未开始。字体修复候选现以 PID 25008 运行。
-- **最近进展**：重新关联按 `id + expected revision` 在 schema 7 单事务区分 Applied/NoChange/NotFound/RevisionConflict/CanonicalConflict/KindMismatch，保留 id/order/pinned/created，成功权威换代 Availability；原生 picker 同类约束且禁止 link dereference，取消/解析失败/Dispose 迟到均零写入。用户物理 Gate 首项发现更多菜单中文呈方框；根因为操作按钮样式把 `Segoe Fluent Icons` 设在 Button 上并传播给 ContextMenu，现已将图标字体收窄到图标 TextBlock，并增加字体链回归。2026-09-06 提交前再次通过真实 owned-dialog 5 轮/10 窗口、完整 Release 74/74 + 433/433 共 507/507 及零警告构建；415 文件修复候选运行于 PID 25008。
-- **下一步**：在独立候选只补 M3.1 Checkpoint 5D 人工 Gate：文件/目录/`.lnk` 真实选择与取消、Alt+Tab、Esc/关闭、应用退出和无孤儿窗口；通过后进入 Checkpoint 6 有界排序。若出现误隐藏或孤儿窗口，停止并重新评审 R11，不混入 M3.2、M3.3 或 KI-001。
-- **已知问题**：KI-001 已延期：活动 Explorer 拖动中关闭 Vok 可能让松手落回源目录并生成副本。测试产生的 `.lnk` 副本未经授权不得删除；旧重新关联候选 PID 17988 已停止，当前 PID 25008 为菜单字体修复候选；菜单中文实际渲染仍待用户复验，物理稳定性实际为 50+ 次而非计划的 100 次。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP 已归档。M3.1 Checkpoint 1–5 已完成并通过重新关联候选人工 Gate；用户已确认排序前采用单一自适应卡片布局、不提供布局切换。Card Gate 0/1 实施方案已细化，卡片与 Checkpoint 6 产品代码均尚未开始。字体修复候选仍以 PID 25008 运行。
+- **最近进展**：卡片方案把 `StageViewModel.Items` 保持为唯一扁平 64 项业务顺序，在 App 层新增纯布局计算与运行时行投影，以外层行 Recycling + 内层定列卡片呈现；schema 7、`AppSettings`、Router 和现有管理事务均不改变。源码核对发现当前虚拟化清理只找一个 `StageItemCard`，改为一行多卡后必须逐卡取消 `id + revision + container` Availability 绑定。卡片主体/排序把手/固定/菜单命中区、尺寸候选、逐步文件清单、自动/物理矩阵以及与二维排序的交接已写入 `docs/M3_STAGE_CARD_LAYOUT_PLAN.md`；决定见 `decisions.md §30`。
+- **下一步**：从 Card 0A 开始，只增加 `StageCardLayoutCalculator/Profile` 和纯计算测试；再在 Card 0B 以 92×112、104×124 两个命名候选完成浅/深、260/520 DIP 与真实 DPI 渲染择优。尺寸冻结后依次实施行投影、XAML 卡片、逐卡 Availability/外部拖入回归和独立候选；全部通过后进入 Checkpoint 6A–6F。
+- **已知问题**：KI-001 已延期：活动 Explorer 拖动中关闭 Vok 可能让松手落回源目录并生成副本。测试产生的 `.lnk` 副本未经授权不得删除；旧重新关联候选 PID 17988 已停止，当前 PID 25008 为已通过 Checkpoint 5 人工 Gate 的字体修复候选；M3 入站物理稳定性实际为 50+ 次而非计划的 100 次。
 
 ## §0A 最近会话
 
@@ -32,6 +32,9 @@
 - Checkpoint 5 随后完成自动实施：专用 Relink 事务、ViewModel 单一操作顺序、WPF picker/dialog factory、菜单和迟到取消均落地；源文件摘要、canonical/type/revision 失败方向、Availability 换代及投影失败不重放有门禁。真实原生 file/folder dialog 又以 Topmost owner 连续 5 轮共 10 次自动打开/取消，证明 Deactivated=0、owner 可见且无孤儿窗。最终 Release Core 74/74 + Integration 433/433，共 507/507，构建 0 warning / 0 error；浅深/Missing/固定/260 DIP 复验通过。415 文件独立候选已发布；经用户明确要求，核对 `Vok.dll` SHA-256 后停止旧 PID 7864，并启动候选 PID 17988。下一步只补实际候选人工 Gate。
 - 用户开始物理 Gate 后，首项发现 Stage 更多菜单中文全部呈方框。机制根因为 `StageItemActionButtonStyle` 在 Button 级设置 `Segoe Fluent Icons`，ContextMenu 由 PlacementTarget 继承到不含中文字形的图标字体；修复把 FontFamily/FontSize 收窄到两个图标 TextBlock，按钮和菜单恢复应用默认字体，并新增图标字体保留、Button/ContextMenu/MenuItem 非图标字体的 WPF 回归。Stage 65/65、完整 Release 507/507、构建 0 warning / 0 error；直接渲染 Popup 的附加截图尝试会阻塞 WPF 测试宿主，已精确终止并撤掉该测试死路，无残留进程。415 文件修复候选 `Vok.dll` SHA-256 为 `782BDAA39FAC80E2B99557243BC884B61D7E2748037DD18975F4484011826CE9`，已停止 PID 17988 并启动 PID 25008，下一步先由用户复验菜单中文。
 - 2026-09-06 提交前复验再次通过真实原生 owned-dialog 5 轮（共 10 个文件/目录对话框）、完整 Release Core 74/74 + Integration 433/433 共 507/507、构建 0 warning / 0 error 与 `git diff --check`；PID 25008 候选仍在运行。`.lnk` 实际选择、Alt+Tab、应用退出与重启持久化仍是用户物理 Gate，不记作自动通过。
+- 2026-09-06 用户确认 Checkpoint 5D 人工 Gate 全部通过：菜单中文实际渲染正常，文件/目录/`.lnk` 真实选择与取消、Alt+Tab、Esc/关闭、应用退出、无孤儿窗口和重启持久化均通过；Checkpoint 5 完成，下一步进入 Checkpoint 6 有界排序。只读进程核对显示候选 PID 25008 仍在运行。
+- Checkpoint 6 规划核对了 Stage 仓储、64 项 keyset 页面、VM mutation gate、WPF Recycling 容器、Launcher 内部排序参照、MainWindow Esc/设置入口和唯一外部 Drop target。计划选择源 revision + 目标两侧复合邻接锚点，而不是 UI 连续索引；普通情况只更新源项，数值间隔耗尽时由仓储在真实数据库顺序中选择不超过 64 项的局部窗口。跨页成功后只重载源页/目标页中较新的安全页并截断后续历史，避免陈旧 page-start、`OFFSET` 或从首页遍历。详细 6A–6F 和门禁写入 `docs/M3_STAGE_M31_PLAN.md §16`；本轮未改产品代码、schema、真实库、运行实例、Router 或 KI-001。
+- 用户确认中转站采用单一自适应卡片布局、不提供列表/卡片切换。实施方案将响应式行列留在 App 层，扁平 64 项页面继续作为唯一业务顺序；Card Gate 0/1 先于排序 UI，现有 schema 7、`AppSettings` 和 Router 不变。源码发现一行多卡会要求虚拟化清理逐张撤销 Availability 绑定；组件、命中区、文件顺序、测试矩阵及 Checkpoint 6 二维交接已细化到 `docs/M3_STAGE_CARD_LAYOUT_PLAN.md`，并记录 `decisions.md §30`。本轮仍未改产品代码、真实库或运行候选。
 
 ### 会话 2026-09-04 - M3 中转站产品契约、扩容与入站 MVP 收窄
 
