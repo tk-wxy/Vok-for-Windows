@@ -43,6 +43,27 @@ public sealed class WindowsStageFileService : IStageFileService, IDisposable
             cancellationToken);
     }
 
+    public Task<StageFileAvailability> InspectAsync(
+        StageItem item,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        ObjectDisposedException.ThrowIf(
+            Volatile.Read(ref _disposed) != 0,
+            this);
+        var targetValue = item.TargetValue;
+        return _executor.ExecuteAsync(
+            () => WindowsFileAvailabilityInspector.Inspect(targetValue) switch
+            {
+                WindowsFileAvailability.Unknown => StageFileAvailability.Unknown,
+                WindowsFileAvailability.Available => StageFileAvailability.Available,
+                WindowsFileAvailability.Missing => StageFileAvailability.Missing,
+                WindowsFileAvailability.Unavailable => StageFileAvailability.Unavailable,
+                _ => throw new InvalidOperationException("Unsupported file availability."),
+            },
+            cancellationToken);
+    }
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)

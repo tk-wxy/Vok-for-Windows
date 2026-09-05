@@ -28,9 +28,10 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 new WpfAppThemeApplier(wpf.Application));
             appearance.InitializeAsync().GetAwaiter().GetResult();
             appearance.ChangeThemeAsync(AppThemeMode.Light).GetAwaiter().GetResult();
+            var fileService = new NoopStageFileService();
             using var viewModel = new StageViewModel(
                 new StaticStageRepository(200),
-                new NoopStageFileService());
+                fileService);
             viewModel.InitializeAsync().GetAwaiter().GetResult();
             var view = new StageView
             {
@@ -54,6 +55,7 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
             {
                 window.UpdateLayout();
                 window.Dispatcher.Invoke(DispatcherPriority.Render, static () => { });
+                window.Dispatcher.Invoke(DispatcherPriority.ApplicationIdle, static () => { });
                 CaptureWindowIfRequested(window, "stage-view-light.png");
                 var layout = Assert.IsType<Grid>(view.Content);
                 Assert.Collection(
@@ -84,6 +86,40 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 Assert.Equal(
                     viewModel.Items[0].AutomationName,
                     AutomationProperties.GetName(firstCard));
+                var menuButton = Assert.Single(
+                    FindVisualDescendants<Button>(firstCard),
+                    button => string.Equals(
+                        AutomationProperties.GetName(button),
+                        "打开中转站项目菜单",
+                        StringComparison.Ordinal));
+                var menu = Assert.IsType<ContextMenu>(menuButton.ContextMenu);
+                var removeItem = Assert.IsType<MenuItem>(Assert.Single(menu.Items));
+                Assert.Equal("从中转站移除", removeItem.Header);
+                menuButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                window.Dispatcher.Invoke(DispatcherPriority.ApplicationIdle, static () => { });
+                Assert.True(menu.IsOpen);
+                Assert.Same(viewModel.RemoveCommand, removeItem.Command);
+                Assert.Same(viewModel.Items[0], removeItem.CommandParameter);
+                menu.IsOpen = false;
+                Assert.InRange(fileService.InspectedIds.Count, 1, realized.Length);
+                Assert.True(fileService.InspectedIds.Count < viewModel.Items.Count);
+
+                Assert.True(viewModel.Items[0].ApplyAvailability(
+                    viewModel.Items[0].Revision,
+                    StageFileAvailability.Missing));
+                window.UpdateLayout();
+                var missingText = Assert.Single(
+                    FindVisualDescendants<TextBlock>(firstCard),
+                    text => string.Equals(
+                        text.Text,
+                        "源文件已失效",
+                        StringComparison.Ordinal));
+                Assert.Equal(Visibility.Visible, missingText.Visibility);
+                Assert.Contains(
+                    "源文件已失效",
+                    AutomationProperties.GetName(firstCard),
+                    StringComparison.Ordinal);
+                CaptureWindowIfRequested(window, "stage-view-missing-light.png");
 
                 window.Width = 260;
                 window.Height = 408;
@@ -112,6 +148,56 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 window.UpdateLayout();
                 Assert.NotNull(firstCard.BorderBrush);
                 CaptureWindowIfRequested(window, "stage-view-dark.png");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void HiddenViewCancelsVisibleChecksAndRejectsTheirLateResults()
+    {
+        wpf.Invoke(() =>
+        {
+            var fileService = new DeferredStageFileService();
+            using var viewModel = new StageViewModel(
+                new StaticStageRepository(20),
+                fileService);
+            viewModel.InitializeAsync().GetAwaiter().GetResult();
+            var view = new StageView
+            {
+                DataContext = viewModel,
+            };
+            var window = new Window
+            {
+                Width = 520,
+                Height = 320,
+                Content = view,
+                ShowInTaskbar = false,
+                WindowStyle = WindowStyle.None,
+            };
+
+            window.Show();
+            try
+            {
+                window.UpdateLayout();
+                window.Dispatcher.Invoke(DispatcherPriority.ApplicationIdle, static () => { });
+                Assert.NotEmpty(fileService.Requests);
+                Assert.True(fileService.Requests.Count < viewModel.Items.Count);
+
+                window.Hide();
+                Assert.All(fileService.Requests, request =>
+                    Assert.True(request.CancellationToken.IsCancellationRequested));
+                foreach (var request in fileService.Requests)
+                {
+                    request.Completion.TrySetResult(StageFileAvailability.Missing);
+                }
+
+                window.Dispatcher.Invoke(DispatcherPriority.ApplicationIdle, static () => { });
+                Assert.All(viewModel.Items, item =>
+                    Assert.False(item.HasAvailabilityStatus));
             }
             finally
             {
@@ -200,14 +286,58 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
             IReadOnlyList<StageTargetDescriptor> targets,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
+
+        public Task<StageRemoveResult> RemoveAsync(
+            Guid itemId,
+            long expectedRevision,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     private sealed class NoopStageFileService : IStageFileService
     {
+        public HashSet<Guid> InspectedIds { get; } = [];
+
         public Task<IReadOnlyList<StageTargetResolution>> ResolveAsync(
             IReadOnlyList<string> inputs,
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<StageTargetResolution>>([]);
+
+        public Task<StageFileAvailability> InspectAsync(
+            StageItem item,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            InspectedIds.Add(item.Id);
+            return Task.FromResult(StageFileAvailability.Available);
+        }
+    }
+
+    private sealed class DeferredStageFileService : IStageFileService
+    {
+        public List<InspectionRequest> Requests { get; } = [];
+
+        public Task<IReadOnlyList<StageTargetResolution>> ResolveAsync(
+            IReadOnlyList<string> inputs,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<StageTargetResolution>>([]);
+
+        public Task<StageFileAvailability> InspectAsync(
+            StageItem item,
+            CancellationToken cancellationToken = default)
+        {
+            var request = new InspectionRequest(item, cancellationToken);
+            Requests.Add(request);
+            return request.Completion.Task;
+        }
+    }
+
+    private sealed record InspectionRequest(
+        StageItem Item,
+        CancellationToken CancellationToken)
+    {
+        public TaskCompletionSource<StageFileAvailability> Completion { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private sealed class InMemorySettingsStore : IAppSettingsStore

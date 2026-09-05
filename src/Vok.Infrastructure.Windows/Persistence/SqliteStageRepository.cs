@@ -81,6 +81,18 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
             cancellationToken);
     }
 
+    public Task<StageRemoveResult> RemoveAsync(
+        Guid itemId,
+        long expectedRevision,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfEqual(itemId, Guid.Empty);
+        ArgumentOutOfRangeException.ThrowIfLessThan(expectedRevision, 1);
+        return _executor.ExecuteAsync(
+            connection => Remove(connection, itemId, expectedRevision),
+            cancellationToken);
+    }
+
     public void Dispose()
     {
         if (_ownsExecutor)
@@ -224,6 +236,56 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
             addedCount,
             existing.Count,
             capacity);
+    }
+
+    private static StageRemoveResult Remove(
+        SqliteConnection connection,
+        Guid itemId,
+        long expectedRevision)
+    {
+        using var transaction = connection.BeginTransaction();
+        long? actualRevision;
+        using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = "SELECT revision FROM stage_items WHERE id = $id;";
+            read.Parameters.AddWithValue("$id", itemId.ToString("D"));
+            var value = read.ExecuteScalar();
+            actualRevision = value is null or DBNull
+                ? null
+                : Convert.ToInt64(value, CultureInfo.InvariantCulture);
+        }
+
+        if (actualRevision is null)
+        {
+            transaction.Rollback();
+            return new StageRemoveResult(StageRemoveStatus.NotFound);
+        }
+
+        if (actualRevision.Value != expectedRevision)
+        {
+            transaction.Rollback();
+            return new StageRemoveResult(StageRemoveStatus.RevisionConflict);
+        }
+
+        using (var remove = connection.CreateCommand())
+        {
+            remove.Transaction = transaction;
+            remove.CommandText = """
+                DELETE FROM stage_items
+                WHERE id = $id AND revision = $revision;
+                """;
+            remove.Parameters.AddWithValue("$id", itemId.ToString("D"));
+            remove.Parameters.AddWithValue("$revision", expectedRevision);
+            if (remove.ExecuteNonQuery() != 1)
+            {
+                throw new InvalidOperationException(
+                    $"Stage item {itemId:D} changed during removal.");
+            }
+        }
+
+        transaction.Commit();
+        return new StageRemoveResult(StageRemoveStatus.Removed);
     }
 
     private static long ReadCount(

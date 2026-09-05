@@ -16,6 +16,18 @@
       <Setter Property="Background" Value="{DynamicResource ControlFillColorDefaultBrush}" />
       <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
     </Style>
+    <Style x:Key="StageItemActionButtonStyle"
+           TargetType="Button"
+           BasedOn="{StaticResource {x:Type Button}}">
+      <Setter Property="Width" Value="28" />
+      <Setter Property="Height" Value="28" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="FontFamily" Value="Segoe Fluent Icons" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+    </Style>
   </UserControl.Resources>
 
   <Grid x:Name="StageLayoutRoot"
@@ -109,18 +121,23 @@
           </ListBox.ItemContainerStyle>
           <ListBox.ItemTemplate>
             <DataTemplate DataType="{x:Type stage:StageItemViewModel}">
-              <Border MinHeight="54"
+              <Border x:Name="StageItemCard"
+                      MinHeight="54"
                       Padding="10,7"
                       Background="{DynamicResource LayerFillColorDefaultBrush}"
                       BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                       BorderThickness="1"
                       CornerRadius="8"
                       ToolTip="{Binding TargetValue}"
+                      Loaded="OnStageItemCardLoaded"
+                      Unloaded="OnStageItemCardUnloaded"
+                      DataContextChanged="OnStageItemCardDataContextChanged"
                       automation:AutomationProperties.Name="{Binding AutomationName}">
                 <Grid>
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="34" />
                     <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                   </Grid.ColumnDefinitions>
                   <Border Width="28"
@@ -174,7 +191,42 @@
                         </Style>
                       </TextBlock.Style>
                     </TextBlock>
+                    <TextBlock Margin="0,2,0,0"
+                               Text="{Binding AvailabilityText}"
+                               FontSize="9.5">
+                      <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                          <Setter Property="Visibility" Value="Collapsed" />
+                          <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+                          <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasAvailabilityStatus}" Value="True">
+                              <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Availability}" Value="Missing">
+                              <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}" />
+                            </DataTrigger>
+                          </Style.Triggers>
+                        </Style>
+                      </TextBlock.Style>
+                    </TextBlock>
                   </StackPanel>
+                  <Button Grid.Column="3"
+                          Margin="8,0,0,0"
+                          Style="{StaticResource StageItemActionButtonStyle}"
+                          Content="&#xE712;"
+                          ToolTip="更多管理操作"
+                          Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType={x:Type stage:StageView}}}"
+                          Click="OnStageItemMenuClick"
+                          automation:AutomationProperties.Name="打开中转站项目菜单">
+                    <Button.ContextMenu>
+                      <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                        <MenuItem Header="从中转站移除"
+                                  ToolTip="只移除引用，不删除原文件"
+                                  Command="{Binding PlacementTarget.Tag.RemoveCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                                  CommandParameter="{Binding}" />
+                      </ContextMenu>
+                    </Button.ContextMenu>
+                  </Button>
                 </Grid>
               </Border>
             </DataTemplate>

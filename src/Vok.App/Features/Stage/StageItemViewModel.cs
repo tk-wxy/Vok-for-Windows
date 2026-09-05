@@ -1,10 +1,15 @@
 using System.IO;
+using CommunityToolkit.Mvvm.ComponentModel;
 using Vok.Core.Stage;
 
 namespace Vok.Features.Stage;
 
-public sealed class StageItemViewModel
+public sealed class StageItemViewModel : ObservableObject
 {
+    private StageFileAvailability _availability;
+    private bool _hasAvailabilityResult;
+    private bool _isBusy;
+
     public StageItemViewModel(StageItem item)
     {
         Item = item ?? throw new ArgumentNullException(nameof(item));
@@ -16,7 +21,6 @@ public sealed class StageItemViewModel
             StageItemKind.ShellLink => ("\uE71B", "快捷方式"),
             _ => ("\uE8A5", "项目"),
         };
-        AutomationName = $"{TypeText}，{item.ResolvedName}，{item.TargetValue}";
     }
 
     public StageItem Item { get; }
@@ -47,7 +51,70 @@ public sealed class StageItemViewModel
 
     public string TypeText { get; }
 
-    public string AutomationName { get; }
+    public StageFileAvailability Availability
+    {
+        get => _availability;
+        private set => SetProperty(ref _availability, value);
+    }
+
+    public bool HasAvailabilityStatus =>
+        _hasAvailabilityResult && Availability is not StageFileAvailability.Available;
+
+    public bool IsMissing =>
+        _hasAvailabilityResult && Availability is StageFileAvailability.Missing;
+
+    public string AvailabilityText => Availability switch
+    {
+        StageFileAvailability.Missing => "源文件已失效",
+        StageFileAvailability.Unavailable => "暂不可访问",
+        StageFileAvailability.Unknown => "位置状态未知",
+        _ => string.Empty,
+    };
+
+    public bool IsBusy
+    {
+        get => _isBusy;
+        set => SetProperty(ref _isBusy, value);
+    }
+
+    public string AutomationName => HasAvailabilityStatus
+        ? $"{TypeText}，{DisplayName}，{TargetValue}，{AvailabilityText}"
+        : $"{TypeText}，{DisplayName}，{TargetValue}";
+
+    public bool ApplyAvailability(
+        long expectedRevision,
+        StageFileAvailability availability)
+    {
+        if (Revision != expectedRevision || !Enum.IsDefined(availability))
+        {
+            return false;
+        }
+
+        Availability = availability;
+        _hasAvailabilityResult = true;
+        NotifyAvailabilityChanged();
+        return true;
+    }
+
+    public void ResetAvailability(long expectedRevision)
+    {
+        if (Revision != expectedRevision || !_hasAvailabilityResult)
+        {
+            return;
+        }
+
+        _hasAvailabilityResult = false;
+        Availability = StageFileAvailability.Unknown;
+        NotifyAvailabilityChanged();
+    }
+
+    private void NotifyAvailabilityChanged()
+    {
+        OnPropertyChanged(nameof(HasAvailabilityStatus));
+        OnPropertyChanged(nameof(IsMissing));
+        OnPropertyChanged(nameof(AvailabilityText));
+        OnPropertyChanged(nameof(AutomationName));
+    }
 
     private static string GetParentPath(string targetValue)
     {

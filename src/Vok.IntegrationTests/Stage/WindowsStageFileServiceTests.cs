@@ -98,6 +98,70 @@ public sealed class WindowsStageFileServiceTests
                 cancellation.Token));
     }
 
+    [Fact]
+    public async Task InspectionDistinguishesLocalMissingAndNetworkUnknown()
+    {
+        var directory = CreateTestDirectory();
+        var file = Path.Combine(directory, "available.txt");
+        await File.WriteAllTextAsync(
+            file,
+            "content",
+            TestContext.Current.CancellationToken);
+        try
+        {
+            using var service = new WindowsStageFileService();
+
+            Assert.Equal(
+                StageFileAvailability.Available,
+                await service.InspectAsync(
+                    Item(file),
+                    TestContext.Current.CancellationToken));
+            Assert.Equal(
+                StageFileAvailability.Missing,
+                await service.InspectAsync(
+                    Item(Path.Combine(directory, "missing.txt")),
+                    TestContext.Current.CancellationToken));
+            Assert.Equal(
+                StageFileAvailability.Unknown,
+                await service.InspectAsync(
+                    Item(@"\\server.invalid\share\missing.txt"),
+                    TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task CancellationBeforeQueueClaimDoesNotInspectTarget()
+    {
+        using var service = new WindowsStageFileService();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            service.InspectAsync(
+                Item(Environment.ProcessPath!),
+                cancellation.Token));
+    }
+
+    private static StageItem Item(string path)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new StageItem(
+            Guid.NewGuid(),
+            StageItemKind.File,
+            path,
+            path.ToUpperInvariant(),
+            Path.GetFileName(path),
+            1,
+            false,
+            1,
+            now,
+            now);
+    }
+
     private static string CreateTestDirectory()
     {
         var directory = Path.Combine(

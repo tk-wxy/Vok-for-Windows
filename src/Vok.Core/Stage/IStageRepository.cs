@@ -10,4 +10,9 @@ public interface IStageRepository
     Task<StageAddOrMoveResult> AddOrMoveAsync(
         IReadOnlyList<StageTargetDescriptor> targets,
         CancellationToken cancellationToken = default);
+
+    Task<StageRemoveResult> RemoveAsync(
+        Guid itemId,
+        long expectedRevision,
+        CancellationToken cancellationToken = default);
 }

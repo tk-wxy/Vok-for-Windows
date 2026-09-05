@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO;
+using System.Security.Cryptography;
 using Microsoft.Data.Sqlite;
 using Vok.Core.Stage;
 using Vok.Infrastructure.Windows.Persistence;
@@ -9,6 +10,78 @@ namespace Vok.IntegrationTests.Persistence;
 
 public sealed class SqliteStageRepositoryTests
 {
+    [Fact]
+    public async Task RemoveRequiresCurrentRevisionAndNeverTouchesTheSourceFile()
+    {
+        var directory = CreateTestDirectory();
+        var source = Path.Combine(directory, "source.txt");
+        var databasePath = Path.Combine(directory, "remove.db");
+        try
+        {
+            await File.WriteAllTextAsync(
+                source,
+                "source-content",
+                TestContext.Current.CancellationToken);
+            var sourceLength = new FileInfo(source).Length;
+            var sourceWriteTime = File.GetLastWriteTimeUtc(source);
+            var sourceHash = SHA256.HashData(await File.ReadAllBytesAsync(
+                source,
+                TestContext.Current.CancellationToken));
+            using var repository = new SqliteStageRepository(databasePath);
+            _ = await repository.AddOrMoveAsync(
+                [Target(source, "source.txt")],
+                TestContext.Current.CancellationToken);
+            var original = Assert.Single((await repository.LoadPageAsync(
+                null,
+                10,
+                TestContext.Current.CancellationToken)).Items);
+
+            _ = await repository.AddOrMoveAsync(
+                [Target(source, "source refreshed")],
+                TestContext.Current.CancellationToken);
+            var conflict = await repository.RemoveAsync(
+                original.Id,
+                original.Revision,
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(StageRemoveStatus.RevisionConflict, conflict.Status);
+            var current = Assert.Single((await repository.LoadPageAsync(
+                null,
+                10,
+                TestContext.Current.CancellationToken)).Items);
+            Assert.Equal(original.Id, current.Id);
+            Assert.Equal(original.Revision + 1, current.Revision);
+
+            var removed = await repository.RemoveAsync(
+                current.Id,
+                current.Revision,
+                TestContext.Current.CancellationToken);
+            var missing = await repository.RemoveAsync(
+                current.Id,
+                current.Revision,
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(StageRemoveStatus.Removed, removed.Status);
+            Assert.Equal(StageRemoveStatus.NotFound, missing.Status);
+            Assert.Equal(0, (await repository.LoadPageAsync(
+                null,
+                10,
+                TestContext.Current.CancellationToken)).TotalCount);
+            Assert.True(File.Exists(source));
+            Assert.Equal(sourceLength, new FileInfo(source).Length);
+            Assert.Equal(sourceWriteTime, File.GetLastWriteTimeUtc(source));
+            Assert.Equal(
+                sourceHash,
+                SHA256.HashData(await File.ReadAllBytesAsync(
+                    source,
+                    TestContext.Current.CancellationToken)));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
     [Fact]
     public async Task AddAndMixedDuplicateMovePreserveInputOrderAndUnaffectedRows()
     {
@@ -441,6 +514,16 @@ public sealed class SqliteStageRepositoryTests
                 repository.LoadPageAsync(
                     null,
                     257,
+                    TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+                repository.RemoveAsync(
+                    Guid.Empty,
+                    1,
+                    TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+                repository.RemoveAsync(
+                    Guid.NewGuid(),
+                    0,
                     TestContext.Current.CancellationToken));
         }
         finally

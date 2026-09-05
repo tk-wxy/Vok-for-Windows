@@ -285,6 +285,151 @@ public sealed class StageViewModelTests
         }
     }
 
+    [Fact]
+    public async Task ConfirmedRemovalReloadsTheAuthoritativePageAndExplainsFileSafety()
+    {
+        var original = CreateItems(2);
+        var repository = new ScriptedStageRepository(
+            pages:
+            [
+                CreatePage(original),
+                CreatePage([original[1]]),
+            ],
+            removeResult: new StageRemoveResult(StageRemoveStatus.Removed));
+        using var viewModel = new StageViewModel(
+            repository,
+            new StaticStageFileService([]));
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+        var removed = viewModel.Items[0];
+
+        await viewModel.RemoveCommand.ExecuteAsync(removed);
+
+        Assert.Equal((removed.Id, removed.Revision), Assert.Single(repository.RemoveCalls));
+        Assert.Equal(original[1].Id, Assert.Single(viewModel.Items).Id);
+        Assert.Equal(1, viewModel.TotalCount);
+        Assert.Contains("原文件未受影响", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.False(viewModel.HasError);
+        Assert.False(viewModel.IsLoading);
+    }
+
+    [Fact]
+    public async Task RevisionConflictDoesNotRemoveTheStaleProjectionAndReloadsAuthority()
+    {
+        var original = CreateItems(2);
+        var refreshed = original[0] with
+        {
+            ResolvedName = "项目已回顶",
+            Revision = original[0].Revision + 1,
+            UpdatedUtc = original[0].UpdatedUtc.AddSeconds(1),
+        };
+        var repository = new ScriptedStageRepository(
+            pages:
+            [
+                CreatePage(original),
+                CreatePage([refreshed, original[1]]),
+            ],
+            removeResult: new StageRemoveResult(StageRemoveStatus.RevisionConflict));
+        using var viewModel = new StageViewModel(
+            repository,
+            new StaticStageFileService([]));
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+
+        await viewModel.RemoveCommand.ExecuteAsync(viewModel.Items[0]);
+
+        Assert.Equal(2, viewModel.Items.Count);
+        Assert.Equal(refreshed.Revision, viewModel.Items[0].Revision);
+        Assert.Contains("未执行移除", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.False(viewModel.HasError);
+    }
+
+    [Fact]
+    public async Task ConfirmedRemovalIsNotReplayedWhenPageRefreshFails()
+    {
+        var original = CreateItems(2);
+        var repository = new ScriptedStageRepository(
+            pages: [CreatePage(original)],
+            removeResult: new StageRemoveResult(StageRemoveStatus.Removed),
+            failPageLoadAfter: 1);
+        using var viewModel = new StageViewModel(
+            repository,
+            new StaticStageFileService([]));
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+        var removed = viewModel.Items[0];
+
+        await viewModel.RemoveCommand.ExecuteAsync(removed);
+
+        Assert.Single(repository.RemoveCalls);
+        Assert.DoesNotContain(viewModel.Items, item => item.Id == removed.Id);
+        Assert.Equal(1, viewModel.TotalCount);
+        Assert.True(viewModel.HasError);
+        Assert.Contains("已移除", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.Contains("列表刷新失败", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.False(viewModel.IsLoading);
+    }
+
+    [Fact]
+    public async Task RemovingTheLastItemOnTheLastPageReturnsToThePreviousPage()
+    {
+        var firstItems = CreateItems(StageViewModel.PageSize, "较新");
+        var lastItem = Assert.Single(CreateItems(1, "最旧"));
+        var firstPage = CreatePage(firstItems) with
+        {
+            NextCursor = new StagePageCursor(
+                firstItems[^1].SortOrder,
+                firstItems[^1].Id),
+            TotalCount = StageViewModel.PageSize + 1,
+        };
+        var repository = new ScriptedStageRepository(
+            pages:
+            [
+                firstPage,
+                new StagePage([lastItem], null, StageViewModel.PageSize + 1),
+                CreatePage(firstItems),
+            ],
+            removeResult: new StageRemoveResult(StageRemoveStatus.Removed));
+        using var viewModel = new StageViewModel(
+            repository,
+            new StaticStageFileService([]));
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+        await viewModel.LoadOlderPageAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(lastItem.Id, Assert.Single(viewModel.Items).Id);
+
+        await viewModel.RemoveCommand.ExecuteAsync(viewModel.Items[0]);
+
+        Assert.Equal(StageViewModel.PageSize, viewModel.Items.Count);
+        Assert.Equal(firstItems[0].Id, viewModel.Items[0].Id);
+        Assert.Equal(StageViewModel.PageSize, viewModel.TotalCount);
+        Assert.Equal("1–64 / 64", viewModel.PageSummaryText);
+        Assert.False(viewModel.CanLoadNewer);
+        Assert.False(viewModel.CanLoadOlder);
+    }
+
+    [Fact]
+    public void AvailabilityOnlyAppliesToTheExpectedItemRevision()
+    {
+        var item = new StageItemViewModel(Assert.Single(CreateItems(1)));
+
+        Assert.False(item.HasAvailabilityStatus);
+        Assert.False(item.ApplyAvailability(
+            item.Revision + 1,
+            StageFileAvailability.Missing));
+        Assert.False(item.HasAvailabilityStatus);
+
+        Assert.True(item.ApplyAvailability(
+            item.Revision,
+            StageFileAvailability.Missing));
+        Assert.True(item.IsMissing);
+        Assert.True(item.HasAvailabilityStatus);
+        Assert.Equal("源文件已失效", item.AvailabilityText);
+        Assert.Contains("源文件已失效", item.AutomationName, StringComparison.Ordinal);
+
+        item.ResetAvailability(item.Revision + 1);
+        Assert.True(item.HasAvailabilityStatus);
+        item.ResetAvailability(item.Revision);
+        Assert.False(item.HasAvailabilityStatus);
+        Assert.False(item.IsMissing);
+    }
+
     private static IReadOnlyList<StageItem> CreateItems(
         int count,
         string namePrefix = "项目")
@@ -362,6 +507,12 @@ public sealed class StageViewModelTests
             IReadOnlyList<StageTargetDescriptor> targets,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
+
+        public Task<StageRemoveResult> RemoveAsync(
+            Guid itemId,
+            long expectedRevision,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     private sealed class StaticStageFileService(
@@ -376,6 +527,11 @@ public sealed class StageViewModelTests
             Inputs.Add(inputs.ToArray());
             return Task.FromResult(resolutions);
         }
+
+        public Task<StageFileAvailability> InspectAsync(
+            StageItem item,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(StageFileAvailability.Available);
     }
 
     private sealed class ScriptedStageRepository : IStageRepository
@@ -383,6 +539,7 @@ public sealed class StageViewModelTests
         private readonly Queue<StagePage> _pages;
         private readonly StageAddOrMoveResult? _addResult;
         private readonly Exception? _addException;
+        private readonly StageRemoveResult? _removeResult;
         private readonly int? _failPageLoadAfter;
         private int _pageLoadCount;
 
@@ -390,15 +547,19 @@ public sealed class StageViewModelTests
             IEnumerable<StagePage> pages,
             StageAddOrMoveResult? addResult = null,
             Exception? addException = null,
+            StageRemoveResult? removeResult = null,
             int? failPageLoadAfter = null)
         {
             _pages = new Queue<StagePage>(pages);
             _addResult = addResult;
             _addException = addException;
+            _removeResult = removeResult;
             _failPageLoadAfter = failPageLoadAfter;
         }
 
         public List<IReadOnlyList<StageTargetDescriptor>> AddCalls { get; } = [];
+
+        public List<(Guid ItemId, long ExpectedRevision)> RemoveCalls { get; } = [];
 
         public Task<StagePage> LoadPageAsync(
             StagePageCursor? after,
@@ -426,6 +587,17 @@ public sealed class StageViewModelTests
             }
 
             return Task.FromResult(_addResult ?? throw new InvalidOperationException());
+        }
+
+        public Task<StageRemoveResult> RemoveAsync(
+            Guid itemId,
+            long expectedRevision,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            RemoveCalls.Add((itemId, expectedRevision));
+            return Task.FromResult(
+                _removeResult ?? throw new InvalidOperationException());
         }
     }
 
@@ -483,5 +655,11 @@ public sealed class StageViewModelTests
                 0,
                 200));
         }
+
+        public Task<StageRemoveResult> RemoveAsync(
+            Guid itemId,
+            long expectedRevision,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 }

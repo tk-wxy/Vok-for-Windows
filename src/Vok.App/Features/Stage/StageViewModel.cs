@@ -128,6 +128,20 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
     internal Task LoadOlderPageAsync(CancellationToken cancellationToken) =>
         NavigateAsync(loadOlder: true, cancellationToken);
 
+    internal async Task<StageFileAvailability> InspectAvailabilityAsync(
+        StageItemViewModel item,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        ThrowIfDisposed();
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _lifetime.Token);
+        return await _fileService
+            .InspectAsync(item.Item, linkedCancellation.Token)
+            .ConfigureAwait(true);
+    }
+
     public async Task AddDroppedPathsAsync(
         IReadOnlyList<string> paths,
         CancellationToken cancellationToken = default)
@@ -240,6 +254,77 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         NotifyPageStateChanged();
     }
 
+    [RelayCommand]
+    private async Task RemoveAsync(StageItemViewModel? item)
+    {
+        if (item is null || item.IsBusy || _disposed)
+        {
+            return;
+        }
+
+        var gateAcquired = false;
+        try
+        {
+            await _operationGate.WaitAsync(_lifetime.Token).ConfigureAwait(true);
+            gateAcquired = true;
+            if (!Items.Contains(item))
+            {
+                return;
+            }
+
+            item.IsBusy = true;
+            SetLoading(true);
+            HasError = false;
+            StatusText = $"正在移除“{item.DisplayName}”…";
+            var result = await _repository
+                .RemoveAsync(item.Id, item.Revision, _lifetime.Token)
+                .ConfigureAwait(true);
+            switch (result.Status)
+            {
+                case StageRemoveStatus.Removed:
+                    await ApplyConfirmedRemovalAsync(item, _lifetime.Token)
+                        .ConfigureAwait(true);
+                    break;
+
+                case StageRemoveStatus.NotFound:
+                    await ReloadAfterRejectedRemovalAsync(
+                            "该项目已不在中转站中，列表已刷新。",
+                            _lifetime.Token)
+                        .ConfigureAwait(true);
+                    break;
+
+                case StageRemoveStatus.RevisionConflict:
+                    await ReloadAfterRejectedRemovalAsync(
+                            "项目已发生变化，未执行移除；列表已刷新。",
+                            _lifetime.Token)
+                        .ConfigureAwait(true);
+                    break;
+
+                default:
+                    throw new InvalidOperationException(
+                        $"Unsupported Stage removal result: {result.Status}.");
+            }
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+            // Application lifetime cancellation owns shutdown cleanup.
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            HasError = true;
+            StatusText = $"移除中转项目失败，结果待核对：{exception.Message}";
+        }
+        finally
+        {
+            item.IsBusy = false;
+            if (gateAcquired)
+            {
+                SetLoading(false);
+                _operationGate.Release();
+            }
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -339,6 +424,81 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         finally
         {
             SetLoading(false);
+        }
+    }
+
+    private async Task ApplyConfirmedRemovalAsync(
+        StageItemViewModel item,
+        CancellationToken cancellationToken)
+    {
+        var displayName = item.DisplayName;
+        _ = Items.Remove(item);
+        TotalCount = Math.Max(0, TotalCount - 1);
+        NotifyPageStateChanged();
+
+        var targetPageIndex = _pageIndex;
+        if (Items.Count == 0 && TotalCount > 0 && targetPageIndex > 0)
+        {
+            targetPageIndex--;
+        }
+
+        var start = targetPageIndex == 0
+            ? null
+            : _pageStarts[targetPageIndex];
+        TruncatePageHistoryAfter(targetPageIndex);
+        try
+        {
+            await LoadPageLockedAsync(
+                    start,
+                    targetPageIndex,
+                    resetHistory: targetPageIndex == 0,
+                    cancellationToken)
+                .ConfigureAwait(true);
+            StatusText = $"已从中转站移除“{displayName}”；原文件未受影响。";
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            HasError = true;
+            StatusText = $"已移除“{displayName}”，但列表刷新失败：{exception.Message}";
+        }
+    }
+
+    private async Task ReloadAfterRejectedRemovalAsync(
+        string successStatus,
+        CancellationToken cancellationToken)
+    {
+        var start = _pageIndex == 0 ? null : _pageStarts[_pageIndex];
+        TruncatePageHistoryAfter(_pageIndex);
+        try
+        {
+            await LoadPageLockedAsync(
+                    start,
+                    _pageIndex,
+                    resetHistory: _pageIndex == 0,
+                    cancellationToken)
+                .ConfigureAwait(true);
+            StatusText = successStatus;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            HasError = true;
+            StatusText = $"未执行移除，且列表刷新失败：{exception.Message}";
+        }
+    }
+
+    private void TruncatePageHistoryAfter(int pageIndex)
+    {
+        while (_pageStarts.Count > pageIndex + 1)
+        {
+            _pageStarts.RemoveAt(_pageStarts.Count - 1);
         }
     }
 

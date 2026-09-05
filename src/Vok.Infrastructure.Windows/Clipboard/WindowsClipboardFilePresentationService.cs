@@ -1,6 +1,6 @@
-using System.IO;
 using Vok.Core.Clipboard;
 using Vok.Infrastructure.Windows.Launcher;
+using Vok.Infrastructure.Windows.Shell;
 
 namespace Vok.Infrastructure.Windows.Clipboard;
 
@@ -161,42 +161,12 @@ public sealed class WindowsClipboardFilePresentationService
     }
 
     private static ClipboardFileAvailability GetAvailability(string path)
-    {
-        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
+        => WindowsFileAvailabilityInspector.Inspect(path) switch
         {
-            return ClipboardFileAvailability.Unavailable;
-        }
-
-        if (path.StartsWith(@"\\", StringComparison.Ordinal))
-        {
-            return ClipboardFileAvailability.Unknown;
-        }
-
-        try
-        {
-            var root = Path.GetPathRoot(path);
-            if (!string.IsNullOrEmpty(root) &&
-                new DriveInfo(root).DriveType is DriveType.Network)
-            {
-                return ClipboardFileAvailability.Unknown;
-            }
-
-            _ = File.GetAttributes(path);
-            return ClipboardFileAvailability.Available;
-        }
-        catch (FileNotFoundException)
-        {
-            return ClipboardFileAvailability.Missing;
-        }
-        catch (DirectoryNotFoundException)
-        {
-            return ClipboardFileAvailability.Missing;
-        }
-        catch (Exception exception) when (
-            exception is ArgumentException or IOException or
-                UnauthorizedAccessException or NotSupportedException)
-        {
-            return ClipboardFileAvailability.Unavailable;
-        }
-    }
+            WindowsFileAvailability.Unknown => ClipboardFileAvailability.Unknown,
+            WindowsFileAvailability.Available => ClipboardFileAvailability.Available,
+            WindowsFileAvailability.Missing => ClipboardFileAvailability.Missing,
+            WindowsFileAvailability.Unavailable => ClipboardFileAvailability.Unavailable,
+            _ => throw new InvalidOperationException("Unsupported file availability."),
+        };
 }
