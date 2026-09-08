@@ -2,40 +2,34 @@ namespace Vok.Features.Stage;
 
 internal static class StageCardLayoutCalculator
 {
-    internal const StageCardLayoutTier DefaultTier =
-        StageCardLayoutTier.ManagementSafe;
-    internal const int MaximumColumnCount = 5;
+    internal const int MaximumColumnCount = 8;
     internal const double HorizontalGap = 8.0;
     internal const double VerticalGap = 8.0;
     internal const double MinimumSideInset = 4.0;
+    internal const double MinimumCardWidth = 104.0;
+    internal const double MaximumCardWidth = 124.0;
+    internal const double CardHeight = 124.0;
 
-    internal static StageCardLayoutProfile Calculate(double viewportWidthDip) =>
-        Calculate(viewportWidthDip, DefaultTier);
-
-    internal static StageCardLayoutProfile Calculate(
-        double viewportWidthDip,
-        StageCardLayoutTier tier)
+    internal static StageCardLayoutProfile Calculate(double viewportWidthDip)
     {
         ValidatePositiveFinite(viewportWidthDip, nameof(viewportWidthDip));
 
-        var dimensions = GetDimensions(tier);
         var columnCount = CalculateColumnCount(
             viewportWidthDip,
-            dimensions.MinimumCardWidth);
+            MinimumCardWidth);
         var cardWidth = CalculateCardWidth(
             viewportWidthDip,
             columnCount,
-            dimensions.MaximumCardWidth);
+            MaximumCardWidth);
         var occupiedWidth =
             (columnCount * cardWidth) + ((columnCount - 1) * HorizontalGap);
         var sideInset = Math.Max(0.0, (viewportWidthDip - occupiedWidth) / 2.0);
 
         return new StageCardLayoutProfile(
-            tier,
             columnCount,
             cardWidth,
-            dimensions.CardHeight,
-            dimensions.CardHeight + VerticalGap,
+            CardHeight,
+            CardHeight + VerticalGap,
             HorizontalGap,
             VerticalGap,
             sideInset);
@@ -74,20 +68,6 @@ internal static class StageCardLayoutCalculator
             : viewportWidthDip / columnCount;
     }
 
-    private static StageCardDimensions GetDimensions(StageCardLayoutTier tier) =>
-        tier switch
-        {
-            StageCardLayoutTier.Compact => new StageCardDimensions(
-                MinimumCardWidth: 92.0,
-                MaximumCardWidth: 104.0,
-                CardHeight: 112.0),
-            StageCardLayoutTier.ManagementSafe => new StageCardDimensions(
-                MinimumCardWidth: 104.0,
-                MaximumCardWidth: 124.0,
-                CardHeight: 124.0),
-            _ => throw new ArgumentOutOfRangeException(nameof(tier), tier, null),
-        };
-
     private static void ValidatePositiveFinite(double value, string parameterName)
     {
         if (!double.IsFinite(value) || value <= 0)
@@ -95,9 +75,4 @@ internal static class StageCardLayoutCalculator
             throw new ArgumentOutOfRangeException(parameterName, value, null);
         }
     }
-
-    private readonly record struct StageCardDimensions(
-        double MinimumCardWidth,
-        double MaximumCardWidth,
-        double CardHeight);
 }

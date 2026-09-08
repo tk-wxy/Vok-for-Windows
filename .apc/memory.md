@@ -11,14 +11,14 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP 已归档。M3.1 Checkpoint 1–5 已完成并通过重新关联候选人工 Gate；用户已确认排序前采用单一自适应卡片布局、不提供布局切换。Card 0A 已完成，Card 0B/1 与 Checkpoint 6 尚未开始。字体修复候选仍以 PID 25008 运行。
-- **最近进展**：App 层已新增纯 `StageCardLayoutCalculator/Profile` 与两个显式候选档：Compact 92–104×112 DIP、ManagementSafe 104–124×124 DIP；260 DIP 均为 2 列，520 DIP 分别为 5/4 列，最大 5 列，超窄安全单列，剩余宽度对称归入侧边距。35 项定向门禁与完整 Release Core 74/74 + Integration 468/468 共 542/542、0 warning 构建通过；XAML、行投影、schema 7、`AppSettings`、Router、真实库和运行候选均未改变。详细方案与二维排序交接见 `docs/M3_STAGE_CARD_LAYOUT_PLAN.md`，决定见 `decisions.md §30`。
-- **下一步**：执行 Card 0B，以同一内容结构渲染 Compact 与 ManagementSafe，覆盖浅/深、260/520 DIP、长 Unicode、文件/目录/`.lnk`、Missing/Pinned；冻结尺寸后删除落选候选和临时默认语义，再依次实施行投影、XAML 卡片、逐卡 Availability/外部拖入回归和独立候选，全部通过后进入 Checkpoint 6A–6F。
-- **已知问题**：KI-001 已延期：活动 Explorer 拖动中关闭 Vok 可能让松手落回源目录并生成副本。测试产生的 `.lnk` 副本未经授权不得删除；旧重新关联候选 PID 17988 已停止，当前 PID 25008 为已通过 Checkpoint 5 人工 Gate 的字体修复候选；M3 入站物理稳定性实际为 50+ 次而非计划的 100 次。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP 已归档，M3.1 Checkpoint 1–5 已通过人工 Gate。单一自适应卡片的 Card 0A/0B、Card 1A–1C 及 Card 1D 自动门禁已完成；Card Gate 1 只差 100%/200% DPI 与真实拖入人工 Gate，Checkpoint 6 尚未开始。Card 候选现以 PID 15852 运行。
+- **最近进展**：Stage 已冻结 104–124×124 DIP、8 DIP 间距、最多 8 列，并按真实 ScrollViewer viewport 在 260/520/720/800/960 DIP 外宽形成 2/4/6/7/8 列。`StageView` 已采用视图拥有的 generation 行投影、外层 Recycling/Pixel 虚拟行、行内卡片、共享内容模板、换列滚动锚点和逐卡 Availability 清理；页面 `Clear + Add×N` 在新 extent 布局完成后才归顶。Stage 98/98、MainWindow 3/3、Router 6/6、完整 Release 567/567、构建 0 warning / 0 error；415 文件自包含候选与截图已生成，详见 `docs/M3_STAGE_CARD_LAYOUT_PLAN.md`。
+- **下一步**：用 `.artifacts/m3-stage-card-gate1-candidate-20260908/` 完成 100%/200% 系统 DPI、260/520 等效宽度、长名称/Pinned+Missing、菜单、滚动/翻页与 Explorer/桌面真实拖入人工 Gate；确认后归档 Card Gate 1，并进入 Checkpoint 6A–6F 的 revision-safe 二维排序。
+- **已知问题**：KI-001 仍延期：活动 Explorer 拖动中关闭 Vok 可能让松手落回源目录并生成副本；本轮未触碰其路径。测试产生的 `.lnk` 副本未经授权不得删除。默认 Release PID 17900 已按用户启动实例请求停止；当前候选 PID 15852 的 `Vok.dll` SHA-256 已核对为 `432AE368B7EF79317D448B2F9E9F5045B4026A3AC98B377CCF42B71FF2B9B04C`。M3 入站历史物理稳定性实际为 50+ 次而非计划的 100 次。
 
 ## §0A 最近会话
 
-### 会话 2026-09-05 - M3.1 中转站管理动作规划与首批实现
+### 会话 2026-09-05 至 2026-09-08 - M3.1 中转站管理动作与卡片基础
 
 - 源码核对确认 Stage schema 7 已预留 pinned/revision/稀疏排序，但仓储只有分页与 AddOrMove，条目 VM/页面仍为纯展示，Missing、移除、固定、Shell 动作、重新关联和排序均未实现；当前运行 PID 7864 是已移除源码的实验候选，本轮未替换。
 - 新增 `docs/M3_STAGE_M31_PLAN.md`，把 M3.1 拆为 revision-safe 仓储、可见项 Availability、安全移除、固定/Shell/路径复制、重新关联、有界排序和候选验收七个检查点。排序不复制 Launcher 全表连续重写；外部 Router、M3.2/M3.3 和 KI-001 保持不动。
@@ -36,6 +36,9 @@
 - Checkpoint 6 规划核对了 Stage 仓储、64 项 keyset 页面、VM mutation gate、WPF Recycling 容器、Launcher 内部排序参照、MainWindow Esc/设置入口和唯一外部 Drop target。计划选择源 revision + 目标两侧复合邻接锚点，而不是 UI 连续索引；普通情况只更新源项，数值间隔耗尽时由仓储在真实数据库顺序中选择不超过 64 项的局部窗口。跨页成功后只重载源页/目标页中较新的安全页并截断后续历史，避免陈旧 page-start、`OFFSET` 或从首页遍历。详细 6A–6F 和门禁写入 `docs/M3_STAGE_M31_PLAN.md §16`；本轮未改产品代码、schema、真实库、运行实例、Router 或 KI-001。
 - 用户确认中转站采用单一自适应卡片布局、不提供列表/卡片切换。实施方案将响应式行列留在 App 层，扁平 64 项页面继续作为唯一业务顺序；Card Gate 0/1 先于排序 UI，现有 schema 7、`AppSettings` 和 Router 不变。源码发现一行多卡会要求虚拟化清理逐张撤销 Availability 绑定；组件、命中区、文件顺序、测试矩阵及 Checkpoint 6 二维交接已细化到 `docs/M3_STAGE_CARD_LAYOUT_PLAN.md`，并记录 `decisions.md §30`。本轮仍未改产品代码、真实库或运行候选。
 - Card 0A 已新增纯布局 Profile/Calculator 和 35 项门禁。两个候选档都保证 260 DIP 两列，520 DIP 分别为 Compact 五列、ManagementSafe 四列；非法/断点/超窄/超宽/卡宽/余量/值稳定性均覆盖。完整 Release Core 74/74 + Integration 468/468 共 542/542、构建 0 warning / 0 error；未改 XAML、schema、设置、Router、真实库或 PID 25008。下一步 Card 0B 视觉择优后删除落选档。
+- 下一步源码诊断确认：Card 0B 必须使用布局后的真实 ScrollViewer viewport 而非 Stage 外层宽度，并把 720/800/960 DIP 宽中心区纳入 5 列上限的节奏门禁；计划已拆为测试专用双候选夹具、真实宽度/浅深矩阵、硬失败择优和单候选清理四步。行投影归 StageView 所有，页面 `Clear + Add×N` 合并发布后才滚动归顶；普通 Stretch UniformGrid 不得二次改写卡宽/间距。详细实施边界已写入 `docs/M3_STAGE_CARD_LAYOUT_PLAN.md`，本轮未改产品代码、schema、设置、Router、真实库或运行进程。
+- Card 0B 最终选择 ManagementSafe 104–124×124 DIP；Compact 因窄宽截断淘汰，5 列上限又因宽中心区留白只改为最多 8 列并复验。Card 1A–1C 已完成行投影、真实卡片 XAML、滚动锚点和逐卡 Availability 清理；页面替换残留 20 DIP 的机制是 `RowsPublished` 早于虚拟面板新 extent，改以 `ContextIdle` 布局阶段归顶后复验通过，无延时/重试。100 轮换列/滚动/显隐、Stage 98/98、MainWindow 3/3、Router 6/6、完整 Release 567/567 和 0 warning 构建通过；415 文件候选已生成，待 100%/200% DPI 与真实拖入人工 Gate。schema、设置、Router、真实数据库、KI-001 和默认 PID 17900 未改。
+- 用户要求启动 Card 实例后，再次核对候选路径与 DLL 哈希，精确停止默认 Release PID 17900，并启动独立候选 PID 15852；启动后唯一 Vok 进程、加载路径和 `Vok.dll` SHA-256 均与候选一致。
 
 ### 会话 2026-09-04 - M3 中转站产品契约、扩容与入站 MVP 收窄
 

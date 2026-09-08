@@ -1,6 +1,6 @@
 # M3 中转站卡片布局时机分析与决策门禁
 
-> **状态（2026-09-06）**：用户已确认采用单一自适应卡片布局，不提供列表/卡片切换。Card 0A 已完成纯布局模型、计算器和门禁，尚未修改 XAML、schema、真实数据库或运行候选。下一步执行 Card 0B 视觉候选择优，再完成 Card Gate 1 并进入 M3.1 Checkpoint 6；Checkpoint 6 的 Core/SQLite 排序算法保持不变，WPF 部分改用二维卡片几何。
+> **状态（2026-09-08）**：Card 0A/0B 与 Card 1A–1C 已完成；Card 1D 自动门禁、真实 WPF 截图和独立自包含候选也已完成。冻结布局为 104–124×124 DIP、横纵 8 DIP、最多 8 列；真实 260/520/720/800/960 DIP Stage 外宽分别得到 2/4/6/7/8 列。完整 Release 567/567、构建 0 warning / 0 error。当前只差独立候选的 100%/200% 系统 DPI 与真实拖入人工 Gate，通过后进入 M3.1 Checkpoint 6；排序 Core/SQLite 方案不变，WPF 改用二维卡片几何。
 
 ## 1. 结论
 
@@ -220,11 +220,35 @@ Calculate(viewportWidthDip)
 
 ### Card 0B：卡片视觉候选择优
 
-- 只通过命名尺寸资源切换 92×112 与 104×124 两个候选，使用同一内容结构；不同时改颜色、字体和间距多个变量。
-- 生成浅/深、260/520 DIP、长 Unicode、文件/目录/`.lnk`、Missing/固定组合截图。
-- 选择一个尺寸档案并记录淘汰原因；检查按钮边界、两行名称、状态辨识、空白密度和 1:2:1 主界面节奏。
+#### 0B.1：隔离同结构夹具
 
-通过后才把尺寸写成计算器门禁；不把两个候选或临时开关留在产品中。
+- 在 `Vok.IntegrationTests` 的 WPF 测试宿主中建立测试专用候选夹具；它使用真实 `StageItemViewModel`、动态主题资源、当前 24×28 DIP 管理按钮预算和同一份卡片内容/chrome，只允许用 `StageCardLayoutTier` 切换 92–104×112 与 104–124×124 两组尺寸。候选夹具不接入 `StageView`、组合根或产品设置，不能成为运行时隐藏开关。
+- 内容结构固定为：上部预览/类型 glyph、最多两行名称、固定与 Availability 状态、独立固定/更多入口，以及为 Checkpoint 6 预留但不可见、不可命中、不可进入 Tab 顺序的 24 DIP 排序把手槽。完整路径只进入 ToolTip/AutomationName，不把当前横向列表的父路径硬塞进窄卡。
+- 同一组数据至少覆盖文件、目录、`.lnk`、长中文、长无空格 Latin、emoji/组合 Unicode、Available、Missing、Unavailable、Pinned 以及 Pinned+Missing 最坏组合。图标字体只设置在 glyph `TextBlock`；按钮、ContextMenu 和五个命令项加一个分隔符继续使用应用默认字体链。
+
+#### 0B.2：真实宽度与截图矩阵
+
+- 260/520 DIP 首先表示 Stage 外层宽度。候选必须在 WPF 模板实现并完成一次布局后读取真实 `ScrollViewer.ViewportWidth`，再把该值交给计算器；现有左右各 8 DIP 外边距、Border 和模板占用不能被测试忽略。禁止把 260/520 常量直接当成已经实现的 viewport 宽度。
+- 除 260/520 DIP 单区截图外，增加 1440 DIP 主宿主的 720 DIP 中心区和 1600/1920 DIP 主宿主对应的 800/960 DIP 中心区节奏图。当前 5 列上限在 800 DIP viewport 下令 Compact 只占 552 DIP、ManagementSafe 占 652 DIP；这不预判上限错误，但证明只看 260/520 无法评价全屏中央留白。
+- 为两个候选生成同数据、同主题、同宿主宽度的浅/深对照图，证据只写入 `.artifacts/`。当前机器的截图只证明其真实 DPI；100%/200% 系统 DPI 仍留给 Card 1D 独立候选，不用 `LayoutTransform` 冒充。
+
+#### 0B.3：硬门禁与择优
+
+- 硬失败：卡片、文字、状态或按钮越界/相互覆盖；24×28 DIP 命中预算缩小；两行名称无法稳定截断；Pinned+Missing 只能靠颜色区分；中文菜单继承 `Segoe Fluent Icons`；260 DIP 外层宽度不能形成安全两列；尾行生成假 item；或 720/800/960 DIP 中心区因 5 列上限显著失去 1:2:1 节奏。
+- 两个候选都通过硬门禁后，只比较密度、名称可读性、状态辨识和宽宿主留白；不在本轮同时调整颜色、字体、间距、圆角、列上限或引入 Shell 图标。若两个候选都因同一个宽度/信息层级问题失败，停止 Card 0B，回到 0A 只修改该变量并重跑，而不是默认选择 ManagementSafe。
+- 自动断言至少核对候选实际宽高、所有后代边界、按钮命中尺寸、卡片间距、真实列数、尾行 item 数、ToolTip/AutomationName 和字体继承；截图负责视觉判断，不能替代这些结构断言。
+
+#### 0B.4：冻结与清理
+
+- 记录胜出尺寸及淘汰原因，然后删除落选档、`StageCardLayoutTier`、双参数重载和临时 `DefaultTier` 语义，使产品代码只剩一个布局合同。断点、260/520 及宽 viewport 结果更新为单候选精确门禁。
+- 测试专用双候选夹具可以保留到 Card 1B 用真实 `StageView` 重现胜出结构；真实模板和结构断言接管后立即删除，不把两个候选、比较页或临时设置打入最终产品。
+- Card 0B 仍不修改 `StageView.xaml` 的运行时列表、schema 7、`AppSettings`、Router、真实数据库或当前进程。只有单候选代码、定向测试、完整 Release 和 `git diff --check` 全部通过，才进入 Card 1A。
+
+完成记录（2026-09-06）：
+
+- 隔离 WPF 夹具用同一内容结构渲染了 Compact 92–104×112 与 ManagementSafe 104–124×124 两档，并覆盖浅/深、260/520/720/800/960 DIP 外宽、长中文/Latin/组合 Unicode、文件/目录/`.lnk`、Missing、Unavailable、Unknown、Pinned 和 Pinned+Missing。
+- Compact 在窄宽下的名称截断明显更重，因此选择 ManagementSafe。原 5 列上限又在 800/960 DIP 中心区形成过窄视觉岛；只把最大列数改为 8 后重新通过同一矩阵，最终外宽列数冻结为 2/4/6/7/8。
+- 产品代码已删除 `StageCardLayoutTier`、双参数入口和临时默认档；真实 `StageView` 接管结构/视觉断言后，测试专用候选 View 与比较测试也已删除。布局合同现在只有 104–124×124 DIP、8 DIP 横纵间距、4 DIP 最小侧边距和最多 8 列。
 
 ### Card 1A：只接运行时行投影
 
@@ -233,22 +257,39 @@ Calculate(viewportWidthDip)
 - `src/Vok.App/Features/Stage/StageCardRowViewModel.cs`
 - `src/Vok.App/Features/Stage/StageCardRowsProjection.cs`
 
-覆盖 0/1/整行/尾行/64 项，增删、Move、Reset、列数切换、合并重建和旧集合退订。确认所有行引用回扁平 `Items` 后能恢复完全一致的 id 顺序。
+`StageCardRowsProjection` 由 `StageView` 拥有，不进入 `StageViewModel`；后者的 64 项扁平 `Items` 继续是唯一业务顺序。投影订阅当前集合和列数，以 source/layout generation 让同一 Dispatcher 轮次的 `Clear + Add×N` 只发布一次；DataContext 切换、Unloaded 或 Dispose 必须先退订旧集合并使已排队回调失效。
+
+覆盖 0/1/整行/尾行/64 项，增删、Move、Reset、列数切换、合并重建和旧集合退订。确认所有行引用回扁平 `Items` 后能恢复完全一致的 id 顺序。现有页面加载会先 `Items.Clear()` 再逐项 `Add`；滚动归顶必须等待新 Rows 发布后执行，不能继续假设原 `Reset` 回调到达时视觉行已经重建。
+
+完成记录（2026-09-08）：`StageCardRowsProjection` 已由 `StageView` 独占，source/layout generation 会拒绝旧回调并合并 `Clear + Add×N`；0/1/尾行/64 项、增删/Move/Reset、连续换列、DataContext 换绑与 Dispose 均保持扁平引用顺序一致。行 VM 不复制业务对象，也不进入 Core、仓储或 SQLite。
 
 ### Card 1B：迁移 XAML 容器与视觉
 
-修改 `StageView.xaml` 与 `StageView.xaml.cs`：外层行虚拟化、内层 UniformGrid、共享内容模板、卡片 chrome、视口宽度应用和滚动锚点恢复一次完成。当前 Pin/Menu command、参数、ToolTip、AutomationName 和中文字体链必须原样保留。
+修改 `StageView.xaml` 与 `StageView.xaml.cs`：外层行虚拟化、内层 UniformGrid、共享内容模板、卡片 chrome、真实 viewport 宽度应用和滚动锚点恢复一次完成。当前 Pin/Menu command、参数、ToolTip、AutomationName 和中文字体链必须原样保留。
+
+不能让普通 Stretch `UniformGrid` 再次均分并改写计算器给出的卡宽/间距。支持的多列行以 `ColumnCount × (CardWidth + HorizontalGap)` 作为居中的 slot surface，每张卡在 slot 内居中；这样左右半 gap 与计算器至少 4 DIP 的 `SideInset` 精确闭合，尾行只占前 N 个真实 slot。单列超窄回退不附加多余 slot gap，避免为了安全降级反而产生横向溢出。
+
+完成记录（2026-09-08）：`StageItemsList` 已改为外层 Recycling/Pixel 虚拟行和行内无滚动 `UniformGrid`；卡片使用共享 `StageCardContentTemplate`，主体无 Command，24×28 DIP Pin/Menu 与五命令菜单完整保留，24 DIP 排序槽保持 Hidden/不可命中/不可聚焦。计算只读取真实 `ScrollViewer.ViewportWidth`；同列只更新卡宽/slot surface，换列前捕获顶部可见 item 与相对 Y，发布新行后恢复。页面替换测试发现 `RowsPublished` 早于虚拟面板新 extent；最终以 `ContextIdle` 布局阶段作为完成信号后再归顶，原 20 DIP 残留稳定消失，没有定时器、延时或重试。
 
 ### Card 1C：Availability 与外部拖入收口
 
 - 把虚拟化清理从“找到一张卡”改为逐张卡；覆盖整行 Recycling、列数变化、隐藏和 revision 换代的迟到拒绝。
 - `SetExternalDragState` 继续先禁止 `StageInteractionSurface` 命中并只显示一个整区 overlay；不改 Router 目标选择、Drop 数据快照或异步分发。
 
+完成记录（2026-09-08）：虚拟化清理现枚举行内全部 `StageItemCard`；换列、整行回收、隐藏、DataContext 换绑与 revision 权威换代都会撤销旧容器绑定，迟到结果继续通过 view model + container + id + revision 四重身份拒绝。整区 Drop overlay、唯一 Router 与 KI-001 路径均未修改。
+
 ### Card 1D：完整回归与独立候选
 
 - Stage 定向测试、MainWindow 1:2:1/虚拟化测试、Workspace Router 邻接测试；
 - 完整 Release Core/Integration、零警告构建和 `git diff --check`；
 - 隔离候选完成卡片物理 Gate 后，才开始 Checkpoint 6A/6B。
+
+自动完成记录（2026-09-08）：
+
+- Stage 定向 98/98、MainWindow 3/3、Workspace Router 6/6；100 次 260↔520 换列、37.5 DIP 自由滚动和每 10 轮隐藏/显示后，关闭时为零行、零跟踪卡、零活动 Availability 绑定和零 Dispatcher 待办。
+- 完整 Release 为 Core 74/74 + Integration 493/493，共 567/567；独立构建 0 warning / 0 error，`git diff --check` 通过。浅/深及 260/520/720/800/960 DIP 截图保存在 `.artifacts/m3-stage-card1d-20260908/`。
+- 独立 win-x64 自包含候选位于 `.artifacts/m3-stage-card-gate1-candidate-20260908/`，共 415 文件、150,592,085 bytes；`Vok.exe` SHA-256 为 `D50AB388FBDF049DAA9E646B8E200AFAF73BACFC3D1F9B9EFBD9A979985E6DB2`，`Vok.dll` 为 `432AE368B7EF79317D448B2F9E9F5045B4026A3AC98B377CCF42B71FF2B9B04C`。
+- 自动截图只覆盖当前测试机实际 DPI。100%/200% 系统 DPI、真实菜单/滚动手感与 Explorer/桌面拖入仍待用户使用该独立候选确认；人工 Gate 前不能把整个 Card Gate 1 记为完成，也不能开始 Checkpoint 6。
 
 ## 12. 自动与物理验收矩阵
 
@@ -258,7 +299,7 @@ Calculate(viewportWidthDip)
 | Row projection | 0/1/64 项与尾行正确；扁平化后 id 顺序完全一致；增删/Move/Reset 合并为一次权威重建；旧 DataContext 不再驱动新视图 |
 | WPF virtualization | 外层确为 Recycling + Pixel；长页面只实现与 viewport 相交的行及其卡片；尾行不生成假 item；滚动自由偏移不被吸附 |
 | Availability | 每张可见卡只按当前 id/revision 检查；回收一整行会取消其中全部请求；隐藏、换列、换绑和权威 revision 后迟到结果不能落地 |
-| 操作 | 每卡只有一个固定与一个更多入口；六个现有菜单项和 enable 规则不变；主体无 Command；按钮不触发外部 Drop 或未来排序 |
+| 操作 | 每卡只有一个固定与一个更多入口；五个现有菜单命令、一个分隔符和 enable 规则不变；主体无 Command；按钮不触发外部 Drop 或未来排序 |
 | 视觉/字体 | 浅/深、260/520 DIP、长中文/Unicode、Missing、Pinned、文件/目录/`.lnk`；图标字体只在 glyph TextBlock，中文菜单不继承图标字体 |
 | 宿主/Router | 1:2:1、24/28 DIP 框架、空/错/忙状态、整区 Drop overlay 和唯一 Router 不变；卡片化不重开 KI-001 |
 | 稳定性 | 100 次 260↔520 换列、滚动、翻页、隐藏/显示后，无活动 Availability 请求、容器、Dispatcher 排队或句柄单调增长 |

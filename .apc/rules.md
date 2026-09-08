@@ -204,11 +204,11 @@
 
 ### 存储与规模
 
-- [ ] R5：不得在 UI Dispatcher 上执行 Microsoft.Data.Sqlite；数据库写入由显式执行器串行化并使用 WAL。数据库升级必须同时核验版本号与真实表结构，在单事务内迁移并让未知结构原样回滚；`CREATE TABLE IF NOT EXISTS` 只能建新表，不能冒充已有表迁移。大集合必须同时实施 SQL 分页和 WPF 容器虚拟化，不能把 UI 虚拟化当作数据虚拟化。
+- [ ] R5：不得在 UI Dispatcher 上执行 Microsoft.Data.Sqlite；数据库写入由显式执行器串行化并使用 WAL。数据库升级必须同时核验版本号与真实表结构，在单事务内迁移并让未知结构原样回滚；`CREATE TABLE IF NOT EXISTS` 只能建新表，不能冒充已有表迁移。大集合必须同时实施 SQL 分页和 WPF 容器虚拟化，不能把 UI 虚拟化当作数据虚拟化。虚拟化页面用展示投影替换集合时，投影发布不等于滚动 extent 已提交；滚动归顶/锚点恢复必须等待真实布局阶段，不能在 `Reset` 或集合发布回调中假定容器几何已完成。
   - 范围：SQLite、启动台、剪贴板历史、Stage、图片与后续大列表。
-  - 证据：https://learn.microsoft.com/dotnet/standard/data/sqlite/async 说明 Async 方法实际同步；https://learn.microsoft.com/dotnet/desktop/wpf/advanced/optimizing-performance-controls 说明 WPF 没有内建数据虚拟化。2026-08-28 真机旧库因已有 `launcher_items` 使 `CREATE TABLE IF NOT EXISTS` 静默跳过，但代码仍写入版本并查询新列，复现 `no such column: target_kind`；schema 2 改为列集合识别和单事务迁移。M2.1–2 形成 schema 3/4，M2.3.4 形成 schema 5，M2.4 形成 schema 6。2026-09-04 Stage schema 7 只为旧版本创建新表；当前版本缺表、错误列、错误唯一性/排序索引和未来版本均拒绝，建表后的索引冲突与所有前置 schema 写入一起回滚。忠实临时 schema 6 夹具升级后保留 Launcher、Clipboard 和资产引用元数据，`quick_check=ok`、0 外键违规；10,000 条 Stage 复合 keyset 无遗漏并使用顺序索引。
-  - 最后验证：2026-09-04。
-  - 状态：active；设置、启动台、剪贴板与 Stage 共享串行所有权，schema 1→2→3→4→5→6→7、失败回滚、SQL 分页、去重/排序、容量/保留与取消一致性均有自动测试；M3.MVP3 已通过 Release 468/468、固定 64 项 Stage WPF、实时 SQLite Online Backup、当前 schema 7 连续初始化、真实数据派生 schema 6→7 及历史 schema 5→7。实时备份与启动后真实库均为 `quick_check=ok`、0 外键违规且 48/48 Ready 资产文件完整。首次真实 6→7 现场未被预先记录，派生回放不能冒充历史现场；schema 5 备份没有资产目录快照，故其 19 条旧资产只证明元数据迁移，不作为历史文件完整性证据。
+  - 证据：https://learn.microsoft.com/dotnet/standard/data/sqlite/async 说明 Async 方法实际同步；https://learn.microsoft.com/dotnet/desktop/wpf/advanced/optimizing-performance-controls 说明 WPF 没有内建数据虚拟化。2026-08-28 真机旧库因已有 `launcher_items` 使 `CREATE TABLE IF NOT EXISTS` 静默跳过，但代码仍写入版本并查询新列，复现 `no such column: target_kind`；schema 2 改为列集合识别和单事务迁移。M2.1–2 形成 schema 3/4，M2.3.4 形成 schema 5，M2.4 形成 schema 6。2026-09-04 Stage schema 7 只为旧版本创建新表；当前版本缺表、错误列、错误唯一性/排序索引和未来版本均拒绝，建表后的索引冲突与所有前置 schema 写入一起回滚。忠实临时 schema 6 夹具升级后保留 Launcher、Clipboard 和资产引用元数据，`quick_check=ok`、0 外键违规；10,000 条 Stage 复合 keyset 无遗漏并使用顺序索引。2026-09-08 Stage 卡片页面把行投影发布后的归顶排在 Loaded 时，稳定复现旧 offset 被新 extent 校正为 20 DIP；把归顶移动到虚拟面板完成布局的 `ContextIdle` 阶段后，页面整批替换精确回到 0，DataContext 换绑、100 轮换列/滚动/显隐和关闭清理均通过。
+  - 最后验证：2026-09-08。
+  - 状态：active；设置、启动台、剪贴板与 Stage 共享串行所有权，schema 1→2→3→4→5→6→7、失败回滚、SQL 分页、去重/排序、容量/保留与取消一致性均有自动测试；M3.MVP3 数据门禁与 M3.1 Card Gate 1 自动门禁已通过完整 Release 567/567，Stage 当前以 64 项扁平分页、generation 行投影和外层 Recycling 虚拟化并行工作。实时备份与启动后真实库均为 `quick_check=ok`、0 外键违规且 48/48 Ready 资产文件完整。首次真实 6→7 现场未被预先记录，派生回放不能冒充历史现场；schema 5 备份没有资产目录快照，故其 19 条旧资产只证明元数据迁移，不作为历史文件完整性证据。
 
 ### 发布与互操作
 
@@ -255,6 +255,7 @@
 - 清空后历史重现、固定项无限增长、共享图片误删、启动回收误伤未知文件或数据库已空但资产长期残留 → 检查 R26；先核对元数据事务、revision tombstone、去重总字节和文件实际 SHA，不要直接按目录/mtime 删除。
 - Vok 热键正常但托盘图标在可见区/溢出区都消失 → 检查 R27；消息窗口或托盘对象仍活着不能证明 Shell 登记存在，先用图标 GUID 查询真实注册状态。
 - 条目增加导致 UI/内存线性增长 → 检查 R5。
+- Stage 翻页后没有归顶、残留约一小段旧滚动偏移或换列锚点漂移 → 检查 R5；集合/行投影发布不是虚拟面板 extent 完成信号，不要加毫秒延时或在 `Reset` 当场滚动。
 - Debug 正常但发布版互操作失败 → 检查 R6。
 - 测试命令成功但显示 0 项测试 → 检查 R7。
 - 烟雾测试找不到窗口但窗口实际存在 → 不依赖 `Process.MainWindowHandle`，按 PID 枚举 HWND。

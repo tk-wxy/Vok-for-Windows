@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Windows;
@@ -10,19 +11,57 @@ namespace Vok.Features.Stage;
 
 public partial class StageView : UserControl
 {
-    private INotifyCollectionChanged? _observedItems;
+    public static readonly DependencyProperty CardWidthProperty = DependencyProperty.Register(
+        nameof(CardWidth),
+        typeof(double),
+        typeof(StageView),
+        new PropertyMetadata(StageCardLayoutCalculator.MinimumCardWidth));
+
+    public static readonly DependencyProperty CardHeightProperty = DependencyProperty.Register(
+        nameof(CardHeight),
+        typeof(double),
+        typeof(StageView),
+        new PropertyMetadata(StageCardLayoutCalculator.CardHeight));
+
+    public static readonly DependencyProperty CardRowUnitHeightProperty =
+        DependencyProperty.Register(
+            nameof(CardRowUnitHeight),
+            typeof(double),
+            typeof(StageView),
+            new PropertyMetadata(
+                StageCardLayoutCalculator.CardHeight +
+                StageCardLayoutCalculator.VerticalGap));
+
+    public static readonly DependencyProperty CardRowSurfaceWidthProperty =
+        DependencyProperty.Register(
+            nameof(CardRowSurfaceWidth),
+            typeof(double),
+            typeof(StageView),
+            new PropertyMetadata(StageCardLayoutCalculator.MinimumCardWidth));
+
+    private readonly StageCardRowsProjection _cardRowsProjection;
+    private ObservableCollection<StageItemViewModel>? _observedItems;
+    private StageViewModel? _observedViewModel;
     private ScrollViewer? _scrollViewer;
     private readonly HashSet<Border> _availabilityCards = [];
     private readonly Dictionary<Border, AvailabilityBinding> _availabilityBindings = [];
+    private StageCardLayoutProfile? _cardLayoutProfile;
+    private ScrollAnchor? _pendingScrollAnchor;
     private bool _externalDragActive;
     private bool _externalDragTargeted;
     private bool _scrollResetPending;
+    private bool _cardLayoutRefreshPending;
+    private bool _rowPublicationRefreshPending;
     private bool _availabilityRefreshPending;
 
     public StageView()
     {
+        _cardRowsProjection = new StageCardRowsProjection(Dispatcher);
+        _cardRowsProjection.RowsPublished += OnCardRowsPublished;
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
+        Loaded += OnViewLoaded;
+        Unloaded += OnViewUnloaded;
         StageItemsList.AddHandler(
             ScrollViewer.ScrollChangedEvent,
             new ScrollChangedEventHandler(OnStageItemsScrollChanged));
@@ -31,6 +70,47 @@ public partial class StageView : UserControl
             new CleanUpVirtualizedItemEventHandler(OnCleanUpVirtualizedItem));
         IsVisibleChanged += OnViewIsVisibleChanged;
     }
+
+    public ObservableCollection<StageCardRowViewModel> CardRows =>
+        _cardRowsProjection.Rows;
+
+    public double CardWidth
+    {
+        get => (double)GetValue(CardWidthProperty);
+        private set => SetCurrentValue(CardWidthProperty, value);
+    }
+
+    public double CardHeight
+    {
+        get => (double)GetValue(CardHeightProperty);
+        private set => SetCurrentValue(CardHeightProperty, value);
+    }
+
+    public double CardRowUnitHeight
+    {
+        get => (double)GetValue(CardRowUnitHeightProperty);
+        private set => SetCurrentValue(CardRowUnitHeightProperty, value);
+    }
+
+    public double CardRowSurfaceWidth
+    {
+        get => (double)GetValue(CardRowSurfaceWidthProperty);
+        private set => SetCurrentValue(CardRowSurfaceWidthProperty, value);
+    }
+
+    internal StageCardLayoutProfile? CardLayoutProfile => _cardLayoutProfile;
+
+    internal double CardViewportWidth => GetStageScrollViewer()?.ViewportWidth ?? 0;
+
+    internal int ActiveAvailabilityBindingCount => _availabilityBindings.Count;
+
+    internal int TrackedAvailabilityCardCount => _availabilityCards.Count;
+
+    internal bool HasPendingDeferredWork =>
+        _cardLayoutRefreshPending ||
+        _rowPublicationRefreshPending ||
+        _availabilityRefreshPending ||
+        _cardRowsProjection.HasPendingRebuild;
 
     internal void SetExternalDragState(bool sessionActive, bool targeted)
     {
@@ -52,30 +132,70 @@ public partial class StageView : UserControl
         object sender,
         DependencyPropertyChangedEventArgs e)
     {
-        if (e.OldValue is StageViewModel oldViewModel)
+        DetachObservedViewModel();
+        if (IsLoaded && e.NewValue is StageViewModel newViewModel)
         {
-            oldViewModel.ItemAuthorityChanged -= OnItemAuthorityChanged;
+            AttachObservedViewModel(newViewModel);
         }
 
+        ScheduleCardLayoutRefresh();
+        ScheduleAvailabilityRefresh();
+    }
+
+    private void OnViewLoaded(object sender, RoutedEventArgs e)
+    {
+        ApplyCardLayoutFromRealizedViewport();
+        if (DataContext is StageViewModel viewModel)
+        {
+            AttachObservedViewModel(viewModel);
+        }
+
+        ScheduleCardLayoutRefresh();
+        ScheduleAvailabilityRefresh();
+    }
+
+    private void OnViewUnloaded(object sender, RoutedEventArgs e)
+    {
+        DetachObservedViewModel();
+        CancelAllAvailabilityBindings();
+        _availabilityCards.Clear();
+        _pendingScrollAnchor = null;
+        _scrollResetPending = false;
+        _scrollViewer = null;
+    }
+
+    private void AttachObservedViewModel(StageViewModel viewModel)
+    {
+        if (ReferenceEquals(_observedViewModel, viewModel))
+        {
+            return;
+        }
+
+        _observedViewModel = viewModel;
+        _observedItems = viewModel.Items;
+        _observedItems.CollectionChanged += OnItemsCollectionChanged;
+        viewModel.ItemAuthorityChanged += OnItemAuthorityChanged;
+        _scrollResetPending = true;
+        _pendingScrollAnchor = null;
+        _cardRowsProjection.Attach(_observedItems);
+    }
+
+    private void DetachObservedViewModel()
+    {
         if (_observedItems is not null)
         {
             _observedItems.CollectionChanged -= OnItemsCollectionChanged;
-        }
-
-        CancelAllAvailabilityBindings();
-
-        if (e.NewValue is StageViewModel newViewModel)
-        {
-            _observedItems = newViewModel.Items;
-            _observedItems.CollectionChanged += OnItemsCollectionChanged;
-            newViewModel.ItemAuthorityChanged += OnItemAuthorityChanged;
-        }
-        else
-        {
             _observedItems = null;
         }
 
-        ScheduleAvailabilityRefresh();
+        if (_observedViewModel is not null)
+        {
+            _observedViewModel.ItemAuthorityChanged -= OnItemAuthorityChanged;
+            _observedViewModel = null;
+        }
+
+        CancelAllAvailabilityBindings();
+        _cardRowsProjection.Attach(null);
     }
 
     private void OnItemAuthorityChanged(StageItemViewModel item)
@@ -99,13 +219,45 @@ public partial class StageView : UserControl
         }
 
         _scrollResetPending = true;
-        _ = Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+        _pendingScrollAnchor = null;
+    }
+
+    private void OnCardRowsPublished()
+    {
+        if (_rowPublicationRefreshPending)
         {
-            _scrollResetPending = false;
-            FindVisualDescendant<ScrollViewer>(StageItemsList)?.ScrollToTop();
+            return;
+        }
+
+        _rowPublicationRefreshPending = true;
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, () =>
+        {
+            _rowPublicationRefreshPending = false;
+            if (!IsLoaded)
+            {
+                return;
+            }
+
+            var scrollViewer = GetStageScrollViewer();
+            if (_scrollResetPending)
+            {
+                _scrollResetPending = false;
+                _pendingScrollAnchor = null;
+                StageItemsList.UpdateLayout();
+                scrollViewer?.ScrollToTop();
+            }
+            else if (_pendingScrollAnchor is { } anchor)
+            {
+                _pendingScrollAnchor = null;
+                RestoreScrollAnchor(anchor, scrollViewer);
+            }
+
             ScheduleAvailabilityRefresh();
         });
     }
+
+    private void OnStageItemsViewportSizeChanged(object sender, SizeChangedEventArgs e) =>
+        ScheduleCardLayoutRefresh();
 
     private void OnStageItemCardLoaded(object sender, RoutedEventArgs e)
     {
@@ -154,14 +306,27 @@ public partial class StageView : UserControl
         ScheduleAvailabilityRefresh();
     }
 
-    private void OnStageItemsScrollChanged(object sender, ScrollChangedEventArgs e) =>
+    private void OnStageItemsScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        if (Math.Abs(e.ViewportWidthChange) > 0.001)
+        {
+            ScheduleCardLayoutRefresh();
+        }
+
         ScheduleAvailabilityRefresh();
+    }
 
     private void OnCleanUpVirtualizedItem(
         object sender,
-        CleanUpVirtualizedItemEventArgs e)
+        CleanUpVirtualizedItemEventArgs e) =>
+        CancelAvailabilityBindingsForRow(e.UIElement);
+
+    internal void CancelAvailabilityBindingsForRow(DependencyObject rowRoot)
     {
-        if (FindNamedVisualDescendant<Border>(e.UIElement, "StageItemCard") is { } card)
+        ArgumentNullException.ThrowIfNull(rowRoot);
+        foreach (var card in FindNamedVisualDescendants<Border>(
+                     rowRoot,
+                     "StageItemCard").ToArray())
         {
             CancelAvailabilityBinding(card, resetState: true);
         }
@@ -178,6 +343,144 @@ public partial class StageView : UserControl
         else
         {
             CancelAllAvailabilityBindings();
+        }
+    }
+
+    private void ScheduleCardLayoutRefresh()
+    {
+        if (_cardLayoutRefreshPending)
+        {
+            return;
+        }
+
+        _cardLayoutRefreshPending = true;
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+        {
+            _cardLayoutRefreshPending = false;
+            if (IsLoaded)
+            {
+                ApplyCardLayoutFromRealizedViewport();
+            }
+        });
+    }
+
+    private void ApplyCardLayoutFromRealizedViewport()
+    {
+        var viewportWidth = GetStageScrollViewer()?.ViewportWidth ?? 0;
+        if (!double.IsFinite(viewportWidth) || viewportWidth <= 0)
+        {
+            return;
+        }
+
+        var profile = StageCardLayoutCalculator.Calculate(viewportWidth);
+        if (profile == _cardLayoutProfile)
+        {
+            return;
+        }
+
+        var columnsChanged = profile.ColumnCount != _cardLayoutProfile?.ColumnCount;
+        if (columnsChanged)
+        {
+            _pendingScrollAnchor = CaptureScrollAnchor();
+            CancelAllAvailabilityBindings();
+        }
+
+        _cardLayoutProfile = profile;
+        CardWidth = profile.CardWidth;
+        CardHeight = profile.CardHeight;
+        CardRowUnitHeight = profile.RowUnitHeight;
+        CardRowSurfaceWidth = profile.ColumnCount == 1
+            ? profile.CardWidth
+            : profile.ColumnCount * (profile.CardWidth + profile.HorizontalGap);
+
+        if (columnsChanged)
+        {
+            _cardRowsProjection.SetColumnCount(profile.ColumnCount);
+        }
+
+        ScheduleAvailabilityRefresh();
+    }
+
+    private ScrollAnchor? CaptureScrollAnchor()
+    {
+        var scrollViewer = GetStageScrollViewer();
+        if (scrollViewer is null || scrollViewer.ViewportHeight <= 0)
+        {
+            return null;
+        }
+
+        return _availabilityCards
+            .Select(card => TryGetVisibleCardPosition(card, scrollViewer))
+            .Where(static position => position is not null)
+            .Select(static position => position!.Value)
+            .OrderBy(static position => position.Top)
+            .ThenBy(static position => position.Left)
+            .Select(static position => (ScrollAnchor?)new ScrollAnchor(
+                position.ItemId,
+                position.Top))
+            .FirstOrDefault();
+    }
+
+    private static VisibleCardPosition? TryGetVisibleCardPosition(
+        Border card,
+        ScrollViewer scrollViewer)
+    {
+        if (card.DataContext is not StageItemViewModel item ||
+            !card.IsLoaded || card.ActualWidth <= 0 || card.ActualHeight <= 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            var bounds = card
+                .TransformToAncestor(scrollViewer)
+                .TransformBounds(new Rect(card.RenderSize));
+            return bounds.Bottom > 0 && bounds.Top < scrollViewer.ViewportHeight
+                ? new VisibleCardPosition(item.Id, bounds.Top, bounds.Left)
+                : null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private void RestoreScrollAnchor(ScrollAnchor anchor, ScrollViewer? scrollViewer)
+    {
+        if (scrollViewer is null)
+        {
+            return;
+        }
+
+        var row = CardRows.FirstOrDefault(row =>
+            row.Items.Any(item => item.Id == anchor.ItemId));
+        if (row is null)
+        {
+            return;
+        }
+
+        StageItemsList.ScrollIntoView(row);
+        StageItemsList.UpdateLayout();
+        var card = FindNamedVisualDescendants<Border>(StageItemsList, "StageItemCard")
+            .FirstOrDefault(candidate =>
+                candidate.DataContext is StageItemViewModel item &&
+                item.Id == anchor.ItemId);
+        if (card is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var bounds = card
+                .TransformToAncestor(scrollViewer)
+                .TransformBounds(new Rect(card.RenderSize));
+            scrollViewer.ScrollToVerticalOffset(
+                Math.Max(0, scrollViewer.VerticalOffset + bounds.Top - anchor.RelativeTop));
+        }
+        catch (InvalidOperationException)
+        {
         }
     }
 
@@ -344,6 +647,9 @@ public partial class StageView : UserControl
         }
     }
 
+    private ScrollViewer? GetStageScrollViewer() =>
+        _scrollViewer ??= FindVisualDescendant<ScrollViewer>(StageItemsList);
+
     private static T? FindVisualDescendant<T>(DependencyObject root)
         where T : DependencyObject
     {
@@ -364,7 +670,7 @@ public partial class StageView : UserControl
         return null;
     }
 
-    private static T? FindNamedVisualDescendant<T>(
+    private static IEnumerable<T> FindNamedVisualDescendants<T>(
         DependencyObject root,
         string name)
         where T : FrameworkElement
@@ -374,17 +680,22 @@ public partial class StageView : UserControl
             var child = VisualTreeHelper.GetChild(root, index);
             if (child is T match && string.Equals(match.Name, name, StringComparison.Ordinal))
             {
-                return match;
+                yield return match;
             }
 
-            if (FindNamedVisualDescendant<T>(child, name) is { } descendant)
+            foreach (var descendant in FindNamedVisualDescendants<T>(child, name))
             {
-                return descendant;
+                yield return descendant;
             }
         }
-
-        return null;
     }
+
+    private readonly record struct ScrollAnchor(Guid ItemId, double RelativeTop);
+
+    private readonly record struct VisibleCardPosition(
+        Guid ItemId,
+        double Top,
+        double Left);
 
     private readonly record struct AvailabilityBindingKey(
         Guid ItemId,

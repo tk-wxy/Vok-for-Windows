@@ -17,83 +17,61 @@ public sealed class StageCardLayoutTests
             StageCardLayoutCalculator.Calculate(viewportWidthDip));
     }
 
-    [Fact]
-    public void CalculateRejectsUnknownTier()
-    {
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            StageCardLayoutCalculator.Calculate(
-                520,
-                (StageCardLayoutTier)int.MaxValue));
-    }
-
     [Theory]
-    [InlineData((int)StageCardLayoutTier.Compact, 260, 2, 104, 112, 22)]
-    [InlineData((int)StageCardLayoutTier.Compact, 520, 5, 96, 112, 4)]
-    [InlineData((int)StageCardLayoutTier.ManagementSafe, 260, 2, 122, 124, 4)]
-    [InlineData((int)StageCardLayoutTier.ManagementSafe, 520, 4, 122, 124, 4)]
-    public void CandidateProfilesCoverSupportedStageWidths(
-        int tierValue,
+    [InlineData(260, 2, 122, 4)]
+    [InlineData(520, 4, 122, 4)]
+    [InlineData(720, 6, 112, 4)]
+    [InlineData(800, 7, 106.28571428571429, 4)]
+    [InlineData(960, 8, 112, 4)]
+    public void FrozenProfileCoversNarrowAndWideStageViewports(
         double viewportWidthDip,
         int expectedColumns,
         double expectedCardWidth,
-        double expectedCardHeight,
         double expectedSideInset)
     {
-        var tier = (StageCardLayoutTier)tierValue;
-        var profile = StageCardLayoutCalculator.Calculate(viewportWidthDip, tier);
+        var profile = StageCardLayoutCalculator.Calculate(viewportWidthDip);
 
-        Assert.Equal(tier, profile.Tier);
         Assert.Equal(expectedColumns, profile.ColumnCount);
         Assert.Equal(expectedCardWidth, profile.CardWidth, precision: 8);
-        Assert.Equal(expectedCardHeight, profile.CardHeight, precision: 8);
+        Assert.Equal(StageCardLayoutCalculator.CardHeight, profile.CardHeight);
         Assert.Equal(
-            expectedCardHeight + StageCardLayoutCalculator.VerticalGap,
+            StageCardLayoutCalculator.CardHeight + StageCardLayoutCalculator.VerticalGap,
             profile.RowUnitHeight,
             precision: 8);
-        Assert.Equal(
-            StageCardLayoutCalculator.HorizontalGap,
-            profile.HorizontalGap,
-            precision: 8);
-        Assert.Equal(
-            StageCardLayoutCalculator.VerticalGap,
-            profile.VerticalGap,
-            precision: 8);
+        Assert.Equal(StageCardLayoutCalculator.HorizontalGap, profile.HorizontalGap);
+        Assert.Equal(StageCardLayoutCalculator.VerticalGap, profile.VerticalGap);
         Assert.Equal(expectedSideInset, profile.SideInset, precision: 8);
     }
 
     [Theory]
-    [InlineData((int)StageCardLayoutTier.Compact, 199.999, 1)]
-    [InlineData((int)StageCardLayoutTier.Compact, 200, 2)]
-    [InlineData((int)StageCardLayoutTier.Compact, 299.999, 2)]
-    [InlineData((int)StageCardLayoutTier.Compact, 300, 3)]
-    [InlineData((int)StageCardLayoutTier.ManagementSafe, 223.999, 1)]
-    [InlineData((int)StageCardLayoutTier.ManagementSafe, 224, 2)]
-    [InlineData((int)StageCardLayoutTier.ManagementSafe, 447.999, 3)]
-    [InlineData((int)StageCardLayoutTier.ManagementSafe, 448, 4)]
+    [InlineData(111.999, 1)]
+    [InlineData(112, 1)]
+    [InlineData(223.999, 1)]
+    [InlineData(224, 2)]
+    [InlineData(447.999, 3)]
+    [InlineData(448, 4)]
+    [InlineData(895.999, 7)]
+    [InlineData(896, 8)]
     public void ColumnBreakpointsChangeOnlyWhenAnotherMinimumCardFits(
-        int tierValue,
         double viewportWidthDip,
         int expectedColumns)
     {
-        var tier = (StageCardLayoutTier)tierValue;
-        var profile = StageCardLayoutCalculator.Calculate(viewportWidthDip, tier);
+        var profile = StageCardLayoutCalculator.Calculate(viewportWidthDip);
 
         Assert.Equal(expectedColumns, profile.ColumnCount);
     }
 
     [Theory]
-    [InlineData((int)StageCardLayoutTier.Compact, 100, 92, 4)]
-    [InlineData((int)StageCardLayoutTier.Compact, 124, 104, 10)]
-    [InlineData((int)StageCardLayoutTier.ManagementSafe, 112, 104, 4)]
-    [InlineData((int)StageCardLayoutTier.ManagementSafe, 148, 124, 12)]
-    public void SingleColumnCardStretchesThenCentersAtItsMaximum(
-        int tierValue,
+    [InlineData(1, 1, 0)]
+    [InlineData(104, 96, 4)]
+    [InlineData(112, 104, 4)]
+    [InlineData(148, 124, 12)]
+    public void SingleColumnFallbackStaysInsideTheViewportAndCentersWhenPossible(
         double viewportWidthDip,
         double expectedCardWidth,
         double expectedSideInset)
     {
-        var tier = (StageCardLayoutTier)tierValue;
-        var profile = StageCardLayoutCalculator.Calculate(viewportWidthDip, tier);
+        var profile = StageCardLayoutCalculator.Calculate(viewportWidthDip);
 
         Assert.Equal(1, profile.ColumnCount);
         Assert.Equal(expectedCardWidth, profile.CardWidth, precision: 8);
@@ -101,48 +79,40 @@ public sealed class StageCardLayoutTests
     }
 
     [Theory]
-    [InlineData((int)StageCardLayoutTier.Compact, 92)]
-    [InlineData((int)StageCardLayoutTier.Compact, 260)]
-    [InlineData((int)StageCardLayoutTier.Compact, 520)]
-    [InlineData((int)StageCardLayoutTier.Compact, 800)]
-    [InlineData((int)StageCardLayoutTier.ManagementSafe, 104)]
-    [InlineData((int)StageCardLayoutTier.ManagementSafe, 260)]
-    [InlineData((int)StageCardLayoutTier.ManagementSafe, 520)]
-    [InlineData((int)StageCardLayoutTier.ManagementSafe, 800)]
-    public void ProfileNeverConsumesMoreThanTheViewport(
-        int tierValue,
-        double viewportWidthDip)
+    [InlineData(1)]
+    [InlineData(50)]
+    [InlineData(104)]
+    [InlineData(112)]
+    [InlineData(223.999)]
+    [InlineData(224)]
+    [InlineData(260)]
+    [InlineData(520)]
+    [InlineData(720)]
+    [InlineData(800)]
+    [InlineData(896)]
+    [InlineData(960)]
+    [InlineData(1600)]
+    public void ProfileNeverConsumesMoreThanTheViewport(double viewportWidthDip)
     {
-        var tier = (StageCardLayoutTier)tierValue;
-        var profile = StageCardLayoutCalculator.Calculate(viewportWidthDip, tier);
+        var profile = StageCardLayoutCalculator.Calculate(viewportWidthDip);
         var occupiedWidth =
             (2.0 * profile.SideInset) +
             (profile.ColumnCount * profile.CardWidth) +
             ((profile.ColumnCount - 1) * profile.HorizontalGap);
 
         Assert.Equal(viewportWidthDip, occupiedWidth, precision: 8);
-        Assert.InRange(
-            profile.ColumnCount,
-            1,
-            StageCardLayoutCalculator.MaximumColumnCount);
+        Assert.InRange(profile.ColumnCount, 1, StageCardLayoutCalculator.MaximumColumnCount);
         Assert.True(profile.CardWidth > 0);
         Assert.True(profile.SideInset >= 0);
     }
 
-    [Theory]
-    [InlineData((int)StageCardLayoutTier.Compact, 104)]
-    [InlineData((int)StageCardLayoutTier.ManagementSafe, 124)]
-    public void WideViewportCapsCardWidthAndCentersTheBoundedRow(
-        int tierValue,
-        double expectedMaximumCardWidth)
+    [Fact]
+    public void WideViewportCapsCardWidthAndCentersTheBoundedRow()
     {
-        var tier = (StageCardLayoutTier)tierValue;
-        var profile = StageCardLayoutCalculator.Calculate(1600, tier);
+        var profile = StageCardLayoutCalculator.Calculate(1600);
 
-        Assert.Equal(
-            StageCardLayoutCalculator.MaximumColumnCount,
-            profile.ColumnCount);
-        Assert.Equal(expectedMaximumCardWidth, profile.CardWidth, precision: 8);
+        Assert.Equal(StageCardLayoutCalculator.MaximumColumnCount, profile.ColumnCount);
+        Assert.Equal(StageCardLayoutCalculator.MaximumCardWidth, profile.CardWidth);
         Assert.True(profile.SideInset > StageCardLayoutCalculator.MinimumSideInset);
     }
 
@@ -151,20 +121,9 @@ public sealed class StageCardLayoutTests
     {
         var profile = StageCardLayoutCalculator.Calculate(double.MaxValue);
 
-        Assert.Equal(
-            StageCardLayoutCalculator.MaximumColumnCount,
-            profile.ColumnCount);
+        Assert.Equal(StageCardLayoutCalculator.MaximumColumnCount, profile.ColumnCount);
         Assert.True(double.IsFinite(profile.CardWidth));
         Assert.True(double.IsFinite(profile.SideInset));
-    }
-
-    [Fact]
-    public void DefaultTierIsManagementSafeUntilTheVisualGateChoosesACandidate()
-    {
-        var profile = StageCardLayoutCalculator.Calculate(520);
-
-        Assert.Equal(StageCardLayoutCalculator.DefaultTier, profile.Tier);
-        Assert.Equal(StageCardLayoutTier.ManagementSafe, profile.Tier);
     }
 
     [Fact]

@@ -75,14 +75,36 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 Assert.Equal(
                     ScrollBarVisibility.Hidden,
                     ScrollViewer.GetVerticalScrollBarVisibility(list));
+                var profile = Assert.IsType<StageCardLayoutProfile>(view.CardLayoutProfile);
+                Assert.Equal(4, profile.ColumnCount);
+                Assert.Equal(
+                    StageCardLayoutCalculator.Calculate(view.CardViewportWidth),
+                    profile);
+                Assert.Equal(profile.CardWidth, view.CardWidth, precision: 8);
+                Assert.Equal(profile.CardHeight, view.CardHeight, precision: 8);
+                Assert.Equal(profile.RowUnitHeight, view.CardRowUnitHeight, precision: 8);
+                Assert.Equal(16, view.CardRows.Count);
+                Assert.Equal(
+                    viewModel.Items,
+                    view.CardRows.SelectMany(static row => row.Items));
 
                 var realized = FindVisualDescendants<ListBoxItem>(list).ToArray();
                 Assert.NotEmpty(realized);
-                Assert.True(realized.Length < viewModel.Items.Count);
+                Assert.True(realized.Length < view.CardRows.Count);
+                var realizedCards = FindVisualDescendants<Border>(list)
+                    .Where(static border => string.Equals(
+                        border.Name,
+                        "StageItemCard",
+                        StringComparison.Ordinal))
+                    .ToArray();
+                Assert.NotEmpty(realizedCards);
+                Assert.True(realizedCards.Length < viewModel.Items.Count);
                 var firstCard = Assert.Single(
                     FindVisualDescendants<Border>(realized[0]),
                     border => Equals(border.ToolTip, viewModel.Items[0].TargetValue));
                 Assert.Equal(viewModel.Items[0].TargetValue, firstCard.ToolTip);
+                Assert.Equal(profile.CardWidth, firstCard.ActualWidth, precision: 3);
+                Assert.Equal(profile.CardHeight, firstCard.ActualHeight, precision: 3);
                 Assert.Equal(
                     viewModel.Items[0].AutomationName,
                     AutomationProperties.GetName(firstCard));
@@ -106,6 +128,27 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 Assert.Equal("Segoe Fluent Icons", menuGlyph.FontFamily.Source);
                 Assert.NotEqual("Segoe Fluent Icons", pinButton.FontFamily.Source);
                 Assert.NotEqual("Segoe Fluent Icons", menuButton.FontFamily.Source);
+                Assert.Equal(24, pinButton.ActualWidth, precision: 3);
+                Assert.Equal(28, pinButton.ActualHeight, precision: 3);
+                Assert.Equal(24, menuButton.ActualWidth, precision: 3);
+                Assert.Equal(28, menuButton.ActualHeight, precision: 3);
+                AssertVisualIsInside(pinButton, firstCard);
+                AssertVisualIsInside(menuButton, firstCard);
+                var reorderSlot = Assert.Single(
+                    FindVisualDescendants<Border>(firstCard),
+                    static border => string.Equals(
+                        border.Name,
+                        "StageReorderSlot",
+                        StringComparison.Ordinal));
+                Assert.Equal(Visibility.Hidden, reorderSlot.Visibility);
+                Assert.False(reorderSlot.IsHitTestVisible);
+                Assert.False(reorderSlot.Focusable);
+                Assert.DoesNotContain(
+                    FindVisualDescendants<TextBlock>(firstCard),
+                    text => string.Equals(
+                        text.Text,
+                        viewModel.Items[0].ParentPath,
+                        StringComparison.Ordinal));
                 var menu = Assert.IsType<ContextMenu>(menuButton.ContextMenu);
                 Assert.Equal(6, menu.Items.Count);
                 var openItem = Assert.IsType<MenuItem>(menu.Items[0]);
@@ -137,7 +180,7 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 Assert.Same(viewModel.Items[0], relinkItem.CommandParameter);
                 Assert.Same(viewModel.Items[0], removeItem.CommandParameter);
                 menu.IsOpen = false;
-                Assert.InRange(fileService.InspectedIds.Count, 1, realized.Length);
+                Assert.InRange(fileService.InspectedIds.Count, 1, realizedCards.Length);
                 Assert.True(fileService.InspectedIds.Count < viewModel.Items.Count);
 
                 Assert.True(viewModel.Items[0].ApplyAvailability(
@@ -164,8 +207,15 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 window.Width = 260;
                 window.Height = 408;
                 window.UpdateLayout();
+                PumpLayout(window);
                 Assert.Equal(260, view.ActualWidth, precision: 3);
                 Assert.Equal(408, view.ActualHeight, precision: 3);
+                var narrowProfile = Assert.IsType<StageCardLayoutProfile>(view.CardLayoutProfile);
+                Assert.Equal(2, narrowProfile.ColumnCount);
+                Assert.Equal(32, view.CardRows.Count);
+                Assert.Equal(
+                    viewModel.Items,
+                    view.CardRows.SelectMany(static row => row.Items));
                 CaptureWindowIfRequested(window, "stage-view-narrow-light.png");
 
                 var overlay = Assert.IsType<Border>(view.FindName("DropOverlay"));
@@ -186,6 +236,7 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 window.Width = 520;
                 window.Height = 500;
                 window.UpdateLayout();
+                PumpLayout(window);
                 Assert.NotNull(firstCard.BorderBrush);
                 CaptureWindowIfRequested(window, "stage-view-dark.png");
             }
@@ -315,6 +366,497 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
         });
     }
 
+    [Theory]
+    [InlineData(260, 2)]
+    [InlineData(520, 4)]
+    [InlineData(720, 6)]
+    [InlineData(800, 7)]
+    [InlineData(960, 8)]
+    public void StageUsesTheFrozenCardGeometryFromItsRealScrollViewport(
+        double outerWidth,
+        int expectedColumns)
+    {
+        wpf.Invoke(() =>
+        {
+            var appearance = new AppearanceController(
+                new InMemorySettingsStore(),
+                new WpfAppThemeApplier(wpf.Application));
+            appearance.InitializeAsync().GetAwaiter().GetResult();
+            appearance.ChangeThemeAsync(AppThemeMode.Light).GetAwaiter().GetResult();
+            using var viewModel = new StageViewModel(
+                new StaticStageRepository(11),
+                new NoopStageFileService(item => item.ResolvedName switch
+                {
+                    "Visual Studio 2026 Preview.lnk" => StageFileAvailability.Missing,
+                    "Pinned-and-missing-reference.txt" => StageFileAvailability.Missing,
+                    "暂时无法访问的网络资料" => StageFileAvailability.Unavailable,
+                    "状态尚未确定的移动设备文件.bin" => StageFileAvailability.Unknown,
+                    _ => StageFileAvailability.Available,
+                }));
+            viewModel.InitializeAsync().GetAwaiter().GetResult();
+            var view = new StageView
+            {
+                DataContext = viewModel,
+            };
+            var window = new Window
+            {
+                Width = outerWidth,
+                Height = 500,
+                Content = view,
+                ShowInTaskbar = false,
+                WindowStyle = WindowStyle.None,
+                ResizeMode = ResizeMode.NoResize,
+            };
+            window.SetResourceReference(
+                Control.BackgroundProperty,
+                "ApplicationBackgroundBrush");
+
+            window.Show();
+            try
+            {
+                PumpLayout(window);
+                var profile = Assert.IsType<StageCardLayoutProfile>(view.CardLayoutProfile);
+                Assert.True(view.CardViewportWidth > 0);
+                Assert.True(view.CardViewportWidth < outerWidth);
+                Assert.Equal(outerWidth - 16, view.CardViewportWidth, precision: 3);
+                Assert.Equal(
+                    StageCardLayoutCalculator.Calculate(view.CardViewportWidth),
+                    profile);
+                Assert.Equal(expectedColumns, profile.ColumnCount);
+                Assert.Equal(profile.CardWidth, view.CardWidth, precision: 8);
+                Assert.Equal(profile.CardHeight, view.CardHeight, precision: 8);
+                Assert.Equal(profile.RowUnitHeight, view.CardRowUnitHeight, precision: 8);
+                Assert.Equal(
+                    profile.ColumnCount == 1
+                        ? profile.CardWidth
+                        : profile.ColumnCount *
+                            (profile.CardWidth + profile.HorizontalGap),
+                    view.CardRowSurfaceWidth,
+                    precision: 8);
+                Assert.Equal(
+                    (int)Math.Ceiling(11.0 / expectedColumns),
+                    view.CardRows.Count);
+                Assert.Equal(
+                    viewModel.Items,
+                    view.CardRows.SelectMany(static row => row.Items));
+                Assert.All(view.CardRows, row =>
+                {
+                    Assert.Equal(expectedColumns, row.ColumnCount);
+                    Assert.InRange(row.Items.Count, 1, expectedColumns);
+                });
+                var expectedTail = 11 % expectedColumns;
+                Assert.Equal(
+                    expectedTail == 0 ? expectedColumns : expectedTail,
+                    view.CardRows[^1].Items.Count);
+
+                var list = Assert.IsType<ListBox>(view.FindName("StageItemsList"));
+                var firstRow = FindVisualDescendants<ListBoxItem>(list)
+                    .OrderBy(item => item.TransformToAncestor(list).Transform(new Point()).Y)
+                    .First();
+                var cards = FindVisualDescendants<Border>(firstRow)
+                    .Where(static border => string.Equals(
+                        border.Name,
+                        "StageItemCard",
+                        StringComparison.Ordinal))
+                    .OrderBy(card => card.TransformToAncestor(list).Transform(new Point()).X)
+                    .ToArray();
+                Assert.Equal(Math.Min(expectedColumns, 11), cards.Length);
+                Assert.All(cards, card =>
+                {
+                    Assert.Equal(profile.CardWidth, card.ActualWidth, precision: 3);
+                    Assert.Equal(profile.CardHeight, card.ActualHeight, precision: 3);
+                    Assert.Equal(
+                        Assert.IsType<StageItemViewModel>(card.DataContext).TargetValue,
+                        card.ToolTip);
+                    Assert.False(string.IsNullOrWhiteSpace(
+                        AutomationProperties.GetName(card)));
+                    var buttons = FindVisualDescendants<Button>(card).ToArray();
+                    Assert.Equal(2, buttons.Length);
+                    Assert.All(buttons, button => AssertVisualIsInside(button, card));
+                });
+
+                for (var index = 1; index < cards.Length; index++)
+                {
+                    var previous = cards[index - 1]
+                        .TransformToAncestor(list)
+                        .TransformBounds(new Rect(cards[index - 1].RenderSize));
+                    var current = cards[index]
+                        .TransformToAncestor(list)
+                        .TransformBounds(new Rect(cards[index].RenderSize));
+                    Assert.Equal(profile.HorizontalGap, current.Left - previous.Right, precision: 3);
+                }
+
+                Assert.IsType<DataTemplate>(view.Resources["StageCardContentTemplate"]);
+                CaptureWindowIfRequested(
+                    window,
+                    $"stage-view-{outerWidth:0}-light.png");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void ColumnChangeKeepsTheTopVisibleItemAndRejectsOldAvailabilityResults()
+    {
+        wpf.Invoke(() =>
+        {
+            var fileService = new DeferredStageFileService();
+            using var viewModel = new StageViewModel(
+                new StaticStageRepository(200),
+                fileService);
+            viewModel.InitializeAsync().GetAwaiter().GetResult();
+            var view = new StageView
+            {
+                DataContext = viewModel,
+            };
+            var window = new Window
+            {
+                Width = 520,
+                Height = 320,
+                Content = view,
+                ShowInTaskbar = false,
+                WindowStyle = WindowStyle.None,
+                ResizeMode = ResizeMode.NoResize,
+            };
+
+            window.Show();
+            try
+            {
+                PumpLayout(window);
+                var list = Assert.IsType<ListBox>(view.FindName("StageItemsList"));
+                var scrollViewer = Assert.Single(
+                    FindVisualDescendants<ScrollViewer>(list));
+                scrollViewer.ScrollToVerticalOffset((3 * view.CardRowUnitHeight) + 17);
+                PumpLayout(window);
+                var anchor = GetTopVisibleCard(list, scrollViewer);
+                var originalRequests = fileService.Requests.ToArray();
+                Assert.NotEmpty(originalRequests);
+
+                window.Width = 260;
+                PumpLayout(window);
+
+                Assert.Equal(2, view.CardLayoutProfile?.ColumnCount);
+                Assert.All(originalRequests, request =>
+                    Assert.True(request.CancellationToken.IsCancellationRequested));
+                var visibleIds = GetVisibleCards(list, scrollViewer)
+                    .Select(static card => card.Item.Id)
+                    .ToArray();
+                Assert.Contains(anchor.Item.Id, visibleIds);
+                foreach (var request in originalRequests)
+                {
+                    request.Completion.TrySetResult(StageFileAvailability.Missing);
+                }
+
+                PumpLayout(window);
+                Assert.All(
+                    originalRequests.Select(static request => request.Item.Id).Distinct(),
+                    id => Assert.False(viewModel.Items.Single(item => item.Id == id).IsMissing));
+            }
+            finally
+            {
+                window.Close();
+            }
+
+            window.Dispatcher.Invoke(DispatcherPriority.ApplicationIdle, static () => { });
+            Assert.Equal(0, view.ActiveAvailabilityBindingCount);
+            Assert.Empty(view.CardRows);
+        });
+    }
+
+    [Fact]
+    public void CleaningARecycledRowCancelsEveryCardRequestInThatRow()
+    {
+        wpf.Invoke(() =>
+        {
+            var fileService = new DeferredStageFileService();
+            using var viewModel = new StageViewModel(
+                new StaticStageRepository(200),
+                fileService);
+            viewModel.InitializeAsync().GetAwaiter().GetResult();
+            var view = new StageView
+            {
+                DataContext = viewModel,
+            };
+            var window = new Window
+            {
+                Width = 520,
+                Height = 320,
+                Content = view,
+                ShowInTaskbar = false,
+                WindowStyle = WindowStyle.None,
+            };
+
+            window.Show();
+            try
+            {
+                PumpLayout(window);
+                var list = Assert.IsType<ListBox>(view.FindName("StageItemsList"));
+                var rowContainer = FindVisualDescendants<ListBoxItem>(list).First();
+                var rowItems = Assert.IsType<StageCardRowViewModel>(rowContainer.DataContext).Items;
+                Assert.Equal(4, rowItems.Count);
+                var rowRequests = rowItems
+                    .Select(item => Assert.Single(
+                        fileService.Requests,
+                        request => request.Item.Id == item.Id))
+                    .ToArray();
+
+                view.CancelAvailabilityBindingsForRow(rowContainer);
+
+                Assert.All(rowRequests, request =>
+                    Assert.True(request.CancellationToken.IsCancellationRequested));
+                foreach (var request in rowRequests)
+                {
+                    request.Completion.TrySetResult(StageFileAvailability.Missing);
+                }
+
+                PumpLayout(window);
+                Assert.All(rowItems, item => Assert.False(item.HasAvailabilityStatus));
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void RepeatedResizeScrollAndVisibilityCyclesLeaveNoDeferredCardWork()
+    {
+        wpf.Invoke(() =>
+        {
+            using var viewModel = new StageViewModel(
+                new StaticStageRepository(200),
+                new NoopStageFileService());
+            viewModel.InitializeAsync().GetAwaiter().GetResult();
+            var view = new StageView
+            {
+                DataContext = viewModel,
+            };
+            var window = new Window
+            {
+                Width = 520,
+                Height = 320,
+                Content = view,
+                ShowInTaskbar = false,
+                WindowStyle = WindowStyle.None,
+                ResizeMode = ResizeMode.NoResize,
+            };
+
+            window.Show();
+            try
+            {
+                PumpLayout(window);
+                var list = Assert.IsType<ListBox>(view.FindName("StageItemsList"));
+                var scrollViewer = Assert.Single(
+                    FindVisualDescendants<ScrollViewer>(list));
+                for (var cycle = 0; cycle < 100; cycle++)
+                {
+                    scrollViewer.ScrollToVerticalOffset(
+                        (cycle * 37.5) % Math.Max(1, scrollViewer.ScrollableHeight));
+                    window.Width = cycle % 2 == 0 ? 260 : 520;
+                    PumpLayout(window);
+
+                    var expectedColumns = cycle % 2 == 0 ? 2 : 4;
+                    Assert.Equal(expectedColumns, view.CardLayoutProfile?.ColumnCount);
+                    Assert.Equal(
+                        viewModel.Items,
+                        view.CardRows.SelectMany(static row => row.Items));
+                    Assert.Equal(
+                        (int)Math.Ceiling(
+                            (double)viewModel.Items.Count / expectedColumns),
+                        view.CardRows.Count);
+                    var realizedCards = FindVisualDescendants<Border>(list).Count(
+                        static border => string.Equals(
+                            border.Name,
+                            "StageItemCard",
+                            StringComparison.Ordinal));
+                    Assert.InRange(view.TrackedAvailabilityCardCount, 1, realizedCards);
+                    Assert.InRange(view.ActiveAvailabilityBindingCount, 1, realizedCards);
+                    Assert.False(view.HasPendingDeferredWork);
+
+                    if ((cycle + 1) % 10 == 0)
+                    {
+                        window.Hide();
+                        window.Dispatcher.Invoke(
+                            DispatcherPriority.ApplicationIdle,
+                            static () => { });
+                        Assert.Equal(0, view.ActiveAvailabilityBindingCount);
+                        window.Show();
+                        PumpLayout(window);
+                    }
+                }
+            }
+            finally
+            {
+                window.Close();
+            }
+
+            window.Dispatcher.Invoke(DispatcherPriority.ApplicationIdle, static () => { });
+            Assert.Equal(0, view.ActiveAvailabilityBindingCount);
+            Assert.Equal(0, view.TrackedAvailabilityCardCount);
+            Assert.Empty(view.CardRows);
+            Assert.False(view.HasPendingDeferredWork);
+        });
+    }
+
+    [Fact]
+    public void DataContextAndPageReplacementPublishOnlyTheCurrentRowsThenScrollTop()
+    {
+        wpf.Invoke(() =>
+        {
+            using var oldViewModel = new StageViewModel(
+                new StaticStageRepository(200),
+                new NoopStageFileService());
+            using var currentViewModel = new StageViewModel(
+                new StaticStageRepository(200),
+                new NoopStageFileService());
+            oldViewModel.InitializeAsync().GetAwaiter().GetResult();
+            currentViewModel.InitializeAsync().GetAwaiter().GetResult();
+            var view = new StageView
+            {
+                DataContext = oldViewModel,
+            };
+            var window = new Window
+            {
+                Width = 520,
+                Height = 320,
+                Content = view,
+                ShowInTaskbar = false,
+                WindowStyle = WindowStyle.None,
+            };
+
+            window.Show();
+            try
+            {
+                PumpLayout(window);
+                view.DataContext = currentViewModel;
+                PumpLayout(window);
+                var currentIds = currentViewModel.Items.Select(static item => item.Id).ToArray();
+                Assert.Equal(
+                    currentIds,
+                    view.CardRows
+                        .SelectMany(static row => row.Items)
+                        .Select(static item => item.Id));
+
+                oldViewModel.Items.Clear();
+                oldViewModel.Items.Add(CreateStageItemViewModel(900));
+                PumpLayout(window);
+                Assert.Equal(
+                    currentIds,
+                    view.CardRows
+                        .SelectMany(static row => row.Items)
+                        .Select(static item => item.Id));
+
+                var list = Assert.IsType<ListBox>(view.FindName("StageItemsList"));
+                var scrollViewer = Assert.Single(
+                    FindVisualDescendants<ScrollViewer>(list));
+                scrollViewer.ScrollToEnd();
+                PumpLayout(window);
+                Assert.True(scrollViewer.VerticalOffset > 0);
+                var replacement = Enumerable.Range(1000, 9)
+                    .Select(CreateStageItemViewModel)
+                    .ToArray();
+
+                currentViewModel.Items.Clear();
+                foreach (var item in replacement)
+                {
+                    currentViewModel.Items.Add(item);
+                }
+
+                Assert.Empty(view.CardRows);
+                PumpLayout(window);
+
+                Assert.Equal(0, scrollViewer.VerticalOffset, precision: 3);
+                Assert.Equal(
+                    replacement,
+                    view.CardRows.SelectMany(static row => row.Items));
+                Assert.Equal(3, view.CardRows.Count);
+                Assert.False(view.HasPendingDeferredWork);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    private static StageItemViewModel CreateStageItemViewModel(int index)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var target = $@"C:\Stage\Replacement-{index}.txt";
+        return new StageItemViewModel(new StageItem(
+            Guid.NewGuid(),
+            StageItemKind.File,
+            target,
+            target.ToUpperInvariant(),
+            $"Replacement {index}",
+            index,
+            false,
+            1,
+            now,
+            now));
+    }
+
+    private static VisibleCard GetTopVisibleCard(
+        ListBox list,
+        ScrollViewer scrollViewer) =>
+        GetVisibleCards(list, scrollViewer)
+            .OrderBy(static card => card.Bounds.Top)
+            .ThenBy(static card => card.Bounds.Left)
+            .First();
+
+    private static IEnumerable<VisibleCard> GetVisibleCards(
+        ListBox list,
+        ScrollViewer scrollViewer)
+    {
+        foreach (var card in FindVisualDescendants<Border>(list).Where(
+                     static border => string.Equals(
+                         border.Name,
+                         "StageItemCard",
+                         StringComparison.Ordinal)))
+        {
+            if (card.DataContext is not StageItemViewModel item)
+            {
+                continue;
+            }
+
+            var bounds = card
+                .TransformToAncestor(scrollViewer)
+                .TransformBounds(new Rect(card.RenderSize));
+            if (bounds.Bottom > 0 && bounds.Top < scrollViewer.ViewportHeight)
+            {
+                yield return new VisibleCard(item, bounds);
+            }
+        }
+    }
+
+    private sealed record VisibleCard(StageItemViewModel Item, Rect Bounds);
+
+    private static void PumpLayout(Window window)
+    {
+        window.Dispatcher.Invoke(DispatcherPriority.Loaded, static () => { });
+        window.UpdateLayout();
+        window.Dispatcher.Invoke(DispatcherPriority.Render, static () => { });
+        window.Dispatcher.Invoke(DispatcherPriority.ApplicationIdle, static () => { });
+    }
+
+    private static void AssertVisualIsInside(
+        FrameworkElement child,
+        FrameworkElement ancestor)
+    {
+        var bounds = child
+            .TransformToAncestor(ancestor)
+            .TransformBounds(new Rect(child.RenderSize));
+        const double tolerance = 0.01;
+        Assert.True(bounds.Left >= -tolerance);
+        Assert.True(bounds.Top >= -tolerance);
+        Assert.True(bounds.Right <= ancestor.ActualWidth + tolerance);
+        Assert.True(bounds.Bottom <= ancestor.ActualHeight + tolerance);
+    }
+
     private static IEnumerable<T> FindVisualDescendants<T>(DependencyObject root)
         where T : DependencyObject
     {
@@ -358,23 +900,54 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
 
     private sealed class StaticStageRepository : IStageRepository
     {
+        private static readonly string[] RepresentativeNames =
+        [
+            "季度交付报告-最终确认版本.docx",
+            "设计素材与产品截图",
+            "Visual Studio 2026 Preview.lnk",
+            "Pinned-and-missing-reference.txt",
+            "暂时无法访问的网络资料",
+            "状态尚未确定的移动设备文件.bin",
+            "averylongunbrokenlatinfilenamewithoutspaces.extension",
+            "组合字符-e\u0301-emoji-📦-多语言-資料.txt",
+            "C 盘根目录",
+            "常用工作区入口.lnk",
+            "会议记录 2026-09-06.md",
+        ];
+
         private readonly StageItem[] _items;
 
         public StaticStageRepository(int count)
         {
             var now = DateTimeOffset.UtcNow;
             _items = Enumerable.Range(0, count)
-                .Select(index => new StageItem(
-                    Guid.NewGuid(),
-                    index % 2 == 0 ? StageItemKind.File : StageItemKind.Directory,
-                    $@"C:\A very long Stage folder\Item-{index + 1}.txt",
-                    $@"C:\A VERY LONG STAGE FOLDER\ITEM-{index + 1}.TXT",
-                    $"中转项目 {index + 1}",
-                    count - index,
-                    false,
-                    1,
-                    now,
-                    now))
+                .Select(index =>
+                {
+                    var kind = (index % 3) switch
+                    {
+                        1 => StageItemKind.Directory,
+                        2 => StageItemKind.ShellLink,
+                        _ => StageItemKind.File,
+                    };
+                    var displayName = RepresentativeNames[index % RepresentativeNames.Length];
+                    if (index >= RepresentativeNames.Length)
+                    {
+                        displayName = $"{displayName} {index + 1}";
+                    }
+
+                    var target = $@"C:\A very long Stage folder\{index + 1:D2}-{displayName}";
+                    return new StageItem(
+                        Guid.NewGuid(),
+                        kind,
+                        target,
+                        target.ToUpperInvariant(),
+                        displayName,
+                        count - index,
+                        index is 1 or 3 or 9,
+                        1,
+                        now,
+                        now);
+                })
                 .ToArray();
         }
 
@@ -454,6 +1027,14 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
 
     private sealed class NoopStageFileService : IStageFileService
     {
+        private readonly Func<StageItem, StageFileAvailability> _availability;
+
+        public NoopStageFileService(
+            Func<StageItem, StageFileAvailability>? availability = null)
+        {
+            _availability = availability ?? (_ => StageFileAvailability.Available);
+        }
+
         public HashSet<Guid> InspectedIds { get; } = [];
 
         public Task<IReadOnlyList<StageTargetResolution>> ResolveAsync(
@@ -467,7 +1048,7 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
         {
             cancellationToken.ThrowIfCancellationRequested();
             InspectedIds.Add(item.Id);
-            return Task.FromResult(StageFileAvailability.Available);
+            return Task.FromResult(_availability(item));
         }
 
         public Task OpenAsync(
