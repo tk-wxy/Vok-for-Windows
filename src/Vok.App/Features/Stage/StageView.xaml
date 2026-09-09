@@ -3,9 +3,14 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:automation="clr-namespace:System.Windows.Automation;assembly=PresentationCore"
              xmlns:controls="clr-namespace:System.Windows.Controls.Primitives;assembly=PresentationFramework"
+             xmlns:sys="clr-namespace:System;assembly=System.Runtime"
              xmlns:stage="clr-namespace:Vok.Features.Stage"
              automation:AutomationProperties.Name="中转站">
   <UserControl.Resources>
+    <Duration x:Key="StageHoverEnterDuration">0:0:0.12</Duration>
+    <Duration x:Key="StageHoverExitDuration">0:0:0.16</Duration>
+    <sys:Double x:Key="StageHoverScale">1.02</sys:Double>
+    <sys:Double x:Key="StageActionChromeRestOpacity">0.55</sys:Double>
     <Style x:Key="StagePageButtonStyle"
            TargetType="Button"
            BasedOn="{StaticResource {x:Type Button}}">
@@ -215,6 +220,16 @@
                             Height="{Binding CardRowUnitHeight, RelativeSource={RelativeSource AncestorType={x:Type stage:StageView}}}"
                             HorizontalAlignment="Center"
                             ItemsSource="{Binding Items}">
+                <ItemsControl.ItemContainerStyle>
+                  <Style TargetType="ContentPresenter">
+                    <Setter Property="Panel.ZIndex" Value="0" />
+                    <Style.Triggers>
+                      <Trigger Property="stage:StageView.IsInteractionActive" Value="True">
+                        <Setter Property="Panel.ZIndex" Value="1" />
+                      </Trigger>
+                    </Style.Triggers>
+                  </Style>
+                </ItemsControl.ItemContainerStyle>
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate>
                     <controls:UniformGrid Rows="1"
@@ -233,83 +248,188 @@
                             BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                             BorderThickness="0.5"
                             CornerRadius="9"
+                            RenderTransformOrigin="0.5,0.5"
                             SnapsToDevicePixels="True"
                             ToolTip="{Binding TargetValue}"
                             Loaded="OnStageItemCardLoaded"
                             Unloaded="OnStageItemCardUnloaded"
                             DataContextChanged="OnStageItemCardDataContextChanged"
+                            MouseEnter="OnStageItemCardMouseStateChanged"
+                            MouseLeave="OnStageItemCardMouseStateChanged"
+                            IsKeyboardFocusWithinChanged="OnStageItemCardKeyboardFocusWithinChanged"
                             automation:AutomationProperties.Name="{Binding AutomationName}">
+                      <Border.RenderTransform>
+                        <ScaleTransform x:Name="StageItemCardScale"
+                                        ScaleX="1"
+                                        ScaleY="1" />
+                      </Border.RenderTransform>
                       <Grid ClipToBounds="True">
                         <ContentControl Content="{Binding}"
                                         ContentTemplate="{StaticResource StageCardContentTemplate}"
                                         Focusable="False" />
 
-                        <Button Margin="2"
-                                HorizontalAlignment="Left"
-                                VerticalAlignment="Top"
-                                IsEnabled="{Binding CanManage}"
-                                    Command="{Binding DataContext.TogglePinnedCommand, RelativeSource={RelativeSource AncestorType={x:Type stage:StageView}}}"
-                                    CommandParameter="{Binding}">
-                              <Button.Style>
-                                <Style TargetType="Button"
-                                       BasedOn="{StaticResource StageItemActionButtonStyle}">
-                                  <Setter Property="ToolTip" Value="固定" />
-                                  <Setter Property="automation:AutomationProperties.Name" Value="固定中转项目" />
-                                  <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsPinned}" Value="True">
-                                      <Setter Property="Foreground" Value="{DynamicResource AccentTextFillColorPrimaryBrush}" />
-                                      <Setter Property="ToolTip" Value="取消固定" />
-                                      <Setter Property="automation:AutomationProperties.Name" Value="取消固定中转项目" />
-                                    </DataTrigger>
-                                  </Style.Triggers>
-                                </Style>
-                              </Button.Style>
-                              <TextBlock Text="&#xE718;"
+                        <Border x:Name="StageItemHoverOverlay"
+                                Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                BorderBrush="{DynamicResource ControlStrokeColorSecondaryBrush}"
+                                BorderThickness="0.5"
+                                CornerRadius="9"
+                                IsHitTestVisible="False"
+                                Opacity="0" />
+
+                        <Border x:Name="StageItemFocusRing"
+                                BorderBrush="{DynamicResource AccentFillColorDefaultBrush}"
+                                BorderThickness="1.5"
+                                CornerRadius="9"
+                                IsHitTestVisible="False"
+                                Opacity="0" />
+
+                        <Grid x:Name="StageItemActionChrome"
+                              Opacity="{StaticResource StageActionChromeRestOpacity}">
+                          <Button x:Name="StageItemPinButton"
+                                  Margin="2"
+                                  HorizontalAlignment="Left"
+                                  VerticalAlignment="Top"
+                                  IsEnabled="{Binding CanManage}"
+                                  Command="{Binding DataContext.TogglePinnedCommand, RelativeSource={RelativeSource AncestorType={x:Type stage:StageView}}}"
+                                  CommandParameter="{Binding}">
+                            <Button.Style>
+                              <Style TargetType="Button"
+                                     BasedOn="{StaticResource StageItemActionButtonStyle}">
+                                <Setter Property="ToolTip" Value="固定" />
+                                <Setter Property="automation:AutomationProperties.Name" Value="固定中转项目" />
+                                <Style.Triggers>
+                                  <DataTrigger Binding="{Binding IsPinned}" Value="True">
+                                    <Setter Property="Foreground" Value="{DynamicResource AccentTextFillColorPrimaryBrush}" />
+                                    <Setter Property="ToolTip" Value="取消固定" />
+                                    <Setter Property="automation:AutomationProperties.Name" Value="取消固定中转项目" />
+                                  </DataTrigger>
+                                </Style.Triggers>
+                              </Style>
+                            </Button.Style>
+                            <TextBlock Text="&#xE718;"
+                                       FontFamily="Segoe Fluent Icons"
+                                       FontSize="12" />
+                          </Button>
+                          <Button x:Name="StageItemMenuButton"
+                                  Margin="2"
+                                  HorizontalAlignment="Right"
+                                  VerticalAlignment="Top"
+                                  Style="{StaticResource StageItemActionButtonStyle}"
+                                  IsEnabled="{Binding CanManage}"
+                                  ToolTip="更多管理操作"
+                                  Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType={x:Type stage:StageView}}}"
+                                  Click="OnStageItemMenuClick"
+                                  automation:AutomationProperties.Name="打开中转站项目菜单">
+                            <Button.Content>
+                              <TextBlock Text="&#xE712;"
                                          FontFamily="Segoe Fluent Icons"
                                          FontSize="12" />
-                        </Button>
-                        <Button Margin="2"
-                                HorizontalAlignment="Right"
-                                VerticalAlignment="Top"
-                                Style="{StaticResource StageItemActionButtonStyle}"
-                                IsEnabled="{Binding CanManage}"
-                                ToolTip="更多管理操作"
-                                Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType={x:Type stage:StageView}}}"
-                                Click="OnStageItemMenuClick"
-                                automation:AutomationProperties.Name="打开中转站项目菜单">
-                              <Button.Content>
-                                <TextBlock Text="&#xE712;"
-                                           FontFamily="Segoe Fluent Icons"
-                                           FontSize="12" />
-                              </Button.Content>
-                              <Button.ContextMenu>
-                                <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
-                                  <MenuItem Header="打开"
-                                            IsEnabled="{Binding CanOpenOrReveal}"
-                                            Command="{Binding PlacementTarget.Tag.OpenCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
-                                            CommandParameter="{Binding}" />
-                                  <MenuItem Header="在文件资源管理器中定位"
-                                            IsEnabled="{Binding CanOpenOrReveal}"
-                                            Command="{Binding PlacementTarget.Tag.RevealCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
-                                            CommandParameter="{Binding}" />
-                                  <MenuItem Header="复制原路径"
-                                            IsEnabled="{Binding CanManage}"
-                                            Command="{Binding PlacementTarget.Tag.CopyPathCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
-                                            CommandParameter="{Binding}" />
-                                  <MenuItem Header="重新关联…"
-                                            IsEnabled="{Binding CanManage}"
-                                            Command="{Binding PlacementTarget.Tag.RelinkCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
-                                            CommandParameter="{Binding}" />
-                                  <Separator />
-                                  <MenuItem Header="从中转站移除"
-                                            ToolTip="只移除引用，不删除原文件"
-                                            Command="{Binding PlacementTarget.Tag.RemoveCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
-                                            CommandParameter="{Binding}" />
-                                </ContextMenu>
-                              </Button.ContextMenu>
-                        </Button>
+                            </Button.Content>
+                            <Button.ContextMenu>
+                              <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"
+                                           Opened="OnStageItemContextMenuOpened"
+                                           Closed="OnStageItemContextMenuClosed">
+                                <MenuItem Header="打开"
+                                          IsEnabled="{Binding CanOpenOrReveal}"
+                                          Command="{Binding PlacementTarget.Tag.OpenCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                                          CommandParameter="{Binding}" />
+                                <MenuItem Header="在文件资源管理器中定位"
+                                          IsEnabled="{Binding CanOpenOrReveal}"
+                                          Command="{Binding PlacementTarget.Tag.RevealCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                                          CommandParameter="{Binding}" />
+                                <MenuItem Header="复制原路径"
+                                          IsEnabled="{Binding CanManage}"
+                                          Command="{Binding PlacementTarget.Tag.CopyPathCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                                          CommandParameter="{Binding}" />
+                                <MenuItem Header="重新关联…"
+                                          IsEnabled="{Binding CanManage}"
+                                          Command="{Binding PlacementTarget.Tag.RelinkCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                                          CommandParameter="{Binding}" />
+                                <Separator />
+                                <MenuItem Header="从中转站移除"
+                                          ToolTip="只移除引用，不删除原文件"
+                                          Command="{Binding PlacementTarget.Tag.RemoveCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                                          CommandParameter="{Binding}" />
+                              </ContextMenu>
+                            </Button.ContextMenu>
+                          </Button>
+                        </Grid>
                       </Grid>
                     </Border>
+                    <DataTemplate.Triggers>
+                      <Trigger SourceName="StageItemCard"
+                               Property="stage:StageView.IsInteractionActive"
+                               Value="True">
+                        <Trigger.EnterActions>
+                          <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                            <Storyboard>
+                              <DoubleAnimation Storyboard.TargetName="StageItemHoverOverlay"
+                                               Storyboard.TargetProperty="Opacity"
+                                               To="1"
+                                               Duration="{StaticResource StageHoverEnterDuration}" />
+                              <DoubleAnimation Storyboard.TargetName="StageItemCardScale"
+                                               Storyboard.TargetProperty="ScaleX"
+                                               To="{StaticResource StageHoverScale}"
+                                               Duration="{StaticResource StageHoverEnterDuration}" />
+                              <DoubleAnimation Storyboard.TargetName="StageItemCardScale"
+                                               Storyboard.TargetProperty="ScaleY"
+                                               To="{StaticResource StageHoverScale}"
+                                               Duration="{StaticResource StageHoverEnterDuration}" />
+                              <DoubleAnimation Storyboard.TargetName="StageItemActionChrome"
+                                               Storyboard.TargetProperty="Opacity"
+                                               To="1"
+                                               Duration="{StaticResource StageHoverEnterDuration}" />
+                            </Storyboard>
+                          </BeginStoryboard>
+                        </Trigger.EnterActions>
+                        <Trigger.ExitActions>
+                          <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                            <Storyboard>
+                              <DoubleAnimation Storyboard.TargetName="StageItemHoverOverlay"
+                                               Storyboard.TargetProperty="Opacity"
+                                               To="0"
+                                               Duration="{StaticResource StageHoverExitDuration}" />
+                              <DoubleAnimation Storyboard.TargetName="StageItemCardScale"
+                                               Storyboard.TargetProperty="ScaleX"
+                                               To="1"
+                                               Duration="{StaticResource StageHoverExitDuration}" />
+                              <DoubleAnimation Storyboard.TargetName="StageItemCardScale"
+                                               Storyboard.TargetProperty="ScaleY"
+                                               To="1"
+                                               Duration="{StaticResource StageHoverExitDuration}" />
+                              <DoubleAnimation Storyboard.TargetName="StageItemActionChrome"
+                                               Storyboard.TargetProperty="Opacity"
+                                               To="{StaticResource StageActionChromeRestOpacity}"
+                                               Duration="{StaticResource StageHoverExitDuration}" />
+                            </Storyboard>
+                          </BeginStoryboard>
+                        </Trigger.ExitActions>
+                      </Trigger>
+                      <Trigger SourceName="StageItemCard"
+                               Property="stage:StageView.IsKeyboardContextActive"
+                               Value="True">
+                        <Trigger.EnterActions>
+                          <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                            <Storyboard>
+                              <DoubleAnimation Storyboard.TargetName="StageItemFocusRing"
+                                               Storyboard.TargetProperty="Opacity"
+                                               To="1"
+                                               Duration="{StaticResource StageHoverEnterDuration}" />
+                            </Storyboard>
+                          </BeginStoryboard>
+                        </Trigger.EnterActions>
+                        <Trigger.ExitActions>
+                          <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                            <Storyboard>
+                              <DoubleAnimation Storyboard.TargetName="StageItemFocusRing"
+                                               Storyboard.TargetProperty="Opacity"
+                                               To="0"
+                                               Duration="{StaticResource StageHoverExitDuration}" />
+                            </Storyboard>
+                          </BeginStoryboard>
+                        </Trigger.ExitActions>
+                      </Trigger>
+                    </DataTemplate.Triggers>
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
               </ItemsControl>

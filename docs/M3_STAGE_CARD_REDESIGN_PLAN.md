@@ -1,6 +1,6 @@
 # M3 中转站卡片重设计与前端效果计划
 
-> **状态（2026-09-09）**：Redesign Gate 0 V2 两段式静态文件卡已完成产品实施、整体对齐修正、隔离 Release 576/576 回归和真实 WPF 截图，并由用户确认视觉通过。卡面高度与 Vok Launcher 完全一致，宽度 72 DIP、gap 6 DIP、最多 10 列，上部预览 + 下部名称/meta；Gate 1–4、M3.1 Checkpoint 6 排序及其他效果全部暂停，等待用户下一步指令。本轮未发布、启动或替换实例。
+> **状态（2026-09-09）**：Redesign Gate 0 V2 静态视觉已由用户确认通过。Gate 1 Hover/KeyboardFocus 候选现已完成产品实现、真实 WPF 截图和隔离 Release 576/576 自动回归：Hover/焦点统一驱动表面、1.02 scale、ZIndex 与操作 chrome，ContextMenu 保持所属卡上下文，外部 drag、隐藏、换绑和回收统一清理；等待用户实际视觉确认后再进入 Gate 2。Gate 2–4、M3.1 Checkpoint 6 排序及其他功能仍暂停。本轮未发布、启动或替换实例。
 
 > **方向校正**：此前“默认弱容器、Accent 图标主导”的判断实际对应 Workbench Launcher，不对应用户给出的 Workbench 中转卡。新的静态权威计划为 `M3_STAGE_CARD_REDESIGN_GATE0_V2_PLAN.md`；旧 Gate 0 的 571/571 只保留为行为回归证据，不算视觉通过。
 
@@ -141,6 +141,8 @@ Hover 动画沿用已验证的 `SnapshotAndReplace` 语义，不堆积 animation
 通过条件：默认视觉达到“持续可见的两段式文件卡”，同窗 Stage/Launcher 卡面严格等高，800 DIP 中区形成 10 列，最窄宽度仍不重叠，所有既有管理动作和完整语义保持。
 
 ### Redesign Gate 1：Hover 与键盘焦点
+
+> 2026-09-09 实施状态：产品候选与自动门禁已完成，等待用户视觉 Gate。首次实现让 MouseOver、FocusWithin 和 ContextMenu 三个触发器分别写同一动画，定向测试复现菜单打开时 FocusWithin 退出动画覆盖菜单进入动画；最终收敛为 view-owned 单一卡片交互状态，再由该状态唯一驱动画面。100 轮聚焦/外部抑制/换列/滚动/显隐与最终静止态、菜单上下文、浅色 Hover/键盘焦点、暗色和 260 DIP 窄布局均通过；未修改 VM、仓储、Router 或排序入口。
 
 - 增加 Hover/FocusWithin 的 fill、stroke、scale、ZIndex 和 action chrome 过渡；
 - 快速进出、跨卡移动、滚动回收、主题切换和窗口隐藏都恢复默认状态；

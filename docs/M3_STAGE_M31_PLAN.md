@@ -1,6 +1,6 @@
 # M3.1 中转站管理动作实施计划
 
-> **状态（2026-09-09）**：实施中。Checkpoint 0–5 已完成并通过用户实际候选物理 Gate；Checkpoint 6 有界排序已完成源码诊断和规划但按用户要求暂停。单一自适应卡片的 V2 静态样式、Launcher 整体对齐修正和隔离 Release 576/576 已完成，并由用户确认视觉通过；其 72 DIP、6 DIP gap、最多 10 列合同见 `M3_STAGE_CARD_REDESIGN_GATE0_V2_PLAN.md`。Hover、内部拖动、外部 Drop 新效果、M3.2/M3.3 与 KI-001 均未进入本轮。
+> **状态（2026-09-09）**：实施中。Checkpoint 0–5 已完成并通过用户实际候选物理 Gate；Checkpoint 6 有界排序已完成源码诊断和规划但继续暂停。单一自适应卡片的 V2 静态样式与 Launcher 对齐已由用户确认通过；Hover/KeyboardFocus Gate 1 候选也已完成实现、截图和隔离 Release 576/576 自动门禁，等待用户视觉确认。内部拖影、外部 Drop 新效果、M3.2/M3.3 与 KI-001 均未进入本轮。
 
 ## 1. 阶段目标与完成边界
 

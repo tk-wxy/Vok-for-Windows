@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -204,6 +206,64 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 Assert.Equal(24, menuButton.ActualHeight, precision: 3);
                 AssertVisualIsInside(pinButton, firstCard);
                 AssertVisualIsInside(menuButton, firstCard);
+                var hoverOverlay = Assert.Single(
+                    FindVisualDescendants<Border>(firstCard),
+                    border => string.Equals(
+                        border.Name,
+                        "StageItemHoverOverlay",
+                        StringComparison.Ordinal));
+                var focusRing = Assert.Single(
+                    FindVisualDescendants<Border>(firstCard),
+                    border => string.Equals(
+                        border.Name,
+                        "StageItemFocusRing",
+                        StringComparison.Ordinal));
+                var actionChrome = Assert.Single(
+                    FindVisualDescendants<Grid>(firstCard),
+                    grid => string.Equals(
+                        grid.Name,
+                        "StageItemActionChrome",
+                        StringComparison.Ordinal));
+                var cardScale = Assert.IsType<ScaleTransform>(firstCard.RenderTransform);
+                Assert.Equal(0, hoverOverlay.Opacity, precision: 3);
+                Assert.Equal(0, focusRing.Opacity, precision: 3);
+                Assert.Equal(0.55, actionChrome.Opacity, precision: 3);
+                Assert.Equal(1, cardScale.ScaleX, precision: 3);
+                Assert.Equal(1, cardScale.ScaleY, precision: 3);
+
+                StageView.SetIsInteractionActive(firstCard, true);
+                Assert.True(WaitForDispatcherCondition(
+                    window.Dispatcher,
+                    () => hoverOverlay.Opacity >= 0.999 &&
+                          focusRing.Opacity <= 0.001 &&
+                          actionChrome.Opacity >= 0.999 &&
+                          cardScale.ScaleX >= 1.019 &&
+                          cardScale.ScaleY >= 1.019,
+                    TimeSpan.FromSeconds(1)));
+                CaptureWindowIfRequested(window, "stage-view-hover-light.png");
+                StageView.SetIsInteractionActive(firstCard, false);
+                Assert.True(WaitForDispatcherCondition(
+                    window.Dispatcher,
+                    () => hoverOverlay.Opacity <= 0.001 &&
+                          actionChrome.Opacity <= 0.551 &&
+                          cardScale.ScaleX <= 1.001 &&
+                          cardScale.ScaleY <= 1.001,
+                    TimeSpan.FromSeconds(1)));
+
+                Assert.True(pinButton.Focus());
+                Assert.True(WaitForDispatcherCondition(
+                    window.Dispatcher,
+                    () => firstCard.IsKeyboardFocusWithin &&
+                          hoverOverlay.Opacity >= 0.999 &&
+                          focusRing.Opacity >= 0.999 &&
+                          actionChrome.Opacity >= 0.999 &&
+                          cardScale.ScaleX >= 1.019 &&
+                          cardScale.ScaleY >= 1.019,
+                    TimeSpan.FromSeconds(1)));
+                var firstContainer = Assert.IsType<ContentPresenter>(
+                    FindVisualAncestor<ContentPresenter>(firstCard));
+                Assert.Equal(1, Panel.GetZIndex(firstContainer));
+                CaptureWindowIfRequested(window, "stage-view-keyboard-focus-light.png");
                 Assert.DoesNotContain(
                     FindVisualDescendants<Border>(firstCard),
                     static border => string.Equals(
@@ -232,6 +292,14 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 menuButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 window.Dispatcher.Invoke(DispatcherPriority.ApplicationIdle, static () => { });
                 Assert.True(menu.IsOpen);
+                Assert.True(StageView.GetIsContextMenuOpen(firstCard));
+                Assert.True(StageView.GetIsContextMenuOpen(firstContainer));
+                Assert.True(WaitForDispatcherCondition(
+                    window.Dispatcher,
+                    () => hoverOverlay.Opacity >= 0.999 &&
+                          focusRing.Opacity >= 0.999 &&
+                          actionChrome.Opacity >= 0.999,
+                    TimeSpan.FromSeconds(1)));
                 Assert.NotEqual("Segoe Fluent Icons", menu.FontFamily.Source);
                 Assert.All(
                     menu.Items.OfType<MenuItem>(),
@@ -246,7 +314,21 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 Assert.Same(viewModel.Items[0], copyPathItem.CommandParameter);
                 Assert.Same(viewModel.Items[0], relinkItem.CommandParameter);
                 Assert.Same(viewModel.Items[0], removeItem.CommandParameter);
-                menu.IsOpen = false;
+                Keyboard.ClearFocus();
+                view.SetExternalDragState(sessionActive: true, targeted: false);
+                Assert.True(WaitForDispatcherCondition(
+                    window.Dispatcher,
+                    () => !menu.IsOpen &&
+                          !StageView.GetIsContextMenuOpen(firstCard) &&
+                          !StageView.GetIsContextMenuOpen(firstContainer) &&
+                          hoverOverlay.Opacity <= 0.001 &&
+                          focusRing.Opacity <= 0.001 &&
+                          actionChrome.Opacity <= 0.551 &&
+                          cardScale.ScaleX <= 1.001 &&
+                          cardScale.ScaleY <= 1.001,
+                    TimeSpan.FromSeconds(1)));
+                Assert.Equal(0, Panel.GetZIndex(firstContainer));
+                view.SetExternalDragState(sessionActive: false, targeted: false);
                 Assert.InRange(fileService.InspectedIds.Count, 1, realizedCards.Length);
                 Assert.True(fileService.InspectedIds.Count < viewModel.Items.Count);
 
@@ -796,6 +878,21 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                     Assert.InRange(view.ActiveAvailabilityBindingCount, 1, realizedCards);
                     Assert.False(view.HasPendingDeferredWork);
 
+                    var interactionCard = FindVisualDescendants<Border>(list).First(
+                        static border => string.Equals(
+                            border.Name,
+                            "StageItemCard",
+                            StringComparison.Ordinal));
+                    var interactionButton = FindVisualDescendants<Button>(interactionCard).First();
+                    Assert.True(interactionButton.Focus());
+                    Assert.True(StageView.GetIsInteractionActive(interactionCard));
+                    Assert.True(StageView.GetIsKeyboardContextActive(interactionCard));
+                    view.SetExternalDragState(sessionActive: true, targeted: false);
+                    Assert.False(StageView.GetIsInteractionActive(interactionCard));
+                    Assert.False(StageView.GetIsKeyboardContextActive(interactionCard));
+                    Keyboard.ClearFocus();
+                    view.SetExternalDragState(sessionActive: false, targeted: false);
+
                     if ((cycle + 1) % 10 == 0)
                     {
                         window.Hide();
@@ -803,10 +900,34 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                             DispatcherPriority.ApplicationIdle,
                             static () => { });
                         Assert.Equal(0, view.ActiveAvailabilityBindingCount);
+                        Assert.All(
+                            FindVisualDescendants<Border>(list).Where(
+                                static border => string.Equals(
+                                    border.Name,
+                                    "StageItemCard",
+                                    StringComparison.Ordinal)),
+                            card =>
+                            {
+                                Assert.False(StageView.GetIsInteractionActive(card));
+                                Assert.False(StageView.GetIsKeyboardContextActive(card));
+                                Assert.False(StageView.GetIsContextMenuOpen(card));
+                            });
                         window.Show();
                         PumpLayout(window);
                     }
                 }
+
+                view.SetExternalDragState(sessionActive: true, targeted: false);
+                Assert.True(WaitForDispatcherCondition(
+                    window.Dispatcher,
+                    () => FindVisualDescendants<Border>(list)
+                        .Where(static border => string.Equals(
+                            border.Name,
+                            "StageItemCard",
+                            StringComparison.Ordinal))
+                        .All(IsCardAtRest),
+                    TimeSpan.FromSeconds(1)));
+                view.SetExternalDragState(sessionActive: false, targeted: false);
             }
             finally
             {
@@ -992,6 +1113,78 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 yield return descendant;
             }
         }
+    }
+
+    private static T? FindVisualAncestor<T>(DependencyObject start)
+        where T : DependencyObject
+    {
+        DependencyObject? current = start;
+        while ((current = VisualTreeHelper.GetParent(current)) is not null)
+        {
+            if (current is T match)
+            {
+                return match;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool WaitForDispatcherCondition(
+        Dispatcher dispatcher,
+        Func<bool> predicate,
+        TimeSpan timeout)
+    {
+        if (predicate())
+        {
+            return true;
+        }
+
+        var elapsed = Stopwatch.StartNew();
+        var frame = new DispatcherFrame();
+        var timer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(10),
+        };
+        timer.Tick += (_, _) =>
+        {
+            if (predicate() || elapsed.Elapsed >= timeout)
+            {
+                frame.Continue = false;
+            }
+        };
+        timer.Start();
+        Dispatcher.PushFrame(frame);
+        timer.Stop();
+        return predicate();
+    }
+
+    private static bool IsCardAtRest(Border card)
+    {
+        var overlay = FindVisualDescendants<Border>(card).SingleOrDefault(
+            border => string.Equals(
+                border.Name,
+                "StageItemHoverOverlay",
+                StringComparison.Ordinal));
+        var focusRing = FindVisualDescendants<Border>(card).SingleOrDefault(
+            border => string.Equals(
+                border.Name,
+                "StageItemFocusRing",
+                StringComparison.Ordinal));
+        var actionChrome = FindVisualDescendants<Grid>(card).SingleOrDefault(
+            grid => string.Equals(
+                grid.Name,
+                "StageItemActionChrome",
+                StringComparison.Ordinal));
+        return overlay is not null && focusRing is not null && actionChrome is not null &&
+            card.RenderTransform is ScaleTransform scale &&
+            !StageView.GetIsInteractionActive(card) &&
+            !StageView.GetIsKeyboardContextActive(card) &&
+            overlay.Opacity <= 0.001 &&
+            focusRing.Opacity <= 0.001 &&
+            actionChrome.Opacity <= 0.551 &&
+            scale.ScaleX <= 1.001 &&
+            scale.ScaleY <= 1.001;
     }
 
     private static void CaptureWindowIfRequested(Window window, string fileName)

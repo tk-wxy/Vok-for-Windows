@@ -3,6 +3,7 @@ using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Vok.Core.Stage;
@@ -36,6 +37,27 @@ public partial class StageView : UserControl
             typeof(double),
             typeof(StageView),
             new PropertyMetadata(StageCardLayoutCalculator.MinimumCardWidth));
+
+    public static readonly DependencyProperty IsContextMenuOpenProperty =
+        DependencyProperty.RegisterAttached(
+            "IsContextMenuOpen",
+            typeof(bool),
+            typeof(StageView),
+            new PropertyMetadata(false));
+
+    public static readonly DependencyProperty IsInteractionActiveProperty =
+        DependencyProperty.RegisterAttached(
+            "IsInteractionActive",
+            typeof(bool),
+            typeof(StageView),
+            new PropertyMetadata(false));
+
+    public static readonly DependencyProperty IsKeyboardContextActiveProperty =
+        DependencyProperty.RegisterAttached(
+            "IsKeyboardContextActive",
+            typeof(bool),
+            typeof(StageView),
+            new PropertyMetadata(false));
 
     private readonly StageCardRowsProjection _cardRowsProjection;
     private ObservableCollection<StageItemViewModel>? _observedItems;
@@ -96,6 +118,42 @@ public partial class StageView : UserControl
         private set => SetCurrentValue(CardRowSurfaceWidthProperty, value);
     }
 
+    public static bool GetIsContextMenuOpen(DependencyObject element)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        return (bool)element.GetValue(IsContextMenuOpenProperty);
+    }
+
+    public static void SetIsContextMenuOpen(DependencyObject element, bool value)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        element.SetValue(IsContextMenuOpenProperty, value);
+    }
+
+    public static bool GetIsInteractionActive(DependencyObject element)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        return (bool)element.GetValue(IsInteractionActiveProperty);
+    }
+
+    public static void SetIsInteractionActive(DependencyObject element, bool value)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        element.SetValue(IsInteractionActiveProperty, value);
+    }
+
+    public static bool GetIsKeyboardContextActive(DependencyObject element)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        return (bool)element.GetValue(IsKeyboardContextActiveProperty);
+    }
+
+    public static void SetIsKeyboardContextActive(DependencyObject element, bool value)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        element.SetValue(IsKeyboardContextActiveProperty, value);
+    }
+
     internal StageCardLayoutProfile? CardLayoutProfile => _cardLayoutProfile;
 
     internal double CardViewportWidth => GetStageScrollViewer()?.ViewportWidth ?? 0;
@@ -124,6 +182,17 @@ public partial class StageView : UserControl
             ? Visibility.Visible
             : Visibility.Collapsed;
         StageInteractionSurface.IsHitTestVisible = !sessionActive;
+        foreach (var card in _availabilityCards.ToArray())
+        {
+            if (sessionActive)
+            {
+                ResetContextMenuState(card);
+            }
+            else
+            {
+                UpdateCardInteractionState(card);
+            }
+        }
     }
 
     private void OnDataContextChanged(
@@ -265,7 +334,26 @@ public partial class StageView : UserControl
         }
 
         _availabilityCards.Add(card);
+        UpdateCardInteractionState(card);
         ScheduleAvailabilityRefresh();
+    }
+
+    private void OnStageItemCardMouseStateChanged(object sender, MouseEventArgs e)
+    {
+        if (sender is Border card)
+        {
+            UpdateCardInteractionState(card);
+        }
+    }
+
+    private void OnStageItemCardKeyboardFocusWithinChanged(
+        object sender,
+        DependencyPropertyChangedEventArgs e)
+    {
+        if (sender is Border card)
+        {
+            UpdateCardInteractionState(card);
+        }
     }
 
     private void OnStageItemMenuClick(object sender, RoutedEventArgs e)
@@ -280,6 +368,22 @@ public partial class StageView : UserControl
         e.Handled = true;
     }
 
+    private void OnStageItemContextMenuOpened(object sender, RoutedEventArgs e)
+    {
+        if (sender is ContextMenu menu)
+        {
+            SetContextMenuOpenState(menu, isOpen: true);
+        }
+    }
+
+    private void OnStageItemContextMenuClosed(object sender, RoutedEventArgs e)
+    {
+        if (sender is ContextMenu menu)
+        {
+            SetContextMenuOpenState(menu, isOpen: false);
+        }
+    }
+
     private void OnStageItemCardUnloaded(object sender, RoutedEventArgs e)
     {
         if (sender is not Border card)
@@ -287,6 +391,7 @@ public partial class StageView : UserControl
             return;
         }
 
+        ResetContextMenuState(card);
         _availabilityCards.Remove(card);
         CancelAvailabilityBinding(card, resetState: true);
     }
@@ -300,6 +405,7 @@ public partial class StageView : UserControl
             return;
         }
 
+        ResetContextMenuState(card);
         CancelAvailabilityBinding(card, resetState: true);
         ScheduleAvailabilityRefresh();
     }
@@ -340,6 +446,11 @@ public partial class StageView : UserControl
         }
         else
         {
+            foreach (var card in _availabilityCards.ToArray())
+            {
+                ResetContextMenuState(card);
+            }
+
             CancelAllAvailabilityBindings();
         }
     }
@@ -684,6 +795,80 @@ public partial class StageView : UserControl
                 yield return descendant;
             }
         }
+    }
+
+    private void SetContextMenuOpenState(ContextMenu menu, bool isOpen)
+    {
+        if (menu.PlacementTarget is not DependencyObject placementTarget ||
+            FindVisualAncestor<Border>(placementTarget, "StageItemCard") is not { } card)
+        {
+            return;
+        }
+
+        SetIsContextMenuOpen(card, isOpen);
+        if (FindVisualAncestor<ContentPresenter>(card) is { } container)
+        {
+            SetIsContextMenuOpen(container, isOpen);
+        }
+
+        UpdateCardInteractionState(card);
+    }
+
+    private void ResetContextMenuState(Border card)
+    {
+        foreach (var button in FindNamedVisualDescendants<Button>(
+                     card,
+                     "StageItemMenuButton"))
+        {
+            if (button.ContextMenu is { IsOpen: true } menu)
+            {
+                menu.IsOpen = false;
+            }
+        }
+
+        SetIsContextMenuOpen(card, false);
+        if (FindVisualAncestor<ContentPresenter>(card) is { } container)
+        {
+            SetIsContextMenuOpen(container, false);
+            SetIsInteractionActive(container, false);
+        }
+
+        SetIsInteractionActive(card, false);
+        SetIsKeyboardContextActive(card, false);
+    }
+
+    private void UpdateCardInteractionState(Border card)
+    {
+        var canPresentInteraction = IsVisible && !_externalDragActive && card.IsVisible;
+        var keyboardContextActive = canPresentInteraction &&
+            (card.IsKeyboardFocusWithin || GetIsContextMenuOpen(card));
+        var interactionActive = canPresentInteraction &&
+            (card.IsMouseOver || keyboardContextActive);
+
+        SetIsInteractionActive(card, interactionActive);
+        SetIsKeyboardContextActive(card, keyboardContextActive);
+        if (FindVisualAncestor<ContentPresenter>(card) is { } container)
+        {
+            SetIsInteractionActive(container, interactionActive);
+        }
+    }
+
+    private static T? FindVisualAncestor<T>(DependencyObject start, string? name = null)
+        where T : FrameworkElement
+    {
+        DependencyObject? current = start;
+        while (current is not null)
+        {
+            if (current is T match &&
+                (name is null || string.Equals(match.Name, name, StringComparison.Ordinal)))
+            {
+                return match;
+            }
+
+            current = VisualTreeHelper.GetParent(current);
+        }
+
+        return null;
     }
 
     private readonly record struct ScrollAnchor(Guid ItemId, double RelativeTop);
