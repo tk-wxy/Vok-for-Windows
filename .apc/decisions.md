@@ -34,6 +34,7 @@
 - §28 中转站先交付拖动呼出入站 MVP — 当前只完成外部文件拖动中呼出、Stage 松手、持久落项；取用、拖出和管理动作后置，出站 Gate 不再阻塞入站实现。
 - §29 活动外部拖动反复显隐问题延期 — 恢复问题报告前的 M3.MVP3 行为，移除未被接受的修正/实验代码并归档 KI-001。
 - §30 中转站采用单一自适应卡片布局 — 排序前以行虚拟化卡片替换纵向条目，不提供列表/卡片切换，也不新增布局持久化状态。
+- §31 中转站卡片重设计先于排序 — 继续以 Workbench 外部形态为视觉参考，先冻结静态、Hover、内部拖动预览和外部拖入效果；不把无提交的假排序手势暴露给产品。
 
 ## 详情
 
@@ -332,3 +333,13 @@
 - **新增失败模式**：列数切换可在旧行容器和 Availability 请求仍存活时重组卡片；一行多卡回收可能只取消首张卡；连续 `SizeChanged` 可造成重建抖动；部分尾行可把空单元误算为排序位置；主体与管理按钮手势可能互相吞事件；未来排序活动中换列可能在旧几何提交；真实 Shell 图标若同步解析会污染呼出/Drop 热路径。实现以纯布局计算器、仅在档位/列数变化时重组、行级 Recycling、逐卡生命周期门禁、扁平顺序为唯一身份、活动排序遇布局代次变化即取消，以及可见项异步资源管线限制影响。
 - **决定 / 最后验证**：2026-09-06 / 2026-09-08 完整自动门禁与真实 WPF 渲染核对。
 - **状态**：active；产品方向已确认。Card 0B 选择 ManagementSafe 104–124×124 DIP，并因 720/800/960 DIP 宽中心区证据把最大列数从候选期 5 调整为 8；行投影、真实 XAML、逐卡 Availability 生命周期与 100 轮稳定性门禁均已落地。完整 Release 567/567、构建 0 warning / 0 error，415 文件独立候选已生成；schema、设置、Router 和真实数据库未改变。100%/200% 系统 DPI 与真实拖入人工 Gate 尚未完成，通过后恢复 Checkpoint 6。
+
+### §31 中转站卡片重设计先于排序
+
+- **最终方案**：保留 §30 已验证的 App 层行投影、Recycling/Pixel 虚拟行和 64 项扁平业务页面，但以用户 2026-09-08 否决第一版后的 V2 静态合同替换卡片几何：Stage 使用持续可见的两段式文件卡，上方预览/类型区、下方名称/meta 区；宽 72 DIP、横向 gap 6、最多 10 列，卡面高度与同窗 Launcher `CardSurfaceHeight` 完全一致且 row unit 同节奏。固定宽度在当前 1600 DIP 工作区的约 784 DIP Stage viewport 中以 `10×72 + 9×6 = 774` 恰好形成 10 列。28 DIP 独立管理带、124 DIP 高卡、透明外卡和默认 Accent 图标块均取消；pin/menu 只作为预览区覆盖命中，不独占高度。当前只实施并验收静态卡面，Hover/KeyboardFocus、内部 drag、外部 Drop 新效果和 M3.1 Checkpoint 6 全部暂停；排序的 revision-safe Core/SQLite 方案保持不变。
+- **范围**：当前活动范围仅为 `StageView` 两段式静态卡面、72/6/10 横向几何、与 Launcher 共用的只读纵向节奏、App 层 meta 投影、既有管理 chrome 的覆盖安放和 WPF 自动/人工 Gate；不修改 Launcher 样式、Stage Core/SQLite/schema、唯一 `WorkspaceFileDropRouter`、Drop 快照、Workspace drag lease、点击取用、OLE 拖出或 KI-001。Hover/KeyboardFocus、内部拖动视觉、外部拖入 overlay 与排序保留为未来路线但暂不实施。
+- **证据与根因**：用户给出的 Workbench 浅/深图和其前端样式共同证明，中转卡不是 Launcher 式透明图标单元，而是宽 72、外圆角 9、上方预览区与下方名称/meta 区组成的持续可见文件卡；Workbench 800 DIP 中区用 6 DIP gap 排 10 列。Vok 第一版虽通过 571/571，却仍是 104–124×124 DIP 的管理宫格，透明外表面、28 DIP 管理带和 Accent 图标块对应了错误范式。当前系统工作区为 1600×952 DIP，Vok 1:2:1 中区约 800 DIP，Stage 真实 viewport 约 784 DIP，`10×72 + 9×6 = 774` 可直接复现十列节奏。Vok Launcher 卡高按 viewport 动态变化，Stage 若继续固定 124 或根据自己的分页后 viewport 独立计算都不会真正等高，因此两者必须消费同一 App UI surface/unit profile，而非互相依赖业务 VM。
+- **否决方案**：在第一版上继续调 42 DIP 图标或透明度；维持 104–124×124/8/max8；把 Workbench Launcher 的 Accent 图标单元继续当中转卡；固定写死一个“近似 Launcher”的高度；让 Stage 用自身较矮 viewport 再算一份卡高；为十列缩到低于 72 DIP；复制 Workbench React/Tauri/后端或图标数据；本轮顺带实现 Hover、缩略图、拖动、排序或修改数据层。
+- **新增失败模式**：固定 72 DIP 在 200% DPI 下可能让角落命中区与 40 DIP icon 互相遮挡；0.5 DIP 线条可能因像素对齐发虚；Stage 分页栏会使独立高度计算与 Launcher 漂移；10 列宽矩阵更新可能破坏行投影/滚动锚点；名称/meta 单行可能丢失完整语义；主题资源可能无法形成预览/标签两级表面。方案以覆盖而非占行的 24 DIP 命中区、SnapsToDevicePixels、同源 surface/unit profile、固定宽度纯计算门禁、ToolTip/Automation 完整语义、浅深真实 WPF 截图和一次只改一层变量限制影响。
+- **决定 / 最后验证**：2026-09-08 / 2026-09-09 绝对卡面 Y 坐标、隔离 Release 576/576 与真实 WPF 截图。
+- **状态**：active；第一版静态产品样式被用户视觉 Gate 否决。V2 两段式 72 DIP 文件卡已实施；用户首轮 V2 检查指出 Stage 整体未与 Launcher 卡片对齐。新增绝对窗口坐标门禁后复现 Launcher `Y=89`、Stage `Y=86`：两者虽共享 surface height 和 row unit，但 Launcher 卡面在行内上下各留 3 DIP，Stage 卡面却顶对齐。现已让 Stage 卡面在共享 row unit 内垂直居中，修复机制而非添加 3 DIP 补偿；坐标断言、隔离 Release 576/576 和新十列截图通过，用户于 2026-09-09 确认静态视觉 Gate 通过。当前源码 Release PID 21652 由外部启动，本轮未停止或替换。Hover/KeyboardFocus、内部拖影、外部拖入效果和排序均暂停；权威实施合同见 `docs/M3_STAGE_CARD_REDESIGN_GATE0_V2_PLAN.md`。

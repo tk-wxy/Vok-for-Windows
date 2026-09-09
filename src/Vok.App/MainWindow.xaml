@@ -184,7 +184,9 @@
               BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
               BorderThickness="0,0,1,0"
               automation:AutomationProperties.Name="中转站区域">
-        <stage:StageView x:Name="StagePanel" />
+        <stage:StageView x:Name="StagePanel"
+                         CardHeight="{Binding CardSurfaceHeight, ElementName=LauncherPanel}"
+                         CardRowUnitHeight="{Binding CardUnitHeight, ElementName=LauncherPanel}" />
       </Border>
 
       <Border x:Name="ClipboardRegion"

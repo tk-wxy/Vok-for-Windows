@@ -11,10 +11,10 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP 已归档，M3.1 Checkpoint 1–5 已通过人工 Gate。单一自适应卡片的 Card 0A/0B、Card 1A–1C 及 Card 1D 自动门禁已完成；Card Gate 1 只差 100%/200% DPI 与真实拖入人工 Gate，Checkpoint 6 尚未开始。Card 候选现以 PID 15852 运行。
-- **最近进展**：Stage 已冻结 104–124×124 DIP、8 DIP 间距、最多 8 列，并按真实 ScrollViewer viewport 在 260/520/720/800/960 DIP 外宽形成 2/4/6/7/8 列。`StageView` 已采用视图拥有的 generation 行投影、外层 Recycling/Pixel 虚拟行、行内卡片、共享内容模板、换列滚动锚点和逐卡 Availability 清理；页面 `Clear + Add×N` 在新 extent 布局完成后才归顶。Stage 98/98、MainWindow 3/3、Router 6/6、完整 Release 567/567、构建 0 warning / 0 error；415 文件自包含候选与截图已生成，详见 `docs/M3_STAGE_CARD_LAYOUT_PLAN.md`。
-- **下一步**：用 `.artifacts/m3-stage-card-gate1-candidate-20260908/` 完成 100%/200% 系统 DPI、260/520 等效宽度、长名称/Pinned+Missing、菜单、滚动/翻页与 Explorer/桌面真实拖入人工 Gate；确认后归档 Card Gate 1，并进入 Checkpoint 6A–6F 的 revision-safe 二维排序。
-- **已知问题**：KI-001 仍延期：活动 Explorer 拖动中关闭 Vok 可能让松手落回源目录并生成副本；本轮未触碰其路径。测试产生的 `.lnk` 副本未经授权不得删除。默认 Release PID 17900 已按用户启动实例请求停止；当前候选 PID 15852 的 `Vok.dll` SHA-256 已核对为 `432AE368B7EF79317D448B2F9E9F5045B4026A3AC98B377CCF42B71FF2B9B04C`。M3 入站历史物理稳定性实际为 50+ 次而非计划的 100 次。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP 已归档，M3.1 Checkpoint 1–5 已通过人工 Gate。Redesign Gate 0 第一版视觉不通过；V2 两段式静态卡片及整体对齐修正已由用户确认通过。Hover/KeyboardFocus、内部拖影、外部拖入效果和 Checkpoint 6 排序全部暂停。
+- **最近进展**：用户指出 Stage 整体未与 Launcher 卡片对齐。新增绝对坐标门禁后复现两者首卡 `Y=86/89`，根因为 Stage 卡面在 100 DIP row unit 内顶对齐，而 Launcher 的 94 DIP surface 上下各留 3 DIP；改为行内垂直居中后 Y 坐标相等。隔离 Release Core 74/74 + Integration 502/502 共 576/576、0 warning / 0 error 和 `git diff --check` 通过，用户于 2026-09-09 确认视觉 Gate 通过。
+- **下一步**：等待用户明确指定后续范围；不自动进入 Hover、拖动、外部 Drop、排序或缩略图。当前未发布或替换候选。
+- **已知问题**：KI-001 仍延期：活动 Explorer 拖动中关闭 Vok 可能让松手落回源目录并生成副本；本轮未触碰其路径。当前源码 Release PID 21652 由外部启动并占用默认输出，本轮没有停止或替换；它不能代表本次对齐修复候选。测试产生的 `.lnk` 副本未经授权不得删除；M3 入站历史物理稳定性实际为 50+ 次而非计划的 100 次。
 
 ## §0A 最近会话
 
@@ -39,6 +39,14 @@
 - 下一步源码诊断确认：Card 0B 必须使用布局后的真实 ScrollViewer viewport 而非 Stage 外层宽度，并把 720/800/960 DIP 宽中心区纳入 5 列上限的节奏门禁；计划已拆为测试专用双候选夹具、真实宽度/浅深矩阵、硬失败择优和单候选清理四步。行投影归 StageView 所有，页面 `Clear + Add×N` 合并发布后才滚动归顶；普通 Stretch UniformGrid 不得二次改写卡宽/间距。详细实施边界已写入 `docs/M3_STAGE_CARD_LAYOUT_PLAN.md`，本轮未改产品代码、schema、设置、Router、真实库或运行进程。
 - Card 0B 最终选择 ManagementSafe 104–124×124 DIP；Compact 因窄宽截断淘汰，5 列上限又因宽中心区留白只改为最多 8 列并复验。Card 1A–1C 已完成行投影、真实卡片 XAML、滚动锚点和逐卡 Availability 清理；页面替换残留 20 DIP 的机制是 `RowsPublished` 早于虚拟面板新 extent，改以 `ContextIdle` 布局阶段归顶后复验通过，无延时/重试。100 轮换列/滚动/显隐、Stage 98/98、MainWindow 3/3、Router 6/6、完整 Release 567/567 和 0 warning 构建通过；415 文件候选已生成，待 100%/200% DPI 与真实拖入人工 Gate。schema、设置、Router、真实数据库、KI-001 和默认 PID 17900 未改。
 - 用户要求启动 Card 实例后，再次核对候选路径与 DLL 哈希，精确停止默认 Release PID 17900，并启动独立候选 PID 15852；启动后唯一 Vok 进程、加载路径和 `Vok.dll` SHA-256 均与候选一致。
+- 用户随后要求继续重设计中转站卡片，视觉参考 Workbench，并覆盖悬浮、内部拖动与外部拖入效果；排序功能明确暂停。源码/截图分析确认数据层、行虚拟化与管理动作可保持，差距只在默认强卡面、常驻操作、小 glyph、缺少 Hover/drag ghost 和外部 Drop 提示层。新增 `docs/M3_STAGE_CARD_REDESIGN_PLAN.md`，把静态、Hover/键盘、隔离 drag source/ghost、外部 DragActive/Targeted 和候选验收拆为 Gate 0–4；正式产品不暴露松手无提交的假排序手势，Core/SQLite/Router/KI-001 均不进入本轮。
+- Redesign Gate 0 进一步完成可实施规划：192 DPI Workbench 图标实测约 46 DIP，Vok 首候选取 42 DIP；卡片内部按 28/42/30/16 DIP 固定行分配，左侧继续保留后续排序槽、pin/menu 保持右侧，纠正了总计划初稿把 pin 放左侧会占用排序命中区的问题。compact 状态缩写只进入 App VM，完整 Automation 语义不变；实施拆为呈现属性、静态 XAML、结构截图门禁和完整回归四步，本轮仍未改产品代码或运行候选。
+- Redesign Gate 0 随后完成产品实施：App VM 增加 compact 状态投影，静态卡片改为透明外表面、42 DIP Accent 图标、两行 Medium 名称和单行组合状态；左侧隐藏排序槽、右侧 pin/menu、管理命令、Automation、布局/虚拟化、Router 与数据层保持。定向 34/34、完整 Release 571/571、构建 0 warning / 0 error 和差异检查通过；浅深及 260/520/720/800/960 DIP 截图生成，42 DIP 无需回退。旧 PID 15852 未替换，下一步仅做用户静态视觉 Gate。
+- 用户要求替换后，将当前源码发布为 259 文件的独立 win-x64 自包含 Gate 0 候选；首次 `--no-restore` 因 assets 尚无 win-x64 target 明确失败，改为正常运行时还原后发布成功。核对路径与哈希后精确停止旧 PID 15852，启动 PID 20160；当前唯一 Vok 进程、实际加载 DLL 路径和 SHA-256 `C2BF3A66A976F3970368D2E5D9D7CD7668DB96E68FD16C20D7EA600FADD2F3E4` 均与新候选一致。
+- 用户以 Workbench 中转卡浅/深截图明确判定第一版效果不通过，要求卡高与 Vok 启动台一致、宽度重新商榷并先只确立静态样式。只读核对 Workbench `App.css` 的 72/6/9、62+32 两段结构及 Vok 当前 1600×952 DIP/1:2:1 几何后，确定 72 DIP 固定宽、6 DIP gap、最多 10 列正好适配约 784 DIP 真实 Stage viewport；高度改为消费与 Launcher 同一 surface/unit rhythm，而非 Stage 独立常量。新增 V2 权威计划并标记第一版为视觉否决；未改产品代码、业务/后端或运行实例，PID 20160 已由用户侧结束。
+- V2 静态样式随后完成实施：横向 profile 收敛为 72/6/10，MainWindow 把 Launcher surface/unit 直接绑定给 Stage；卡面改为上部中性预览 + 下部 32 DIP 名称/meta，40 DIP 图标框和 24 DIP 覆盖式 pin/menu，旧管理带/排序占位删除。聚焦 80/80、完整 Release Core 74/74 + Integration 502/502 共 576/576、0 warning / 0 error 与差异检查通过；1600 DIP 同窗十列和等高截图已核验。本轮未改业务/后端、Router、真实库、KI-001 或运行实例，下一步只等用户静态视觉 Gate。
+- 用户首轮视觉 Gate 指出 Stage 卡片整体未与 Launcher 对齐。新增绝对窗口 Y 坐标门禁稳定复现 Stage 比 Launcher 高 3 DIP：高度和 row unit 虽相同，但 Stage 顶对齐而 Launcher 行内上下各留 3 DIP。改为 Stage 卡面在共享 row unit 内居中后坐标相等；隔离 Release 576/576 与新 1600 DIP 截图通过。源码 Release PID 21652 由外部启动且占用默认输出，本轮未停止、替换或把它冒充修复候选。
+- 2026-09-09 用户确认 V2 静态卡片及整体纵向对齐视觉 Gate 通过，并要求提交；Hover、拖动、外部 Drop 新效果、排序和缩略图继续暂停。
 
 ### 会话 2026-09-04 - M3 中转站产品契约、扩容与入站 MVP 收窄
 

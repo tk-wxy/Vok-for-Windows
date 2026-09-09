@@ -1,6 +1,6 @@
 # M3.1 中转站管理动作实施计划
 
-> **状态（2026-09-06）**：实施中。Checkpoint 0–5 已完成；Checkpoint 5 重新关联通过 Release Core 74/74、Windows/WPF Integration 433/433，共 507/507，构建 0 warning / 0 error，以及用户实际候选物理 Gate。Checkpoint 6 有界排序已完成源码诊断和实施规划，产品代码尚未开始。用户已确认先采用单一自适应卡片布局、不提供布局切换；Card 0A 纯布局模型与 35 项计算门禁已完成，完整 Release 542/542。下一步按 `M3_STAGE_CARD_LAYOUT_PLAN.md` 执行 Card 0B 和 Card Gate 1，再实施布局无关的 6A/6B 与基于二维卡片几何的 6C–6F。外部入站 Router、M3.2/M3.3 与 KI-001 不在本检查点范围内。
+> **状态（2026-09-09）**：实施中。Checkpoint 0–5 已完成并通过用户实际候选物理 Gate；Checkpoint 6 有界排序已完成源码诊断和规划但按用户要求暂停。单一自适应卡片的 V2 静态样式、Launcher 整体对齐修正和隔离 Release 576/576 已完成，并由用户确认视觉通过；其 72 DIP、6 DIP gap、最多 10 列合同见 `M3_STAGE_CARD_REDESIGN_GATE0_V2_PLAN.md`。Hover、内部拖动、外部 Drop 新效果、M3.2/M3.3 与 KI-001 均未进入本轮。
 
 ## 1. 阶段目标与完成边界
 
@@ -489,7 +489,7 @@ IStageRepository.RelinkAsync(
 
 ## 16. Checkpoint 6 有界排序实施计划（2026-09-06）
 
-> **前置决策（2026-09-06）**：用户已确认单一自适应卡片布局。`M3_STAGE_CARD_LAYOUT_PLAN.md` 的 Card Gate 0/1 必须先于排序 UI 完成；下文 16.3–16.5 的复合邻接与持久化契约保持有效，16.6、6D、6E 已按二维卡片插槽/占位反馈修订。
+> **前置决策（更新于 2026-09-08）**：用户已确认单一自适应卡片布局，并在 Card 1D 自动门禁后要求继续重设计 Workbench 参考样式、Hover、内部拖动态和外部拖入效果。`M3_STAGE_CARD_REDESIGN_PLAN.md` 必须先于排序实现完成；本轮不实现排序。下文 16.3–16.5 的复合邻接与持久化契约保持有效，16.6、6D、6E 继续作为新视觉冻结后的二维排序设计。
 
 ### 16.1 源码诊断与进入事实
 

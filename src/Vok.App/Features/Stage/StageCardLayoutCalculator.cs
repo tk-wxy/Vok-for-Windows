@@ -2,13 +2,13 @@ namespace Vok.Features.Stage;
 
 internal static class StageCardLayoutCalculator
 {
-    internal const int MaximumColumnCount = 8;
-    internal const double HorizontalGap = 8.0;
-    internal const double VerticalGap = 8.0;
+    internal const int MaximumColumnCount = 10;
+    internal const double HorizontalGap = 6.0;
     internal const double MinimumSideInset = 4.0;
-    internal const double MinimumCardWidth = 104.0;
-    internal const double MaximumCardWidth = 124.0;
-    internal const double CardHeight = 124.0;
+    internal const double MinimumCardWidth = 72.0;
+    internal const double MaximumCardWidth = 72.0;
+    internal const double DefaultCardHeight = 94.0;
+    internal const double DefaultRowUnitHeight = 100.0;
 
     internal static StageCardLayoutProfile Calculate(double viewportWidthDip)
     {
@@ -28,10 +28,7 @@ internal static class StageCardLayoutCalculator
         return new StageCardLayoutProfile(
             columnCount,
             cardWidth,
-            CardHeight,
-            CardHeight + VerticalGap,
             HorizontalGap,
-            VerticalGap,
             sideInset);
     }
 

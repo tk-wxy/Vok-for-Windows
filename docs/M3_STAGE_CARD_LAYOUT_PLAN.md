@@ -1,6 +1,6 @@
 # M3 中转站卡片布局时机分析与决策门禁
 
-> **状态（2026-09-08）**：Card 0A/0B 与 Card 1A–1C 已完成；Card 1D 自动门禁、真实 WPF 截图和独立自包含候选也已完成。冻结布局为 104–124×124 DIP、横纵 8 DIP、最多 8 列；真实 260/520/720/800/960 DIP Stage 外宽分别得到 2/4/6/7/8 列。完整 Release 567/567、构建 0 warning / 0 error。当前只差独立候选的 100%/200% 系统 DPI 与真实拖入人工 Gate，通过后进入 M3.1 Checkpoint 6；排序 Core/SQLite 方案不变，WPF 改用二维卡片几何。
+> **状态（2026-09-09）**：本计划的 Card 0A/0B 与 Card 1A–1D 只保留为行投影、虚拟化和滚动稳定性基线；104–124×124 DIP、8 DIP gap、最多 8 列的视觉合同已被用户否决并由 `M3_STAGE_CARD_REDESIGN_GATE0_V2_PLAN.md` 取代。V2 72 DIP、6 DIP gap、最多 10 列、与 Launcher 等高且整体对齐的静态卡片已通过用户视觉 Gate及隔离 Release 576/576；M3.1 Checkpoint 6 仍暂停。
 
 ## 1. 结论
 

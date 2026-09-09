@@ -76,14 +76,20 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                     ScrollBarVisibility.Hidden,
                     ScrollViewer.GetVerticalScrollBarVisibility(list));
                 var profile = Assert.IsType<StageCardLayoutProfile>(view.CardLayoutProfile);
-                Assert.Equal(4, profile.ColumnCount);
+                Assert.Equal(6, profile.ColumnCount);
                 Assert.Equal(
                     StageCardLayoutCalculator.Calculate(view.CardViewportWidth),
                     profile);
                 Assert.Equal(profile.CardWidth, view.CardWidth, precision: 8);
-                Assert.Equal(profile.CardHeight, view.CardHeight, precision: 8);
-                Assert.Equal(profile.RowUnitHeight, view.CardRowUnitHeight, precision: 8);
-                Assert.Equal(16, view.CardRows.Count);
+                Assert.Equal(
+                    StageCardLayoutCalculator.DefaultCardHeight,
+                    view.CardHeight,
+                    precision: 8);
+                Assert.Equal(
+                    StageCardLayoutCalculator.DefaultRowUnitHeight,
+                    view.CardRowUnitHeight,
+                    precision: 8);
+                Assert.Equal(11, view.CardRows.Count);
                 Assert.Equal(
                     viewModel.Items,
                     view.CardRows.SelectMany(static row => row.Items));
@@ -104,10 +110,74 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                     border => Equals(border.ToolTip, viewModel.Items[0].TargetValue));
                 Assert.Equal(viewModel.Items[0].TargetValue, firstCard.ToolTip);
                 Assert.Equal(profile.CardWidth, firstCard.ActualWidth, precision: 3);
-                Assert.Equal(profile.CardHeight, firstCard.ActualHeight, precision: 3);
+                Assert.Equal(view.CardHeight, firstCard.ActualHeight, precision: 3);
                 Assert.Equal(
                     viewModel.Items[0].AutomationName,
                     AutomationProperties.GetName(firstCard));
+                Assert.Equal(new Thickness(0.5), firstCard.BorderThickness);
+                Assert.Equal(new CornerRadius(9), firstCard.CornerRadius);
+                Assert.NotEqual(
+                    Colors.Transparent,
+                    Assert.IsType<SolidColorBrush>(firstCard.Background).Color);
+                Assert.NotEqual(
+                    Colors.Transparent,
+                    Assert.IsType<SolidColorBrush>(firstCard.BorderBrush).Color);
+                var previewSurface = Assert.Single(
+                    FindVisualDescendants<Border>(firstCard),
+                    border => string.Equals(
+                        border.Name,
+                        "StageItemPreviewSurface",
+                        StringComparison.Ordinal));
+                Assert.Equal(new CornerRadius(9, 9, 0, 0), previewSurface.CornerRadius);
+                var labelSurface = Assert.Single(
+                    FindVisualDescendants<Border>(firstCard),
+                    border => string.Equals(
+                        border.Name,
+                        "StageItemLabelSurface",
+                        StringComparison.Ordinal));
+                Assert.Equal(32, labelSurface.ActualHeight, precision: 3);
+                Assert.Equal(
+                    firstCard.ActualHeight - firstCard.BorderThickness.Top -
+                        firstCard.BorderThickness.Bottom,
+                    previewSurface.ActualHeight + labelSurface.ActualHeight,
+                    precision: 3);
+                var iconSurface = Assert.Single(
+                    FindVisualDescendants<Border>(firstCard),
+                    border => string.Equals(
+                        border.Name,
+                        "StageItemIconSurface",
+                        StringComparison.Ordinal));
+                Assert.Equal(40, iconSurface.ActualWidth, precision: 3);
+                Assert.Equal(40, iconSurface.ActualHeight, precision: 3);
+                Assert.Equal(new CornerRadius(9), iconSurface.CornerRadius);
+                Assert.Equal(new Thickness(0.5), iconSurface.BorderThickness);
+                var icon = Assert.Single(
+                    FindVisualDescendants<TextBlock>(iconSurface),
+                    text => string.Equals(
+                        text.Name,
+                        "StageItemGlyph",
+                        StringComparison.Ordinal));
+                Assert.Equal(21, icon.FontSize, precision: 3);
+                var availableIconForeground = Assert.IsType<SolidColorBrush>(
+                    icon.Foreground).Color;
+                var name = Assert.Single(
+                    FindVisualDescendants<TextBlock>(firstCard),
+                    text => string.Equals(
+                        text.Name,
+                        "StageItemName",
+                        StringComparison.Ordinal));
+                Assert.Equal(10, name.FontSize, precision: 3);
+                Assert.Equal(FontWeights.Medium, name.FontWeight);
+                Assert.Equal(TextAlignment.Left, name.TextAlignment);
+                Assert.Equal(TextWrapping.NoWrap, name.TextWrapping);
+                var meta = Assert.Single(
+                    FindVisualDescendants<TextBlock>(firstCard),
+                    text => string.Equals(
+                        text.Name,
+                        "StageItemMetaText",
+                        StringComparison.Ordinal));
+                Assert.Equal(9, meta.FontSize, precision: 3);
+                Assert.Equal(".docx", meta.Text);
                 var menuButton = Assert.Single(
                     FindVisualDescendants<Button>(firstCard),
                     button => string.Equals(
@@ -129,20 +199,17 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 Assert.NotEqual("Segoe Fluent Icons", pinButton.FontFamily.Source);
                 Assert.NotEqual("Segoe Fluent Icons", menuButton.FontFamily.Source);
                 Assert.Equal(24, pinButton.ActualWidth, precision: 3);
-                Assert.Equal(28, pinButton.ActualHeight, precision: 3);
+                Assert.Equal(24, pinButton.ActualHeight, precision: 3);
                 Assert.Equal(24, menuButton.ActualWidth, precision: 3);
-                Assert.Equal(28, menuButton.ActualHeight, precision: 3);
+                Assert.Equal(24, menuButton.ActualHeight, precision: 3);
                 AssertVisualIsInside(pinButton, firstCard);
                 AssertVisualIsInside(menuButton, firstCard);
-                var reorderSlot = Assert.Single(
+                Assert.DoesNotContain(
                     FindVisualDescendants<Border>(firstCard),
                     static border => string.Equals(
                         border.Name,
                         "StageReorderSlot",
                         StringComparison.Ordinal));
-                Assert.Equal(Visibility.Hidden, reorderSlot.Visibility);
-                Assert.False(reorderSlot.IsHitTestVisible);
-                Assert.False(reorderSlot.Focusable);
                 Assert.DoesNotContain(
                     FindVisualDescendants<TextBlock>(firstCard),
                     text => string.Equals(
@@ -191,13 +258,13 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 Assert.False(revealItem.IsEnabled);
                 Assert.True(relinkItem.IsEnabled);
                 Assert.True(copyPathItem.IsEnabled);
-                var missingText = Assert.Single(
-                    FindVisualDescendants<TextBlock>(firstCard),
-                    text => string.Equals(
-                        text.Text,
-                        "源文件已失效",
-                        StringComparison.Ordinal));
-                Assert.Equal(Visibility.Visible, missingText.Visibility);
+                Assert.Equal("已失效", meta.Text);
+                Assert.NotEqual(
+                    availableIconForeground,
+                    Assert.IsType<SolidColorBrush>(icon.Foreground).Color);
+                Assert.Equal(
+                    Assert.IsType<SolidColorBrush>(meta.Foreground).Color,
+                    Assert.IsType<SolidColorBrush>(icon.Foreground).Color);
                 Assert.Contains(
                     "源文件已失效",
                     AutomationProperties.GetName(firstCard),
@@ -211,8 +278,8 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 Assert.Equal(260, view.ActualWidth, precision: 3);
                 Assert.Equal(408, view.ActualHeight, precision: 3);
                 var narrowProfile = Assert.IsType<StageCardLayoutProfile>(view.CardLayoutProfile);
-                Assert.Equal(2, narrowProfile.ColumnCount);
-                Assert.Equal(32, view.CardRows.Count);
+                Assert.Equal(3, narrowProfile.ColumnCount);
+                Assert.Equal(22, view.CardRows.Count);
                 Assert.Equal(
                     viewModel.Items,
                     view.CardRows.SelectMany(static row => row.Items));
@@ -353,10 +420,15 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                         AutomationProperties.GetName(button),
                         "取消固定中转项目",
                         StringComparison.Ordinal));
-                var pinnedText = Assert.Single(
-                    FindVisualDescendants<TextBlock>(card),
-                    text => string.Equals(text.Text, "已固定", StringComparison.Ordinal));
-                Assert.Equal(Visibility.Visible, pinnedText.Visibility);
+                var pinnedButton = Assert.Single(
+                    FindVisualDescendants<Button>(card),
+                    button => string.Equals(
+                        AutomationProperties.GetName(button),
+                        "取消固定中转项目",
+                        StringComparison.Ordinal));
+                Assert.NotEqual(
+                    Colors.Transparent,
+                    Assert.IsType<SolidColorBrush>(pinnedButton.Foreground).Color);
                 CaptureWindowIfRequested(window, "stage-view-pinned-light.png");
             }
             finally
@@ -367,11 +439,11 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
     }
 
     [Theory]
-    [InlineData(260, 2)]
-    [InlineData(520, 4)]
-    [InlineData(720, 6)]
-    [InlineData(800, 7)]
-    [InlineData(960, 8)]
+    [InlineData(260, 3)]
+    [InlineData(520, 6)]
+    [InlineData(720, 9)]
+    [InlineData(800, 10)]
+    [InlineData(960, 10)]
     public void StageUsesTheFrozenCardGeometryFromItsRealScrollViewport(
         double outerWidth,
         int expectedColumns)
@@ -424,8 +496,14 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                     profile);
                 Assert.Equal(expectedColumns, profile.ColumnCount);
                 Assert.Equal(profile.CardWidth, view.CardWidth, precision: 8);
-                Assert.Equal(profile.CardHeight, view.CardHeight, precision: 8);
-                Assert.Equal(profile.RowUnitHeight, view.CardRowUnitHeight, precision: 8);
+                Assert.Equal(
+                    StageCardLayoutCalculator.DefaultCardHeight,
+                    view.CardHeight,
+                    precision: 8);
+                Assert.Equal(
+                    StageCardLayoutCalculator.DefaultRowUnitHeight,
+                    view.CardRowUnitHeight,
+                    precision: 8);
                 Assert.Equal(
                     profile.ColumnCount == 1
                         ? profile.CardWidth
@@ -464,7 +542,7 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 Assert.All(cards, card =>
                 {
                     Assert.Equal(profile.CardWidth, card.ActualWidth, precision: 3);
-                    Assert.Equal(profile.CardHeight, card.ActualHeight, precision: 3);
+                    Assert.Equal(view.CardHeight, card.ActualHeight, precision: 3);
                     Assert.Equal(
                         Assert.IsType<StageItemViewModel>(card.DataContext).TargetValue,
                         card.ToolTip);
@@ -473,7 +551,48 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                     var buttons = FindVisualDescendants<Button>(card).ToArray();
                     Assert.Equal(2, buttons.Length);
                     Assert.All(buttons, button => AssertVisualIsInside(button, card));
+                    var iconSurface = Assert.Single(
+                        FindVisualDescendants<Border>(card),
+                        border => string.Equals(
+                            border.Name,
+                            "StageItemIconSurface",
+                            StringComparison.Ordinal));
+                    Assert.Equal(40, iconSurface.ActualWidth, precision: 3);
+                    Assert.Equal(40, iconSurface.ActualHeight, precision: 3);
+                    AssertVisualIsInside(iconSurface, card);
+                    var name = Assert.Single(
+                        FindVisualDescendants<TextBlock>(card),
+                        text => string.Equals(
+                            text.Name,
+                            "StageItemName",
+                            StringComparison.Ordinal));
+                    AssertVisualIsInside(name, card);
+                    var meta = Assert.Single(
+                        FindVisualDescendants<TextBlock>(card),
+                        text => string.Equals(
+                            text.Name,
+                            "StageItemMetaText",
+                            StringComparison.Ordinal));
+                    AssertVisualIsInside(meta, card);
                 });
+                var pinnedMissingCard = Assert.Single(
+                    FindVisualDescendants<Border>(list),
+                    border => border.DataContext is StageItemViewModel item &&
+                        string.Equals(
+                            item.DisplayName,
+                            "Pinned-and-missing-reference.txt",
+                            StringComparison.Ordinal) &&
+                        string.Equals(
+                            border.Name,
+                            "StageItemCard",
+                            StringComparison.Ordinal));
+                var pinnedMissingMeta = Assert.Single(
+                    FindVisualDescendants<TextBlock>(pinnedMissingCard),
+                    text => string.Equals(
+                        text.Name,
+                        "StageItemMetaText",
+                        StringComparison.Ordinal));
+                Assert.Equal("已失效", pinnedMissingMeta.Text);
 
                 for (var index = 1; index < cards.Length; index++)
                 {
@@ -538,7 +657,7 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 window.Width = 260;
                 PumpLayout(window);
 
-                Assert.Equal(2, view.CardLayoutProfile?.ColumnCount);
+                Assert.Equal(3, view.CardLayoutProfile?.ColumnCount);
                 Assert.All(originalRequests, request =>
                     Assert.True(request.CancellationToken.IsCancellationRequested));
                 var visibleIds = GetVisibleCards(list, scrollViewer)
@@ -596,7 +715,7 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 var list = Assert.IsType<ListBox>(view.FindName("StageItemsList"));
                 var rowContainer = FindVisualDescendants<ListBoxItem>(list).First();
                 var rowItems = Assert.IsType<StageCardRowViewModel>(rowContainer.DataContext).Items;
-                Assert.Equal(4, rowItems.Count);
+                Assert.Equal(6, rowItems.Count);
                 var rowRequests = rowItems
                     .Select(item => Assert.Single(
                         fileService.Requests,
@@ -659,7 +778,7 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                     window.Width = cycle % 2 == 0 ? 260 : 520;
                     PumpLayout(window);
 
-                    var expectedColumns = cycle % 2 == 0 ? 2 : 4;
+                    var expectedColumns = cycle % 2 == 0 ? 3 : 6;
                     Assert.Equal(expectedColumns, view.CardLayoutProfile?.ColumnCount);
                     Assert.Equal(
                         viewModel.Items,
@@ -773,7 +892,7 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 Assert.Equal(
                     replacement,
                     view.CardRows.SelectMany(static row => row.Items));
-                Assert.Equal(3, view.CardRows.Count);
+                Assert.Equal(2, view.CardRows.Count);
                 Assert.False(view.HasPendingDeferredWork);
             }
             finally

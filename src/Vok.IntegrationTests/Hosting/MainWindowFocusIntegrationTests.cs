@@ -13,6 +13,7 @@ using Vok.Presentation;
 using Vok.Appearance;
 using Vok.Core.Appearance;
 using Vok.Core.Launcher;
+using Vok.Core.Stage;
 using Vok.Features.Settings;
 using Vok.Features.Launcher;
 using Vok.Features.Clipboard;
@@ -169,6 +170,10 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                 filePresentation: null,
                 thumbnailCache,
                 imageAssets: null);
+            using var stageViewModel = new StageViewModel(
+                new StaticStageRepository(itemCount: 20),
+                new NoopStageFileService());
+            stageViewModel.InitializeAsync().GetAwaiter().GetResult();
             for (var index = 0; index < 80; index++)
             {
                 clipboardViewModel.ApplyCaptured(new ClipboardEntry(
@@ -225,7 +230,8 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                 viewModel,
                 launcherLayouts,
                 launcherViewModel,
-                clipboardViewModel)
+                clipboardViewModel,
+                stageViewModel)
             {
                 Width = 1440,
                 Height = 900,
@@ -269,6 +275,35 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                     launcher,
                     launcherList,
                     launcherViewModel);
+                var stageView = Assert.IsType<StageView>(window.FindName("StagePanel"));
+                var stageItemsList = Assert.IsType<ListBox>(
+                    stageView.FindName("StageItemsList"));
+                window.Dispatcher.Invoke(DispatcherPriority.ApplicationIdle, static () => { });
+                var stageCard = FindVisualDescendants<Border>(stageItemsList)
+                    .First(border => string.Equals(
+                        border.Name,
+                        "StageItemCard",
+                        StringComparison.Ordinal));
+                var launcherTile = FindVisualDescendants<Button>(launcherList)
+                    .First(button => button.DataContext is LauncherItemViewModel);
+                Assert.Equal(launcher.CardSurfaceHeight, stageView.CardHeight, precision: 8);
+                Assert.Equal(launcher.CardUnitHeight, stageView.CardRowUnitHeight, precision: 8);
+                Assert.Equal(launcher.CardSurfaceHeight, stageCard.ActualHeight, precision: 8);
+                Assert.Equal(
+                    launcherTile.TransformToAncestor(window).Transform(new Point()).Y,
+                    stageCard.TransformToAncestor(window).Transform(new Point()).Y,
+                    precision: 3);
+                Assert.Equal(8, stageView.CardLayoutProfile?.ColumnCount);
+                window.Width = 1600;
+                window.UpdateLayout();
+                window.Dispatcher.Invoke(DispatcherPriority.ApplicationIdle, static () => { });
+                Assert.Equal(10, stageView.CardLayoutProfile?.ColumnCount);
+                Assert.Equal(launcher.CardSurfaceHeight, stageView.CardHeight, precision: 8);
+                Assert.Equal(launcher.CardUnitHeight, stageView.CardRowUnitHeight, precision: 8);
+                CaptureWindowIfRequested(window, "workbench-layout-1600-light.png");
+                window.Width = 1440;
+                window.UpdateLayout();
+                window.Dispatcher.Invoke(DispatcherPriority.ApplicationIdle, static () => { });
                 Assert.Equal(2, launcherLayouts.CalculationCount);
                 var dropOverlay = Assert.IsType<Border>(launcher.FindName("DropOverlay"));
                 Assert.Equal(2, Grid.GetRowSpan(dropOverlay));
@@ -1008,6 +1043,108 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
             Guid itemId,
             int slot,
             CancellationToken cancellationToken = default) => Task.FromResult(false);
+    }
+
+    private sealed class StaticStageRepository : IStageRepository
+    {
+        private readonly IReadOnlyList<StageItem> _items;
+
+        public StaticStageRepository(int itemCount)
+        {
+            var now = DateTimeOffset.UtcNow;
+            _items = Enumerable.Range(0, itemCount)
+                .Select(index =>
+                {
+                    var kind = (index % 3) switch
+                    {
+                        1 => StageItemKind.Directory,
+                        2 => StageItemKind.ShellLink,
+                        _ => StageItemKind.File,
+                    };
+                    var suffix = kind switch
+                    {
+                        StageItemKind.Directory => "",
+                        StageItemKind.ShellLink => ".lnk",
+                        _ => ".docx",
+                    };
+                    var target = $@"C:\Stage\中转项目 {index + 1}{suffix}";
+                    return new StageItem(
+                        Guid.NewGuid(),
+                        kind,
+                        target,
+                        target.ToUpperInvariant(),
+                        $"中转项目 {index + 1}{suffix}",
+                        itemCount - index,
+                        index is 1 or 9,
+                        1,
+                        now,
+                        now);
+                })
+                .ToArray();
+        }
+
+        public Task<StagePage> LoadPageAsync(
+            StagePageCursor? after,
+            int pageSize,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var page = _items.Take(pageSize).ToArray();
+            return Task.FromResult(new StagePage(
+                page,
+                page.Length == 0
+                    ? null
+                    : new StagePageCursor(page[^1].SortOrder, page[^1].Id),
+                _items.Count));
+        }
+
+        public Task<StageAddOrMoveResult> AddOrMoveAsync(
+            IReadOnlyList<StageTargetDescriptor> targets,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<StageRemoveResult> RemoveAsync(
+            Guid itemId,
+            long expectedRevision,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<StageItemMutationResult> SetPinnedAsync(
+            Guid itemId,
+            long expectedRevision,
+            bool isPinned,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<StageRelinkResult> RelinkAsync(
+            Guid itemId,
+            long expectedRevision,
+            StageTargetDescriptor target,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class NoopStageFileService : IStageFileService
+    {
+        public Task<IReadOnlyList<StageTargetResolution>> ResolveAsync(
+            IReadOnlyList<string> inputs,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<StageTargetResolution>>([]);
+
+        public Task<StageFileAvailability> InspectAsync(
+            StageItem item,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(StageFileAvailability.Available);
+
+        public Task OpenAsync(
+            StageItem item,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task RevealInExplorerAsync(
+            StageItem item,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     private sealed class NoIconLauncherShellService : ILauncherShellService

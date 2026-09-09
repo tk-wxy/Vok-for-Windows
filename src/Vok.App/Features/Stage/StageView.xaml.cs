@@ -21,16 +21,14 @@ public partial class StageView : UserControl
         nameof(CardHeight),
         typeof(double),
         typeof(StageView),
-        new PropertyMetadata(StageCardLayoutCalculator.CardHeight));
+        new PropertyMetadata(StageCardLayoutCalculator.DefaultCardHeight));
 
     public static readonly DependencyProperty CardRowUnitHeightProperty =
         DependencyProperty.Register(
             nameof(CardRowUnitHeight),
             typeof(double),
             typeof(StageView),
-            new PropertyMetadata(
-                StageCardLayoutCalculator.CardHeight +
-                StageCardLayoutCalculator.VerticalGap));
+            new PropertyMetadata(StageCardLayoutCalculator.DefaultRowUnitHeight));
 
     public static readonly DependencyProperty CardRowSurfaceWidthProperty =
         DependencyProperty.Register(
@@ -83,13 +81,13 @@ public partial class StageView : UserControl
     public double CardHeight
     {
         get => (double)GetValue(CardHeightProperty);
-        private set => SetCurrentValue(CardHeightProperty, value);
+        set => SetCurrentValue(CardHeightProperty, value);
     }
 
     public double CardRowUnitHeight
     {
         get => (double)GetValue(CardRowUnitHeightProperty);
-        private set => SetCurrentValue(CardRowUnitHeightProperty, value);
+        set => SetCurrentValue(CardRowUnitHeightProperty, value);
     }
 
     public double CardRowSurfaceWidth
@@ -387,8 +385,6 @@ public partial class StageView : UserControl
 
         _cardLayoutProfile = profile;
         CardWidth = profile.CardWidth;
-        CardHeight = profile.CardHeight;
-        CardRowUnitHeight = profile.RowUnitHeight;
         CardRowSurfaceWidth = profile.ColumnCount == 1
             ? profile.CardWidth
             : profile.ColumnCount * (profile.CardWidth + profile.HorizontalGap);

@@ -170,7 +170,7 @@ public sealed class StageCardRowsProjectionTests(WpfApplicationFixture wpf)
 
     [Theory]
     [InlineData(0)]
-    [InlineData(9)]
+    [InlineData(11)]
     public void InvalidColumnCountsAreRejected(int columnCount)
     {
         wpf.Invoke(() =>

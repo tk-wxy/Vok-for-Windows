@@ -75,6 +75,56 @@ public sealed class StageItemViewModel : ObservableObject
         _ => string.Empty,
     };
 
+    public string CompactAvailabilityText => HasAvailabilityStatus
+        ? Availability switch
+        {
+            StageFileAvailability.Missing => "已失效",
+            StageFileAvailability.Unavailable => "暂不可用",
+            StageFileAvailability.Unknown => "状态未知",
+            _ => string.Empty,
+        }
+        : string.Empty;
+
+    public string CompactMetaText
+    {
+        get
+        {
+            if (HasAvailabilityStatus)
+            {
+                return CompactAvailabilityText;
+            }
+
+            if (Kind is StageItemKind.Directory)
+            {
+                return "文件夹";
+            }
+
+            if (Kind is StageItemKind.ShellLink)
+            {
+                return ".lnk";
+            }
+
+            var extension = Path.GetExtension(TargetValue);
+            return string.IsNullOrEmpty(extension) ? "文件" : extension;
+        }
+    }
+
+    public bool HasCompactStatus => IsPinned || HasAvailabilityStatus;
+
+    public string CompactStatusText
+    {
+        get
+        {
+            var availabilityText = CompactAvailabilityText;
+            if (IsPinned && availabilityText.Length != 0)
+            {
+                return $"固定 · {availabilityText}";
+            }
+
+            return IsPinned ? "固定" : availabilityText;
+        }
+    }
+
     public bool IsBusy
     {
         get => _isBusy;
@@ -173,6 +223,10 @@ public sealed class StageItemViewModel : ObservableObject
         OnPropertyChanged(nameof(IsMissing));
         OnPropertyChanged(nameof(CanOpenOrReveal));
         OnPropertyChanged(nameof(AvailabilityText));
+        OnPropertyChanged(nameof(CompactAvailabilityText));
+        OnPropertyChanged(nameof(CompactMetaText));
+        OnPropertyChanged(nameof(HasCompactStatus));
+        OnPropertyChanged(nameof(CompactStatusText));
         OnPropertyChanged(nameof(AutomationName));
     }
 

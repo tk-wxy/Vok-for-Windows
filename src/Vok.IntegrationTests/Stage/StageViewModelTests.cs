@@ -759,6 +759,10 @@ public sealed class StageViewModelTests
         Assert.True(item.IsMissing);
         Assert.True(item.HasAvailabilityStatus);
         Assert.Equal("源文件已失效", item.AvailabilityText);
+        Assert.Equal("已失效", item.CompactAvailabilityText);
+        Assert.Equal("已失效", item.CompactMetaText);
+        Assert.True(item.HasCompactStatus);
+        Assert.Equal("已失效", item.CompactStatusText);
         Assert.Contains("源文件已失效", item.AutomationName, StringComparison.Ordinal);
 
         item.ResetAvailability(item.Revision + 1);
@@ -766,6 +770,88 @@ public sealed class StageViewModelTests
         item.ResetAvailability(item.Revision);
         Assert.False(item.HasAvailabilityStatus);
         Assert.False(item.IsMissing);
+        Assert.False(item.HasCompactStatus);
+        Assert.Equal(string.Empty, item.CompactStatusText);
+        Assert.Equal("文件", item.CompactMetaText);
+    }
+
+    [Theory]
+    [InlineData(StageItemKind.File, @"C:\Stage\report.docx", ".docx")]
+    [InlineData(StageItemKind.File, @"C:\Stage\README", "文件")]
+    [InlineData(StageItemKind.Directory, @"C:\Stage\Design", "文件夹")]
+    [InlineData(StageItemKind.ShellLink, @"C:\Stage\Workbench.lnk", ".lnk")]
+    public void CompactMetaUsesTypeOrExtensionUntilAvailabilityFails(
+        StageItemKind kind,
+        string target,
+        string expectedMeta)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var item = new StageItemViewModel(new StageItem(
+            Guid.NewGuid(),
+            kind,
+            target,
+            target.ToUpperInvariant(),
+            Path.GetFileName(target),
+            1,
+            false,
+            1,
+            now,
+            now));
+
+        Assert.Equal(expectedMeta, item.CompactMetaText);
+
+        Assert.True(item.ApplyAvailability(
+            item.Revision,
+            StageFileAvailability.Unavailable));
+        Assert.Equal("暂不可用", item.CompactMetaText);
+
+        item.ResetAvailability(item.Revision);
+        Assert.Equal(expectedMeta, item.CompactMetaText);
+    }
+
+    [Theory]
+    [InlineData(StageFileAvailability.Available, "", false)]
+    [InlineData(StageFileAvailability.Missing, "已失效", true)]
+    [InlineData(StageFileAvailability.Unavailable, "暂不可用", true)]
+    [InlineData(StageFileAvailability.Unknown, "状态未知", true)]
+    public void CompactStatusUsesPresentationOnlyText(
+        StageFileAvailability availability,
+        string expectedText,
+        bool expectedVisible)
+    {
+        var source = Assert.Single(CreateItems(1));
+        var item = new StageItemViewModel(source);
+
+        Assert.True(item.ApplyAvailability(item.Revision, availability));
+
+        Assert.Equal(expectedText, item.CompactAvailabilityText);
+        Assert.Equal(expectedText, item.CompactStatusText);
+        Assert.Equal(expectedVisible, item.HasCompactStatus);
+        Assert.Equal(
+            availability is StageFileAvailability.Missing
+                ? "源文件已失效"
+                : availability is StageFileAvailability.Unavailable
+                    ? "暂不可访问"
+                    : availability is StageFileAvailability.Unknown
+                        ? "位置状态未知"
+                        : string.Empty,
+            item.AvailabilityText);
+
+        item.Update(source with
+        {
+            IsPinned = true,
+            Revision = source.Revision + 1,
+        });
+
+        Assert.True(item.HasCompactStatus);
+        Assert.Equal("固定", item.CompactStatusText);
+        Assert.DoesNotContain("固定 ·", item.AutomationName, StringComparison.Ordinal);
+        Assert.Contains("已固定", item.AutomationName, StringComparison.Ordinal);
+
+        Assert.True(item.ApplyAvailability(item.Revision, availability));
+        Assert.Equal(
+            expectedText.Length == 0 ? "固定" : $"固定 · {expectedText}",
+            item.CompactStatusText);
     }
 
     private static IReadOnlyList<StageItem> CreateItems(
