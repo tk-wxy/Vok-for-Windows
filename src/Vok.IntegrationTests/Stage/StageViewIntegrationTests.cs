@@ -367,16 +367,42 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                     view.CardRows.SelectMany(static row => row.Items));
                 CaptureWindowIfRequested(window, "stage-view-narrow-light.png");
 
-                var overlay = Assert.IsType<Border>(view.FindName("DropOverlay"));
+                var overlay = Assert.IsType<Grid>(view.FindName("DropOverlay"));
+                var wash = Assert.IsType<Border>(view.FindName("StageDropWash"));
+                var outline = Assert.IsType<Border>(view.FindName("StageDropOutline"));
+                var prompt = Assert.IsType<Border>(view.FindName("StageDropPrompt"));
+                var promptText = Assert.IsType<TextBlock>(view.FindName("StageDropPromptText"));
                 var interactionSurface = Assert.IsType<Grid>(
                     view.FindName("StageInteractionSurface"));
+                Assert.False(overlay.IsHitTestVisible);
+                Assert.Equal("松开以存入中转站", AutomationProperties.GetName(overlay));
+                Assert.Equal("松开以存入中转站", promptText.Text);
+                Assert.Equal(0.08, wash.Opacity, precision: 3);
+                Assert.NotNull(wash.Background);
+                Assert.Equal(new Thickness(2), outline.BorderThickness);
+                Assert.Equal(new CornerRadius(0), outline.CornerRadius);
+                Assert.True(outline.SnapsToDevicePixels);
+                Assert.Equal(new Thickness(1), prompt.BorderThickness);
+                Assert.Equal(new CornerRadius(14), prompt.CornerRadius);
+
                 view.SetExternalDragState(sessionActive: true, targeted: false);
                 Assert.Equal(Visibility.Collapsed, overlay.Visibility);
                 Assert.False(interactionSurface.IsHitTestVisible);
+
                 view.SetExternalDragState(sessionActive: true, targeted: true);
                 Assert.Equal(Visibility.Visible, overlay.Visibility);
-                Assert.Equal(new Thickness(2), overlay.BorderThickness);
-                Assert.Equal(new CornerRadius(0), overlay.CornerRadius);
+                Assert.False(interactionSurface.IsHitTestVisible);
+                PumpLayout(window);
+                CaptureWindowIfRequested(window, "stage-view-drop-targeted-light.png");
+
+                view.SetExternalDragState(sessionActive: true, targeted: true);
+                Assert.Equal(Visibility.Visible, overlay.Visibility);
+                Assert.False(interactionSurface.IsHitTestVisible);
+
+                view.SetExternalDragState(sessionActive: true, targeted: false);
+                Assert.Equal(Visibility.Collapsed, overlay.Visibility);
+                Assert.False(interactionSurface.IsHitTestVisible);
+
                 view.SetExternalDragState(sessionActive: false, targeted: false);
                 Assert.Equal(Visibility.Collapsed, overlay.Visibility);
                 Assert.True(interactionSurface.IsHitTestVisible);
@@ -387,6 +413,11 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 window.UpdateLayout();
                 PumpLayout(window);
                 Assert.NotNull(firstCard.BorderBrush);
+                view.SetExternalDragState(sessionActive: true, targeted: true);
+                PumpLayout(window);
+                CaptureWindowIfRequested(window, "stage-view-drop-targeted-dark.png");
+                view.SetExternalDragState(sessionActive: false, targeted: false);
+                PumpLayout(window);
                 CaptureWindowIfRequested(window, "stage-view-dark.png");
             }
             finally

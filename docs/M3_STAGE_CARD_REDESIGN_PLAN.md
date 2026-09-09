@@ -1,6 +1,8 @@
 # M3 中转站卡片重设计与前端效果计划
 
-> **状态（2026-09-09）**：Redesign Gate 0 V2 静态视觉已由用户确认通过。Gate 1 Hover/KeyboardFocus 候选现已完成产品实现、真实 WPF 截图和隔离 Release 576/576 自动回归：Hover/焦点统一驱动表面、1.02 scale、ZIndex 与操作 chrome，ContextMenu 保持所属卡上下文，外部 drag、隐藏、换绑和回收统一清理；等待用户实际视觉确认后再进入 Gate 2。Gate 2–4、M3.1 Checkpoint 6 排序及其他功能仍暂停。本轮未发布、启动或替换实例。
+> **状态（2026-09-09）**：Redesign Gate 0 V2 静态视觉已由用户确认通过，Gate 1 Hover/KeyboardFocus 已提交。Gate 3 外部拖入表现层现已完成：真实 `sessionActive/targeted` 驱动 2 DIP 边界、0.08 Accent wash 和“松开以存入中转站”，完整 Release 576/576、浅/深截图及用户真实拖入 Gate 均通过。Gate 2 将与 M3.1 Checkpoint 6 真实排序合并，不再单独交付松手取消的假拖影；下一步先实现排序模式壳层。默认 Release 由 PID 22220 运行。
+
+> **路线调整**：用户指出当前只有 Gate 1 可实际测试，并已确认 `M3_STAGE_UI_FOUNDATION_NEXT_PLAN.md` 的调整：先完成已有真实 Router 支撑的 Gate 3，再采用显式排序模式，把 Gate 2 拖影视觉与真实 Checkpoint 6 合并为可测试纵向切片。该文件覆盖本计划原先的纯拖影 Gate 2 顺序。
 
 > **方向校正**：此前“默认弱容器、Accent 图标主导”的判断实际对应 Workbench Launcher，不对应用户给出的 Workbench 中转卡。新的静态权威计划为 `M3_STAGE_CARD_REDESIGN_GATE0_V2_PLAN.md`；旧 Gate 0 的 571/571 只保留为行为回归证据，不算视觉通过。
 
@@ -36,8 +38,8 @@
 - 外层 `VirtualizingStackPanel` 已按行 Recycling/Pixel 虚拟化，当前 260/520/720/800/960 DIP 外宽形成 3/6/9/10/10 列。
 - Missing、固定、打开、定位、复制路径、重新关联和安全移除已经可用。
 - `WorkspaceFileDropRouter` 是唯一窗口级 OLE 路由；Stage 只接收 `sessionActive + targeted` 两个呈现事实。
-- 当前外部拖入视觉只有整区 2 DIP Accent 边框，没有背景层、提示内容或卡片抑制的可见层级。
-- 当前卡片没有 Hover 状态；V2 已移除 `StageReorderSlot`，内部拖影与源卡 dragging 状态尚不存在。
+- Gate 3 已在既有整区 2 DIP Accent 边框上加入 0.08 wash 与明确松手文案，并继续由真实 Router 状态驱动；人工视觉确认已通过。
+- Gate 1 Hover 已实现；V2 已移除 `StageReorderSlot`，内部拖影与源卡 dragging 状态仍不存在。
 
 ## 3. 本轮范围
 
@@ -45,15 +47,15 @@
 
 1. 重构卡片默认、Missing、Pinned、Unavailable、Busy 的静态视觉层级；
 2. 实现鼠标 Hover 与键盘焦点等价反馈；
-3. 实现内部拖动所需的源卡、拖影和取消恢复视觉资源，并在隔离视觉 Gate 中可交互审查；
+3. 在显式排序模式中把源卡、拖影、目标插槽和取消恢复视觉与真实 Checkpoint 6 排序一同实现；
 4. 重设计外部拖入的非目标、命中、离开和取消视觉；
 5. 生成浅/深、宽窄、高 DPI、长名称和组合状态截图及独立候选；
 6. 保持所有既有管理命令、Automation、Availability 和虚拟化生命周期有效。
 
 ### 3.2 不实现
 
-- 不实现 `ReorderAsync`、复合邻接、稀疏中点、局部重平衡或任何 SQLite 顺序写入；
-- 不让用户在正式产品里执行“看起来能排序、松手却无结果”的空拖动手势；内部拖动态只在视觉 Gate 激活，正式鼠标入口留给 Checkpoint 6；
+- Gate 3 与排序模式壳层阶段不实现 `ReorderAsync`、复合邻接、稀疏中点、局部重平衡或任何 SQLite 顺序写入；这些只在 Gate 2 + Checkpoint 6 纵向切片进入；
+- 不让用户在正式产品里执行“看起来能排序、松手却无结果”的空拖动手势；正式鼠标入口只随 Checkpoint 6 的真实提交/取消终态开放；
 - 不改变 `WorkspaceFileDropRouter`、Drop 数据快照、`DragDropEffects.Copy`、异步入站或 Workspace drag lease；
 - 不实现点击取用、OLE 拖出、消费、多选、筛选、颜色标签或 Shell 缩略图；
 - 不修改 schema 7、Stage Core、仓储、DI、真实数据库、容量策略或分页；
@@ -150,15 +152,17 @@ Hover 动画沿用已验证的 `SnapshotAndReplace` 语义，不堆积 animation
 
 通过条件：动画无布局跳动、无裁切、无时钟堆积；100 次 hover/滚动/隐藏循环后无残留变换或待办。
 
-### Redesign Gate 2：内部拖动视觉原型
+### Redesign Gate 2：与 Checkpoint 6 合并的真实排序拖动
 
-- 增加复用 `StageCardContentTemplate` 的 drag ghost、源卡 dim 状态和 view-owned 清理入口；
-- 在隔离 WPF Gate 中按真实系统拖动阈值演示移动，但松手永远只取消；
-- 不绘制目标插槽、不移动业务集合、不调用仓储。
+- 先以标题栏显式排序模式隔离普通模式下未来的点击取用与 OLE 拖出；
+- 只在排序模式中增加复用 `StageCardContentTemplate` 的 drag ghost、源卡 dim、真实二维目标插槽和 view-owned 清理入口；
+- 超过系统拖动阈值后才预览，松手最多提交一次 revision-safe 仓储事务；取消恢复原顺序，不暴露松手永远取消的假能力。
 
-通过条件：视觉可由用户审查；取消、Esc、失捕、隐藏、换列、外部 DragEnter 和回收均零残留，仓储调用数为零。
+通过条件：排序模式边界清楚；成功、取消、Esc、失捕、隐藏、换列、外部 DragEnter 和回收均有真实终态，100 轮后无残留或重复提交。
 
 ### Redesign Gate 3：外部拖入视觉
+
+> 2026-09-09 实施状态：表现层、自动门禁和用户真实拖入视觉 Gate 均已完成。现有唯一 Router、Drop 快照、Workspace lease、入站持久化和 KI-001 均未修改。
 
 - 在现有整区边界上加入轻量 wash 与明确文案，复核 Stage/Launcher/None 跨区；
 - 定向测试 `active/targeted` 全状态转换、交互抑制和一次性清理；
@@ -198,7 +202,7 @@ Hover 动画沿用已验证的 `SnapshotAndReplace` 语义，不堆积 animation
 - 浅/深动态资源切换后不存在硬编码白底/黑字；
 - Pinned、Missing、Unavailable、Pinned+Missing 同时具有文字/Automation 语义；
 - Hover 进入/退出、ContextMenu 打开/关闭和键盘焦点恢复稳定；
-- 内部拖动视觉 Gate 的源卡、ghost 与清理可重复 100 次，`Items` 顺序和仓储调用始终不变；
+- 排序模式中的源卡、ghost、目标插槽与清理可重复 100 次，成功只提交一次、取消不提交；
 - 外部 drag 在 Launcher/Stage/None 间切换时只有当前 target 可见，终结后全部清零；
 - Recycling、换列、翻页、隐藏、DataContext 换绑和 Dispose 后无残留动画、ghost、overlay 或 Availability 请求；
 - 当前 567/567 Release 基线只增不减，构建保持 0 warning / 0 error。
@@ -209,7 +213,7 @@ Hover 动画沿用已验证的 `SnapshotAndReplace` 语义，不堆积 animation
 - 若隐藏按钮会造成不可见键盘焦点或 260 DIP 下无法发现管理入口，停止并调整 chrome 层级；
 - 若 scale 导致相邻卡片裁切/覆盖，先只调整 scale/clip，不同时改卡宽与间距；
 - 若动画依赖固定延时完成业务清理，停止并改为属性/生命周期终态；
-- 若内部拖动视觉开始移动 `Items`、显示假插槽或调用仓储，停止并回到纯预览；
+- 若内部拖动在普通模式触发，或排序模式的插槽没有真实提交/取消终态，停止并收回该手势；
 - 若外部拖入样式要求修改 Router、OLE 读取或显隐租约，拆为独立高风险任务；
 - 若真实 DPI 失败，不用隐藏状态、缩小命中区或降低可访问性掩盖。
 
@@ -217,4 +221,4 @@ Hover 动画沿用已验证的 `SnapshotAndReplace` 语义，不堆积 animation
 
 本计划完成只表示“中转站卡片样式与前端状态已冻结并进入产品”，不表示排序、取用或拖出完成。
 
-完成后恢复 M3.1 Checkpoint 6：先实现布局无关的 revision-safe 排序内核，再把真实二维插槽、鼠标会话和提交终态接到已冻结的 drag source/ghost 视觉。M3.2 点击取用与 M3.3 OLE 拖出仍按原路线后置。
+Gate 3 人工确认后先实现不接拖动的显式排序模式壳层；其视觉 Gate 通过后，恢复 M3.1 Checkpoint 6，先实现布局无关的 revision-safe 排序内核，再把真实二维插槽、鼠标会话、drag source/ghost 和提交终态作为同一纵向切片接入。M3.2 点击取用与 M3.3 OLE 拖出仍按原路线后置。

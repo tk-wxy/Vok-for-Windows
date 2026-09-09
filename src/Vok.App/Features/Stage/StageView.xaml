@@ -11,6 +11,7 @@
     <Duration x:Key="StageHoverExitDuration">0:0:0.16</Duration>
     <sys:Double x:Key="StageHoverScale">1.02</sys:Double>
     <sys:Double x:Key="StageActionChromeRestOpacity">0.55</sys:Double>
+    <sys:Double x:Key="StageDropWashOpacity">0.08</sys:Double>
     <Style x:Key="StagePageButtonStyle"
            TargetType="Button"
            BasedOn="{StaticResource {x:Type Button}}">
@@ -526,13 +527,46 @@
       </Border>
     </Grid>
 
-    <Border x:Name="DropOverlay"
-            Grid.RowSpan="3"
-            BorderBrush="{DynamicResource AccentFillColorDefaultBrush}"
-            BorderThickness="2"
-            CornerRadius="0"
-            Panel.ZIndex="20"
-            IsHitTestVisible="False"
-            Visibility="Collapsed" />
+    <Grid x:Name="DropOverlay"
+          Grid.RowSpan="3"
+          Panel.ZIndex="20"
+          IsHitTestVisible="False"
+          Visibility="Collapsed"
+          automation:AutomationProperties.Name="松开以存入中转站">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="24" />
+        <RowDefinition Height="*" />
+        <RowDefinition Height="28" />
+      </Grid.RowDefinitions>
+
+      <Border x:Name="StageDropWash"
+              Grid.RowSpan="3"
+              Background="{DynamicResource AccentFillColorDefaultBrush}"
+              Opacity="{StaticResource StageDropWashOpacity}" />
+
+      <Border x:Name="StageDropOutline"
+              Grid.RowSpan="3"
+              BorderBrush="{DynamicResource AccentFillColorDefaultBrush}"
+              BorderThickness="2"
+              CornerRadius="0"
+              SnapsToDevicePixels="True" />
+
+      <Border x:Name="StageDropPrompt"
+              Grid.Row="1"
+              HorizontalAlignment="Center"
+              VerticalAlignment="Top"
+              Margin="0,12,0,0"
+              Padding="12,6"
+              Background="{DynamicResource LayerFillColorDefaultBrush}"
+              BorderBrush="{DynamicResource AccentFillColorDefaultBrush}"
+              BorderThickness="1"
+              CornerRadius="14">
+        <TextBlock x:Name="StageDropPromptText"
+                   Text="松开以存入中转站"
+                   FontSize="11"
+                   FontWeight="SemiBold"
+                   Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+      </Border>
+    </Grid>
   </Grid>
 </UserControl>

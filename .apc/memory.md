@@ -11,10 +11,10 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP 已归档，M3.1 Checkpoint 0–5 已通过人工 Gate。V2 静态卡片及整体对齐已由用户确认；Redesign Gate 1 Hover/KeyboardFocus 候选已完成实现和自动门禁，待用户视觉确认。内部拖影、外部拖入新效果和 Checkpoint 6 排序仍暂停。
-- **最近进展**：用户确认先完成 UI/交互基础再继续功能。Gate 1 新增 Hover/键盘焦点的 Subtle surface、1.02 scale、ZIndex、操作 chrome 与 Accent focus ring；首次多触发器实现复现 ContextMenu 打开时焦点退出动画覆盖菜单进入动画，现已收敛为 view-owned 单一交互状态。菜单、外部 drag、隐藏、换绑、虚拟化回收和 100 轮快速状态切换均统一清理；隔离 Release Core 74/74 + Integration 502/502 共 576/576、0 warning / 0 error、截图和 `git diff --check` 通过。
-- **下一步**：先由用户确认 Gate 1 的 Hover/键盘焦点实际视觉；通过后进入 Gate 2 纯内部拖影视觉原型，仍不开放假排序手势、不修改仓储。当前未发布或替换候选。
-- **已知问题**：KI-001 仍延期：活动 Explorer 拖动中关闭 Vok 可能让松手落回源目录并生成副本；本轮未触碰其显隐租约。源码 Release PID 352 由外部启动并占用默认输出，本轮没有停止或替换；隔离 artifacts 完成验证，该进程不包含本次 Gate 1 候选。测试产生的 `.lnk` 副本未经授权不得删除；M3 入站历史物理稳定性实际为 50+ 次而非计划的 100 次。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP 已归档，M3.1 Checkpoint 0–5 已通过人工 Gate。V2 静态卡片及整体对齐已确认，Redesign Gate 1 已提交，Gate 3 外部拖入表现层已通过自动与人工 Gate。排序模式、Gate 2/Checkpoint 6、取用和拖出仍未实现。
+- **最近进展**：用户确认先 Gate 3，再以显式排序模式合并 Gate 2 与真实 Checkpoint 6。Gate 3 继续消费唯一 Router 的 `sessionActive/targeted`，命中时显示整区 2 DIP Accent 边界、0.08 wash 和“松开以存入中转站”，未命中时 overlay 隐藏但卡片交互保持抑制；状态矩阵、浅色 260 DIP、深色 520 DIP 截图、隔离 Release Core 74/74 + Integration 502/502 与零警告构建通过。用户随后要求重启；默认 Release 重新构建后由 PID 22220 运行。未改 Router、仓储、真实数据库或 KI-001。
+- **下一步**：只实现显式排序模式壳层的静态状态、生命周期与焦点合同，不接内部拖动或仓储；其视觉 Gate 通过后，再进入 Gate 2 + Checkpoint 6 的真实排序纵向切片。
+- **已知问题**：KI-001 仍延期：活动 Explorer 拖动中关闭 Vok 可能让松手落回源目录并生成副本；本轮未触碰其显隐租约。当前默认 Release PID 22220 已包含 Gate 3 候选。测试产生的 `.lnk` 副本未经授权不得删除；M3 入站历史物理稳定性实际为 50+ 次而非计划的 100 次。
 
 ## §0A 最近会话
 
@@ -48,6 +48,8 @@
 - 用户首轮视觉 Gate 指出 Stage 卡片整体未与 Launcher 对齐。新增绝对窗口 Y 坐标门禁稳定复现 Stage 比 Launcher 高 3 DIP：高度和 row unit 虽相同，但 Stage 顶对齐而 Launcher 行内上下各留 3 DIP。改为 Stage 卡面在共享 row unit 内居中后坐标相等；隔离 Release 576/576 与新 1600 DIP 截图通过。源码 Release PID 21652 由外部启动且占用默认输出，本轮未停止、替换或把它冒充修复候选。
 - 2026-09-09 用户确认 V2 静态卡片及整体纵向对齐视觉 Gate 通过，并要求提交；Hover、拖动、外部 Drop 新效果、排序和缩略图继续暂停。
 - 用户随后确认先完成 UI/交互基础再继续功能。Redesign Gate 1 实现 Hover/KeyboardFocus 的统一状态、Subtle surface、1.02 scale、ZIndex、操作 chrome 和 Accent focus ring；定向测试发现并修复 FocusWithin 退出与 ContextMenu 进入动画竞争，最终由单一卡片交互状态唯一驱动画面。外部 drag、隐藏、换绑、回收及 100 轮快速聚焦/抑制/换列/滚动/显隐均零残留；浅色 Hover/焦点、暗色、260 DIP 截图和隔离 Release 576/576、0 warning / 0 error、`git diff --check` 通过。等待用户实际视觉确认，未发布或替换 PID 352。
+- Gate 1 提交为 `e40193e`。用户澄清只有该项已实现，其他路线项无法测试；后续依赖分析发现纯拖影没有产品终态、V2 72 DIP 卡也无法无冲突容纳第三个 24 DIP 排序把手。新增待确认方案 `docs/M3_STAGE_UI_FOUNDATION_NEXT_PLAN.md`：先以现有真实 Router 完成 Gate 3，再用显式排序模式把 Gate 2 与 Checkpoint 6 合并为真实可测闭环；未修改产品代码、既有决策或运行实例。
+- 用户确认上述调整。Gate 3 以既有 Router 状态扩展为 2 DIP 边界、0.08 Accent wash 和明确松手文案；浅色 260 DIP、深色 520 DIP 截图、完整隔离 Release 576/576 与零警告构建通过。随后精确停止旧默认 Release PID 20760，重新构建并启动唯一 PID 22220，加载 DLL SHA-256 为 `C0A514F019BDB87CEBCC8A8D7ECCB21A9192C0084F6C1C79AA94CE1BD61E3B1D`；用户真实 Explorer/桌面拖入 Gate 通过。下一步做不含拖动手势的排序模式壳层。
 
 ### 会话 2026-09-04 - M3 中转站产品契约、扩容与入站 MVP 收窄
 
