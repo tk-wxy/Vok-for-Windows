@@ -15,9 +15,15 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
     private readonly CancellationTokenSource _lifetime = new();
     private readonly List<StagePageCursor?> _pageStarts = [null];
     private StagePageCursor? _nextCursor;
+    private StageOrderAnchor? _newerBoundary;
+    private StageOrderAnchor? _olderBoundary;
+    private StageReorderSession? _reorderSession;
+    private long _nextReorderGeneration;
     private int _pageIndex;
     private bool _initialized;
     private bool _disposed;
+    private bool _isReordering;
+    private bool _isCommitting;
 
     [ObservableProperty]
     private long _totalCount;
@@ -56,19 +62,48 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
     internal Func<StageItemViewModel, Task>? CopyPathActionAsync { get; set; }
 
     internal Func<StageItemViewModel, CancellationToken, Task<StageRelinkSelection>>?
-        RelinkTargetPickerAsync { get; set; }
+        RelinkTargetPickerAsync
+    { get; set; }
 
     public IAsyncRelayCommand LoadNewerCommand { get; }
 
     public IAsyncRelayCommand LoadOlderCommand { get; }
 
+    public bool IsReordering
+    {
+        get => _isReordering;
+        private set
+        {
+            if (SetProperty(ref _isReordering, value))
+            {
+                NotifyInteractionStateChanged();
+            }
+        }
+    }
+
+    public bool IsCommitting
+    {
+        get => _isCommitting;
+        private set
+        {
+            if (SetProperty(ref _isCommitting, value))
+            {
+                NotifyInteractionStateChanged();
+            }
+        }
+    }
+
+    public bool IsInteractionLocked => IsReordering || IsCommitting;
+
     public bool IsEmpty => _initialized && !IsLoading && !HasError && Items.Count == 0;
 
     public bool ShowErrorState => HasError && Items.Count == 0;
 
-    public bool CanLoadNewer => !_disposed && !IsLoading && _pageIndex > 0;
+    public bool CanLoadNewer =>
+        !_disposed && !IsLoading && !IsInteractionLocked && _pageIndex > 0;
 
-    public bool CanLoadOlder => !_disposed && !IsLoading && _nextCursor is not null;
+    public bool CanLoadOlder =>
+        !_disposed && !IsLoading && !IsInteractionLocked && _nextCursor is not null;
 
     public string PageSummaryText
     {
@@ -265,10 +300,185 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         NotifyPageStateChanged();
     }
 
+    internal bool TryCancelReorderPreview(long generation = 0)
+    {
+        if (_reorderSession is not { State: StageReorderSessionState.Previewing } session ||
+            (generation != 0 && session.Generation != generation))
+        {
+            return false;
+        }
+
+        RestoreReorderSnapshot(session);
+        EndReorderSession(session);
+        StatusText = "已取消本次移动。";
+        return true;
+    }
+
+    internal long BeginReorder(StageItemViewModel? source)
+    {
+        if (source is null || source.IsBusy || _disposed || !_initialized ||
+            IsLoading || IsInteractionLocked || Items.Count < 2)
+        {
+            return 0;
+        }
+
+        var sourceIndex = Items.IndexOf(source);
+        if (sourceIndex < 0)
+        {
+            return 0;
+        }
+
+        var generation = checked(++_nextReorderGeneration);
+        _reorderSession = new StageReorderSession(
+            generation,
+            source,
+            Items.ToArray(),
+            sourceIndex,
+            _newerBoundary,
+            _olderBoundary);
+        source.IsDragging = true;
+        IsReordering = true;
+        StatusText = $"正在移动“{source.DisplayName}”…";
+        return generation;
+    }
+
+    internal bool PreviewReorder(long generation, int targetIndex)
+    {
+        if (_reorderSession is not
+            {
+                State: StageReorderSessionState.Previewing,
+            } session ||
+            session.Generation != generation ||
+            targetIndex < 0 || targetIndex >= Items.Count)
+        {
+            return false;
+        }
+
+        if (!Items.Contains(session.Source))
+        {
+            RestoreReorderSnapshot(session);
+            EndReorderSession(session);
+            return false;
+        }
+
+        session.CurrentIndex = targetIndex;
+        return true;
+    }
+
+    internal async Task<bool> CommitReorderAsync(long generation)
+    {
+        if (_reorderSession is not { } session ||
+            session.Generation != generation ||
+            !session.TryBeginCommit())
+        {
+            return false;
+        }
+
+        session.Source.IsDragging = false;
+        IsCommitting = true;
+        if (session.CurrentIndex == session.OriginalIndex)
+        {
+            EndReorderSession(session);
+            StatusText = "项目顺序没有变化。";
+            return true;
+        }
+
+        StageReorderRequest request;
+        try
+        {
+            var currentIndex = Items.IndexOf(session.Source);
+            if (currentIndex < 0)
+            {
+                throw new InvalidOperationException(
+                    "The Stage reorder source is no longer in the current page.");
+            }
+
+            Items.Move(currentIndex, session.CurrentIndex);
+            request = CreateReorderRequest(session);
+        }
+        catch
+        {
+            RestoreReorderSnapshot(session);
+            EndReorderSession(session);
+            throw;
+        }
+
+        var gateAcquired = false;
+        try
+        {
+            await _operationGate.WaitAsync(_lifetime.Token).ConfigureAwait(true);
+            gateAcquired = true;
+            SetLoading(true);
+            HasError = false;
+            StatusText = $"正在保存“{session.Source.DisplayName}”的新位置…";
+            var result = await _repository
+                .ReorderAsync(request, _lifetime.Token)
+                .ConfigureAwait(true);
+            switch (result.Status)
+            {
+                case StageReorderStatus.Applied:
+                    await ApplyConfirmedReorderAsync(session, result, _lifetime.Token)
+                        .ConfigureAwait(true);
+                    break;
+
+                case StageReorderStatus.NoChange:
+                    StatusText = $"“{session.Source.DisplayName}”已经位于该位置。";
+                    break;
+
+                case StageReorderStatus.SortOrderExhausted:
+                    RestoreReorderSnapshot(session);
+                    StatusText = "当前区域没有足够的顺序空间，本次移动未保存。";
+                    break;
+
+                case StageReorderStatus.NotFound:
+                    RestoreReorderSnapshot(session);
+                    await ReloadFirstPageAfterRejectedReorderAsync(
+                            "项目已不在中转站中，本次移动未保存；列表已刷新。",
+                            _lifetime.Token)
+                        .ConfigureAwait(true);
+                    break;
+
+                case StageReorderStatus.RevisionConflict:
+                case StageReorderStatus.NeighborConflict:
+                    RestoreReorderSnapshot(session);
+                    await ReloadFirstPageAfterRejectedReorderAsync(
+                            "项目顺序已发生变化，本次移动未保存；列表已刷新。",
+                            _lifetime.Token)
+                        .ConfigureAwait(true);
+                    break;
+
+                default:
+                    throw new InvalidOperationException(
+                        $"Unsupported Stage reorder result: {result.Status}.");
+            }
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+            // Application lifetime cancellation owns shutdown cleanup.
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            RestoreReorderSnapshot(session);
+            await ReloadFirstPageAfterUnknownReorderAsync(exception).ConfigureAwait(true);
+        }
+        finally
+        {
+            if (gateAcquired)
+            {
+                SetLoading(false);
+                _operationGate.Release();
+            }
+
+            EndReorderSession(session);
+        }
+
+        return true;
+    }
+
     [RelayCommand]
     private async Task RemoveAsync(StageItemViewModel? item)
     {
-        if (item is null || item.IsBusy || _disposed)
+        if (item is null || item.IsBusy || _disposed || IsInteractionLocked)
         {
             return;
         }
@@ -278,7 +488,7 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         {
             await _operationGate.WaitAsync(_lifetime.Token).ConfigureAwait(true);
             gateAcquired = true;
-            if (!Items.Contains(item))
+            if (!Items.Contains(item) || IsInteractionLocked)
             {
                 return;
             }
@@ -339,7 +549,7 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private async Task TogglePinnedAsync(StageItemViewModel? item)
     {
-        if (item is null || item.IsBusy || _disposed)
+        if (item is null || item.IsBusy || _disposed || IsInteractionLocked)
         {
             return;
         }
@@ -349,7 +559,7 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         {
             await _operationGate.WaitAsync(_lifetime.Token).ConfigureAwait(true);
             gateAcquired = true;
-            if (!Items.Contains(item))
+            if (!Items.Contains(item) || IsInteractionLocked)
             {
                 return;
             }
@@ -475,7 +685,7 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
     private async Task RelinkAsync(StageItemViewModel? item)
     {
         if (item is null || item.IsBusy ||
-            RelinkTargetPickerAsync is null || _disposed)
+            RelinkTargetPickerAsync is null || _disposed || IsInteractionLocked)
         {
             return;
         }
@@ -485,7 +695,8 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         {
             await _operationGate.WaitAsync(_lifetime.Token).ConfigureAwait(true);
             gateAcquired = true;
-            if (!Items.Contains(item) || RelinkTargetPickerAsync is null)
+            if (!Items.Contains(item) || RelinkTargetPickerAsync is null ||
+                IsInteractionLocked)
             {
                 return;
             }
@@ -632,7 +843,7 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
     {
         if (item is null || item.IsBusy ||
             (!allowMissing && item.IsMissing) ||
-            action is null || _disposed)
+            action is null || _disposed || IsInteractionLocked)
         {
             return;
         }
@@ -642,7 +853,8 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         {
             await _operationGate.WaitAsync(_lifetime.Token).ConfigureAwait(true);
             gateAcquired = true;
-            if (!Items.Contains(item) || (!allowMissing && item.IsMissing))
+            if (!Items.Contains(item) || (!allowMissing && item.IsMissing) ||
+                IsInteractionLocked)
             {
                 return;
             }
@@ -674,11 +886,271 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         }
     }
 
+    private StageReorderRequest CreateReorderRequest(StageReorderSession session)
+    {
+        var sourceIndex = Items.IndexOf(session.Source);
+        if (sourceIndex < 0)
+        {
+            throw new InvalidOperationException(
+                "The Stage reorder source is no longer in the current page.");
+        }
+
+        session.CurrentIndex = sourceIndex;
+        var newerNeighbor = sourceIndex == 0
+            ? session.NewerBoundary
+            : ToOrderAnchor(Items[sourceIndex - 1]);
+        var olderNeighbor = sourceIndex == Items.Count - 1
+            ? session.OlderBoundary
+            : ToOrderAnchor(Items[sourceIndex + 1]);
+        return new StageReorderRequest(
+            session.SourceVersion,
+            newerNeighbor,
+            olderNeighbor);
+    }
+
+    private async Task ApplyConfirmedReorderAsync(
+        StageReorderSession session,
+        StageReorderResult result,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            ApplyReorderAuthority(session, result.ChangedItems);
+            StatusText = $"已保存“{session.Source.DisplayName}”的新位置。";
+        }
+        catch (Exception applyException)
+        {
+            try
+            {
+                await LoadPageLockedAsync(
+                        after: null,
+                        pageIndex: 0,
+                        resetHistory: true,
+                        cancellationToken)
+                    .ConfigureAwait(true);
+                StatusText =
+                    $"已保存“{session.Source.DisplayName}”的新位置，列表已重新加载。";
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception refreshException)
+            {
+                HasError = true;
+                StatusText =
+                    $"顺序已保存，但列表刷新失败：{refreshException.Message}";
+                System.Diagnostics.Trace.TraceWarning(
+                    "Stage reorder committed but UI apply and refresh failed: {0}; {1}",
+                    applyException.GetType().Name,
+                    refreshException.GetType().Name);
+            }
+        }
+    }
+
+    private void ApplyReorderAuthority(
+        StageReorderSession session,
+        IReadOnlyList<StageItem> changedItems)
+    {
+        if (!changedItems.Any(item => item.Id == session.Source.Id))
+        {
+            throw new InvalidOperationException(
+                "An applied Stage reorder did not return its source item.");
+        }
+
+        var changedById = changedItems.ToDictionary(static item => item.Id);
+        foreach (var projection in Items)
+        {
+            if (changedById.TryGetValue(projection.Id, out var authoritative))
+            {
+                projection.ValidateReorderAuthority(authoritative);
+            }
+        }
+
+        var projectedItems = Items
+            .Select(item => changedById.GetValueOrDefault(item.Id) ?? item.Item)
+            .ToArray();
+        ValidateProjectedOrder(
+            projectedItems,
+            UpdateAnchor(_newerBoundary, changedById),
+            UpdateAnchor(_olderBoundary, changedById));
+
+        foreach (var projection in Items)
+        {
+            if (changedById.TryGetValue(projection.Id, out var authoritative))
+            {
+                projection.ApplyReorderAuthority(authoritative);
+            }
+        }
+
+        for (var index = 0; index < _pageStarts.Count; index++)
+        {
+            _pageStarts[index] = UpdateCursor(_pageStarts[index], changedById);
+        }
+
+        _newerBoundary = UpdateAnchor(_newerBoundary, changedById);
+        _olderBoundary = UpdateAnchor(_olderBoundary, changedById);
+        if (_nextCursor is not null && Items.Count != 0)
+        {
+            _nextCursor = new StagePageCursor(Items[^1].SortOrder, Items[^1].Id);
+            var nextPageIndex = _pageIndex + 1;
+            if (nextPageIndex < _pageStarts.Count)
+            {
+                _pageStarts[nextPageIndex] = _nextCursor;
+            }
+        }
+
+        NotifyPageStateChanged();
+    }
+
+    private static void ValidateProjectedOrder(
+        IReadOnlyList<StageItem> items,
+        StageOrderAnchor? newerBoundary,
+        StageOrderAnchor? olderBoundary)
+    {
+        var anchors = items.Select(ToOrderAnchor).ToArray();
+        for (var index = 1; index < anchors.Length; index++)
+        {
+            if (anchors[index - 1].CompareTo(anchors[index]) <= 0)
+            {
+                throw new InvalidOperationException(
+                    "An applied Stage reorder returned a page outside the requested order.");
+            }
+        }
+
+        if (anchors.Length != 0 &&
+            ((newerBoundary is { } newer && newer.CompareTo(anchors[0]) <= 0) ||
+             (olderBoundary is { } older && anchors[^1].CompareTo(older) <= 0)))
+        {
+            throw new InvalidOperationException(
+                "An applied Stage reorder crossed a page boundary.");
+        }
+    }
+
+    private async Task ReloadFirstPageAfterRejectedReorderAsync(
+        string successStatus,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await LoadPageLockedAsync(
+                    after: null,
+                    pageIndex: 0,
+                    resetHistory: true,
+                    cancellationToken)
+                .ConfigureAwait(true);
+            StatusText = successStatus;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            HasError = true;
+            StatusText = $"本次移动未保存，且列表刷新失败：{exception.Message}";
+        }
+    }
+
+    private async Task ReloadFirstPageAfterUnknownReorderAsync(Exception exception)
+    {
+        try
+        {
+            await LoadPageLockedAsync(
+                    after: null,
+                    pageIndex: 0,
+                    resetHistory: true,
+                    _lifetime.Token)
+                .ConfigureAwait(true);
+            HasError = true;
+            StatusText = $"排序结果待核对，列表已重新加载：{exception.Message}";
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+        }
+        catch (Exception refreshException)
+        {
+            HasError = true;
+            StatusText = $"排序结果待核对，且列表刷新失败：{refreshException.Message}";
+        }
+    }
+
+    private void RestoreReorderSnapshot(StageReorderSession session)
+    {
+        if (Items.Count != session.OriginalItems.Count)
+        {
+            throw new InvalidOperationException(
+                "The Stage page changed while a same-page reorder was active.");
+        }
+
+        for (var targetIndex = 0; targetIndex < session.OriginalItems.Count; targetIndex++)
+        {
+            var expected = session.OriginalItems[targetIndex];
+            var currentIndex = Items.IndexOf(expected);
+            if (currentIndex < 0)
+            {
+                throw new InvalidOperationException(
+                    "The Stage page replaced an item while a same-page reorder was active.");
+            }
+
+            if (currentIndex != targetIndex)
+            {
+                Items.Move(currentIndex, targetIndex);
+            }
+        }
+
+        session.CurrentIndex = session.OriginalIndex;
+    }
+
+    private void EndReorderSession(StageReorderSession session)
+    {
+        if (!ReferenceEquals(_reorderSession, session))
+        {
+            return;
+        }
+
+        _ = session.TryEnd();
+        session.Source.IsDragging = false;
+        _reorderSession = null;
+        IsCommitting = false;
+        IsReordering = false;
+    }
+
+    private static StageOrderAnchor ToOrderAnchor(StageItemViewModel item) =>
+        ToOrderAnchor(item.Item);
+
+    private static StageOrderAnchor ToOrderAnchor(StageItem item) =>
+        new(item.Id, item.Revision, item.SortOrder);
+
+    private static StagePageCursor? UpdateCursor(
+        StagePageCursor? cursor,
+        IReadOnlyDictionary<Guid, StageItem> changedById) =>
+        cursor is { } current && changedById.TryGetValue(current.Id, out var changed)
+            ? new StagePageCursor(changed.SortOrder, changed.Id)
+            : cursor;
+
+    private static StageOrderAnchor? UpdateAnchor(
+        StageOrderAnchor? anchor,
+        IReadOnlyDictionary<Guid, StageItem> changedById) =>
+        anchor is { } current && changedById.TryGetValue(current.Id, out var changed)
+            ? ToOrderAnchor(changed)
+            : anchor;
+
     public void Dispose()
     {
         if (_disposed)
         {
             return;
+        }
+
+        if (_reorderSession is { State: StageReorderSessionState.Previewing } session)
+        {
+            RestoreReorderSnapshot(session);
+            EndReorderSession(session);
+        }
+        else if (_reorderSession is { } activeSession)
+        {
+            EndReorderSession(activeSession);
         }
 
         _disposed = true;
@@ -704,7 +1176,7 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         {
             await _operationGate.WaitAsync(operationToken).ConfigureAwait(true);
             gateAcquired = true;
-            if (!_initialized)
+            if (!_initialized || IsInteractionLocked)
             {
                 return;
             }
@@ -772,7 +1244,7 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
             ApplyPage(page, pageIndex, after, resetHistory);
             StatusText = page.TotalCount == 0
                 ? "中转站为空。"
-                : $"中转站共有 {page.TotalCount} 个项目。";
+                : $"中转站共有 {page.TotalCount} 个项目；按住卡片可直接排序。";
         }
         finally
         {
@@ -983,6 +1455,8 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
 
         _pageIndex = pageIndex;
         _nextCursor = page.NextCursor;
+        _newerBoundary = page.NewerBoundary;
+        _olderBoundary = page.OlderBoundary;
         TotalCount = page.TotalCount;
         NotifyPageStateChanged();
     }
@@ -1010,6 +1484,12 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(PageSummaryText));
         LoadNewerCommand.NotifyCanExecuteChanged();
         LoadOlderCommand.NotifyCanExecuteChanged();
+    }
+
+    private void NotifyInteractionStateChanged()
+    {
+        OnPropertyChanged(nameof(IsInteractionLocked));
+        NotifyPageStateChanged();
     }
 
     partial void OnTotalCountChanged(long value) => NotifyPageStateChanged();

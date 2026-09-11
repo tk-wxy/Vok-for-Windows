@@ -224,12 +224,17 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                         grid.Name,
                         "StageItemActionChrome",
                         StringComparison.Ordinal));
-                var cardScale = Assert.IsType<ScaleTransform>(firstCard.RenderTransform);
+                var cardTransforms = Assert.IsType<TransformGroup>(firstCard.RenderTransform);
+                var cardScale = Assert.Single(cardTransforms.Children.OfType<ScaleTransform>());
+                var cardTranslation = Assert.Single(
+                    cardTransforms.Children.OfType<TranslateTransform>());
                 Assert.Equal(0, hoverOverlay.Opacity, precision: 3);
                 Assert.Equal(0, focusRing.Opacity, precision: 3);
                 Assert.Equal(0.55, actionChrome.Opacity, precision: 3);
                 Assert.Equal(1, cardScale.ScaleX, precision: 3);
                 Assert.Equal(1, cardScale.ScaleY, precision: 3);
+                Assert.Equal(0, cardTranslation.X, precision: 3);
+                Assert.Equal(0, cardTranslation.Y, precision: 3);
 
                 StageView.SetIsInteractionActive(firstCard, true);
                 Assert.True(WaitForDispatcherCondition(
@@ -419,6 +424,94 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 view.SetExternalDragState(sessionActive: false, targeted: false);
                 PumpLayout(window);
                 CaptureWindowIfRequested(window, "stage-view-dark.png");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void DirectReorderKeepsCardActionsAndExternalDragCancelsThePreview()
+    {
+        wpf.Invoke(() =>
+        {
+            var fileService = new NoopStageFileService();
+            using var viewModel = new StageViewModel(
+                new StaticStageRepository(12),
+                fileService);
+            viewModel.InitializeAsync().GetAwaiter().GetResult();
+            var originalIds = viewModel.Items.Select(static item => item.Id).ToArray();
+            var view = new StageView { DataContext = viewModel };
+            var window = new Window
+            {
+                Width = 520,
+                Height = 500,
+                Content = view,
+                ShowInTaskbar = false,
+                WindowStyle = WindowStyle.None,
+            };
+
+            window.Show();
+            try
+            {
+                PumpLayout(window);
+                Assert.DoesNotContain(
+                    FindVisualDescendants<Button>(view),
+                    button => string.Equals(
+                        AutomationProperties.GetName(button),
+                        "进入中转站排序模式",
+                        StringComparison.Ordinal) || string.Equals(
+                        AutomationProperties.GetName(button),
+                        "退出中转站排序模式",
+                        StringComparison.Ordinal));
+                var firstCard = FindVisualDescendants<Border>(view).First(border =>
+                    string.Equals(border.Name, "StageItemCard", StringComparison.Ordinal));
+                var actionChrome = FindVisualDescendants<Grid>(firstCard).Single(grid =>
+                    string.Equals(
+                        grid.Name,
+                        "StageItemActionChrome",
+                        StringComparison.Ordinal));
+                Assert.Equal(Visibility.Visible, actionChrome.Visibility);
+                var transforms = Assert.IsType<TransformGroup>(firstCard.RenderTransform);
+                Assert.Single(transforms.Children.OfType<TranslateTransform>());
+                var layoutChangeSource = viewModel.Items[5];
+                var layoutGeneration = viewModel.BeginReorder(layoutChangeSource);
+                Assert.True(viewModel.PreviewReorder(layoutGeneration, 0));
+                Assert.Equal(originalIds, viewModel.Items.Select(static item => item.Id));
+                window.Width = 260;
+                PumpLayout(window);
+                Assert.Equal(originalIds, viewModel.Items.Select(static item => item.Id));
+                Assert.False(viewModel.IsReordering);
+                var scrollViewer = Assert.IsType<ScrollViewer>(
+                    FindVisualDescendants<ScrollViewer>(
+                        Assert.IsType<ListBox>(view.FindName("StageItemsList"))).Single());
+                Assert.Equal(0, scrollViewer.VerticalOffset, precision: 3);
+
+                CaptureWindowIfRequested(window, "stage-direct-reorder-narrow-light.png");
+
+                var source = viewModel.Items[5];
+                var generation = viewModel.BeginReorder(source);
+                Assert.True(viewModel.PreviewReorder(generation, 0));
+                PumpLayout(window);
+                Assert.Equal(originalIds, viewModel.Items.Select(static item => item.Id));
+
+                view.SetExternalDragState(sessionActive: true, targeted: true);
+                PumpLayout(window);
+
+                Assert.Equal(originalIds, viewModel.Items.Select(static item => item.Id));
+                Assert.False(viewModel.IsReordering);
+                Assert.False(view.HasActiveReorderPointer);
+                Assert.False(view.HasAutoScrollSubscription);
+                Assert.Equal(
+                    Visibility.Visible,
+                    Assert.IsType<Grid>(view.FindName("DropOverlay")).Visibility);
+
+                view.SetExternalDragState(sessionActive: false, targeted: false);
+                PumpLayout(window);
+                Assert.Equal(Visibility.Visible, actionChrome.Visibility);
+                Assert.True(fileService.InspectedIds.Count <= viewModel.Items.Count);
             }
             finally
             {
@@ -1207,15 +1300,20 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 grid.Name,
                 "StageItemActionChrome",
                 StringComparison.Ordinal));
+        var transforms = card.RenderTransform as TransformGroup;
+        var scale = transforms?.Children.OfType<ScaleTransform>().SingleOrDefault();
+        var translation = transforms?.Children.OfType<TranslateTransform>().SingleOrDefault();
         return overlay is not null && focusRing is not null && actionChrome is not null &&
-            card.RenderTransform is ScaleTransform scale &&
+            scale is not null && translation is not null &&
             !StageView.GetIsInteractionActive(card) &&
             !StageView.GetIsKeyboardContextActive(card) &&
             overlay.Opacity <= 0.001 &&
             focusRing.Opacity <= 0.001 &&
             actionChrome.Opacity <= 0.551 &&
             scale.ScaleX <= 1.001 &&
-            scale.ScaleY <= 1.001;
+            scale.ScaleY <= 1.001 &&
+            Math.Abs(translation.X) <= 0.001 &&
+            Math.Abs(translation.Y) <= 0.001;
     }
 
     private static void CaptureWindowIfRequested(Window window, string fileName)

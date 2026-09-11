@@ -59,6 +59,7 @@ internal sealed class StageWorkspaceFileDropTarget(
 
     public void CancelInteractions()
     {
+        view.CancelAllInteractions();
     }
 
     public void SetExternalDragState(bool sessionActive, bool targeted) =>

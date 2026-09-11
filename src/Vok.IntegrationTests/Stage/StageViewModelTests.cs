@@ -854,6 +854,324 @@ public sealed class StageViewModelTests
             item.CompactStatusText);
     }
 
+    [Fact]
+    public async Task SamePageReorderPreviewDoesNotMutateProjectionAndCancelsWithoutWrite()
+    {
+        var original = CreateItems(4);
+        var repository = new ScriptedStageRepository([CreatePage(original)]);
+        using var viewModel = new StageViewModel(
+            repository,
+            new StaticStageFileService([]));
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+        var source = viewModel.Items[2];
+        var originalIds = viewModel.Items.Select(static item => item.Id).ToArray();
+        var projectionChanges = 0;
+        viewModel.Items.CollectionChanged += (_, _) => projectionChanges++;
+
+        var generation = viewModel.BeginReorder(source);
+        Assert.True(generation > 0);
+        for (var pointerUpdate = 0; pointerUpdate < 1_000; pointerUpdate++)
+        {
+            Assert.True(viewModel.PreviewReorder(
+                generation,
+                pointerUpdate % viewModel.Items.Count));
+        }
+
+        Assert.Equal(originalIds, viewModel.Items.Select(static item => item.Id));
+        Assert.Equal(0, projectionChanges);
+        Assert.True(source.IsDragging);
+
+        Assert.True(viewModel.TryCancelReorderPreview());
+
+        Assert.Equal(originalIds, viewModel.Items.Select(static item => item.Id));
+        Assert.Equal(0, projectionChanges);
+        Assert.Empty(repository.ReorderCalls);
+        Assert.False(viewModel.IsReordering);
+        Assert.False(source.IsDragging);
+
+        var nextGeneration = viewModel.BeginReorder(viewModel.Items[1]);
+        Assert.False(viewModel.TryCancelReorderPreview(generation));
+        Assert.True(viewModel.IsReordering);
+        Assert.True(viewModel.TryCancelReorderPreview(nextGeneration));
+    }
+
+    [Fact]
+    public async Task ReorderReleasedAtItsOriginalSlotDoesNotCallTheRepository()
+    {
+        var repository = new ScriptedStageRepository([CreatePage(CreateItems(3))]);
+        using var viewModel = new StageViewModel(
+            repository,
+            new StaticStageFileService([]));
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+        var generation = viewModel.BeginReorder(viewModel.Items[1]);
+
+        Assert.True(await viewModel.CommitReorderAsync(generation));
+
+        Assert.Empty(repository.ReorderCalls);
+        Assert.False(viewModel.IsReordering);
+        Assert.Equal("项目顺序没有变化。", viewModel.StatusText);
+    }
+
+    [Fact]
+    public async Task HundredPreviewCancelCyclesKeepOnePageAndNoActiveSession()
+    {
+        var repository = new ScriptedStageRepository([CreatePage(CreateItems(32))]);
+        using var viewModel = new StageViewModel(
+            repository,
+            new StaticStageFileService([]));
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+        var originalProjections = viewModel.Items.ToArray();
+
+        for (var cycle = 0; cycle < 100; cycle++)
+        {
+            var sourceIndex = cycle % originalProjections.Length;
+            var targetIndex = (cycle * 7) % originalProjections.Length;
+            var generation = viewModel.BeginReorder(viewModel.Items[sourceIndex]);
+            Assert.True(generation > 0);
+            Assert.True(viewModel.PreviewReorder(generation, targetIndex));
+            Assert.True(viewModel.TryCancelReorderPreview(generation));
+            Assert.Equal(originalProjections, viewModel.Items);
+            Assert.False(viewModel.IsReordering);
+            Assert.False(viewModel.IsCommitting);
+        }
+
+        Assert.Empty(repository.ReorderCalls);
+    }
+
+    [Fact]
+    public async Task AppliedSamePageReorderUsesPageBoundaryAndPreservesAvailability()
+    {
+        var original = CreateItems(3);
+        var newerBoundary = new StageOrderAnchor(
+            CreateDeterministicGuid(100),
+            revision: 7,
+            sortOrder: 10);
+        var authoritativeSource = original[1] with
+        {
+            SortOrder = 8,
+            Revision = original[1].Revision + 1,
+            UpdatedUtc = original[1].UpdatedUtc.AddSeconds(1),
+        };
+        var repository = new ScriptedStageRepository(
+            pages:
+            [
+                CreatePage(original) with { NewerBoundary = newerBoundary },
+            ],
+            reorderResult: new StageReorderResult(
+                StageReorderStatus.Applied,
+                [authoritativeSource]));
+        using var viewModel = new StageViewModel(
+            repository,
+            new StaticStageFileService([]));
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+        var source = viewModel.Items[1];
+        var projectionChanges = 0;
+        viewModel.Items.CollectionChanged += (_, _) => projectionChanges++;
+        Assert.True(source.ApplyAvailability(
+            source.Revision,
+            StageFileAvailability.Missing));
+
+        var generation = viewModel.BeginReorder(source);
+        Assert.True(viewModel.PreviewReorder(generation, 0));
+        Assert.Equal(original.Select(static item => item.Id), viewModel.Items.Select(static item => item.Id));
+        Assert.Equal(0, projectionChanges);
+        Assert.True(await viewModel.CommitReorderAsync(generation));
+
+        var request = Assert.Single(repository.ReorderCalls);
+        Assert.Equal(
+            new StageItemVersion(original[1].Id, original[1].Revision),
+            request.Source);
+        Assert.Equal(newerBoundary, request.NewerNeighbor);
+        Assert.Equal(original[0].Id, request.OlderNeighbor?.Id);
+        Assert.Equal(authoritativeSource, source.Item);
+        Assert.True(source.IsMissing);
+        Assert.Equal(
+            [original[1].Id, original[0].Id, original[2].Id],
+            viewModel.Items.Select(static item => item.Id));
+        Assert.Equal(1, projectionChanges);
+        Assert.False(viewModel.IsReordering);
+        Assert.False(viewModel.IsCommitting);
+        Assert.False(viewModel.HasError);
+    }
+
+    [Fact]
+    public async Task ReorderClaimsCommitOnceAndVisualExitDoesNotRollbackIt()
+    {
+        var original = CreateItems(3);
+        var authoritativeSource = original[2] with
+        {
+            SortOrder = original[0].SortOrder + 1,
+            Revision = original[2].Revision + 1,
+            UpdatedUtc = original[2].UpdatedUtc.AddSeconds(1),
+        };
+        var commitStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseCommit = new TaskCompletionSource<StageReorderResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var repository = new ScriptedStageRepository(
+            pages: [CreatePage(original)],
+            reorderHandler: (_, _) =>
+            {
+                commitStarted.TrySetResult();
+                return releaseCommit.Task;
+            });
+        using var viewModel = new StageViewModel(
+            repository,
+            new StaticStageFileService([]));
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+        var source = viewModel.Items[2];
+        var generation = viewModel.BeginReorder(source);
+        Assert.True(viewModel.PreviewReorder(generation, 0));
+
+        var firstCommit = viewModel.CommitReorderAsync(generation);
+        await commitStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
+        Assert.True(viewModel.IsCommitting);
+        Assert.False(await viewModel.CommitReorderAsync(generation));
+        Assert.Equal(source.Id, viewModel.Items[0].Id);
+
+        releaseCommit.SetResult(new StageReorderResult(
+            StageReorderStatus.Applied,
+            [authoritativeSource]));
+        Assert.True(await firstCommit);
+
+        Assert.Single(repository.ReorderCalls);
+        Assert.Equal(source.Id, viewModel.Items[0].Id);
+        Assert.False(viewModel.IsCommitting);
+    }
+
+    [Fact]
+    public async Task ReorderConflictRestoresPreviewAndReloadsFirstPageWithoutReplay()
+    {
+        var original = CreateItems(3);
+        var refreshed = original.Select(item => item with
+        {
+            Revision = item.Revision + 1,
+            UpdatedUtc = item.UpdatedUtc.AddSeconds(1),
+        }).ToArray();
+        var repository = new ScriptedStageRepository(
+            pages: [CreatePage(original), CreatePage(refreshed)],
+            reorderResult: new StageReorderResult(
+                StageReorderStatus.NeighborConflict,
+                []));
+        using var viewModel = new StageViewModel(
+            repository,
+            new StaticStageFileService([]));
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+        var generation = viewModel.BeginReorder(viewModel.Items[2]);
+        Assert.True(viewModel.PreviewReorder(generation, 0));
+
+        Assert.True(await viewModel.CommitReorderAsync(generation));
+
+        Assert.Single(repository.ReorderCalls);
+        Assert.Equal(
+            refreshed.Select(static item => item.Id),
+            viewModel.Items.Select(static item => item.Id));
+        Assert.All(viewModel.Items, item => Assert.Equal(2, item.Revision));
+        Assert.Contains("未保存", viewModel.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SamePageReorderRepairsTheNextPageCursorToTheNewPageTail()
+    {
+        var original = CreateItems(3);
+        var olderBoundary = new StageOrderAnchor(
+            CreateDeterministicGuid(100),
+            revision: 1,
+            sortOrder: -10);
+        var firstPage = new StagePage(
+            original,
+            new StagePageCursor(original[^1].SortOrder, original[^1].Id),
+            TotalCount: 4,
+            OlderBoundary: olderBoundary);
+        var authoritativeSource = original[0] with
+        {
+            SortOrder = 0,
+            Revision = original[0].Revision + 1,
+            UpdatedUtc = original[0].UpdatedUtc.AddSeconds(1),
+        };
+        var olderItem = Assert.Single(CreateItems(1, "较旧")) with
+        {
+            SortOrder = -10,
+        };
+        var repository = new ScriptedStageRepository(
+            pages: [firstPage, new StagePage([olderItem], null, 4)],
+            reorderResult: new StageReorderResult(
+                StageReorderStatus.Applied,
+                [authoritativeSource]));
+        using var viewModel = new StageViewModel(
+            repository,
+            new StaticStageFileService([]));
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+        var generation = viewModel.BeginReorder(viewModel.Items[0]);
+        Assert.True(viewModel.PreviewReorder(generation, 2));
+        Assert.True(await viewModel.CommitReorderAsync(generation));
+        await viewModel.LoadOlderPageAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, repository.LoadCalls.Count);
+        Assert.Equal(
+            new StagePageCursor(authoritativeSource.SortOrder, authoritativeSource.Id),
+            repository.LoadCalls[1].After);
+        Assert.Equal(olderItem.Id, Assert.Single(viewModel.Items).Id);
+    }
+
+    [Fact]
+    public async Task SortOrderExhaustionRestoresTheExactProjection()
+    {
+        var original = CreateItems(3);
+        var repository = new ScriptedStageRepository(
+            pages: [CreatePage(original)],
+            reorderResult: new StageReorderResult(
+                StageReorderStatus.SortOrderExhausted,
+                []));
+        using var viewModel = new StageViewModel(
+            repository,
+            new StaticStageFileService([]));
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+        var originalProjections = viewModel.Items.ToArray();
+        var generation = viewModel.BeginReorder(viewModel.Items[2]);
+        Assert.True(viewModel.PreviewReorder(generation, 0));
+
+        Assert.True(await viewModel.CommitReorderAsync(generation));
+
+        Assert.Equal(originalProjections, viewModel.Items);
+        Assert.Single(repository.ReorderCalls);
+        Assert.False(viewModel.HasError);
+        Assert.Contains("未保存", viewModel.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AppliedReorderProjectionFailureReloadsAuthorityWithoutReplayingWrite()
+    {
+        var original = CreateItems(3);
+        var authoritativeSource = original[2] with
+        {
+            SortOrder = original[0].SortOrder + 1,
+            Revision = original[2].Revision + 1,
+            UpdatedUtc = original[2].UpdatedUtc.AddSeconds(1),
+        };
+        var invalidAuthority = authoritativeSource with { IsPinned = true };
+        var refreshed =
+            new[] { authoritativeSource, original[0], original[1] };
+        var repository = new ScriptedStageRepository(
+            pages: [CreatePage(original), CreatePage(refreshed)],
+            reorderResult: new StageReorderResult(
+                StageReorderStatus.Applied,
+                [invalidAuthority]));
+        using var viewModel = new StageViewModel(
+            repository,
+            new StaticStageFileService([]));
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+        var generation = viewModel.BeginReorder(viewModel.Items[2]);
+        Assert.True(viewModel.PreviewReorder(generation, 0));
+
+        Assert.True(await viewModel.CommitReorderAsync(generation));
+
+        Assert.Single(repository.ReorderCalls);
+        Assert.Equal(refreshed, viewModel.Items.Select(static item => item.Item));
+        Assert.Contains("已重新加载", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.False(viewModel.HasError);
+    }
+
     private static IReadOnlyList<StageItem> CreateItems(
         int count,
         string namePrefix = "项目")
@@ -995,6 +1313,9 @@ public sealed class StageViewModelTests
         private readonly StageRemoveResult? _removeResult;
         private readonly StageItemMutationResult? _setPinnedResult;
         private readonly StageRelinkResult? _relinkResult;
+        private readonly StageReorderResult? _reorderResult;
+        private readonly Func<StageReorderRequest, CancellationToken, Task<StageReorderResult>>?
+            _reorderHandler;
         private readonly int? _failPageLoadAfter;
         private int _pageLoadCount;
 
@@ -1005,7 +1326,10 @@ public sealed class StageViewModelTests
             StageRemoveResult? removeResult = null,
             StageItemMutationResult? setPinnedResult = null,
             StageRelinkResult? relinkResult = null,
-            int? failPageLoadAfter = null)
+            int? failPageLoadAfter = null,
+            StageReorderResult? reorderResult = null,
+            Func<StageReorderRequest, CancellationToken, Task<StageReorderResult>>?
+                reorderHandler = null)
         {
             _pages = new Queue<StagePage>(pages);
             _addResult = addResult;
@@ -1014,6 +1338,8 @@ public sealed class StageViewModelTests
             _setPinnedResult = setPinnedResult;
             _relinkResult = relinkResult;
             _failPageLoadAfter = failPageLoadAfter;
+            _reorderResult = reorderResult;
+            _reorderHandler = reorderHandler;
         }
 
         public List<IReadOnlyList<StageTargetDescriptor>> AddCalls { get; } = [];
@@ -1024,12 +1350,17 @@ public sealed class StageViewModelTests
 
         public List<(Guid ItemId, long ExpectedRevision, StageTargetDescriptor Target)> RelinkCalls { get; } = [];
 
+        public List<StageReorderRequest> ReorderCalls { get; } = [];
+
+        public List<(StagePageCursor? After, int PageSize)> LoadCalls { get; } = [];
+
         public Task<StagePage> LoadPageAsync(
             StagePageCursor? after,
             int pageSize,
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            LoadCalls.Add((after, pageSize));
             if (_failPageLoadAfter is { } threshold && _pageLoadCount >= threshold)
             {
                 throw new IOException("refresh unavailable");
@@ -1089,8 +1420,14 @@ public sealed class StageViewModelTests
 
         public Task<StageReorderResult> ReorderAsync(
             StageReorderRequest request,
-            CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ReorderCalls.Add(request);
+            return _reorderHandler?.Invoke(request, cancellationToken) ??
+                Task.FromResult(
+                    _reorderResult ?? throw new InvalidOperationException());
+        }
     }
 
     private sealed class DelayedNavigationStageRepository(

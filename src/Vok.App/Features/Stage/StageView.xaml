@@ -257,12 +257,16 @@
                             DataContextChanged="OnStageItemCardDataContextChanged"
                             MouseEnter="OnStageItemCardMouseStateChanged"
                             MouseLeave="OnStageItemCardMouseStateChanged"
+                            PreviewMouseLeftButtonDown="OnStageItemCardPreviewMouseLeftButtonDown"
                             IsKeyboardFocusWithinChanged="OnStageItemCardKeyboardFocusWithinChanged"
                             automation:AutomationProperties.Name="{Binding AutomationName}">
                       <Border.RenderTransform>
-                        <ScaleTransform x:Name="StageItemCardScale"
-                                        ScaleX="1"
-                                        ScaleY="1" />
+                        <TransformGroup>
+                          <ScaleTransform x:Name="StageItemCardScale"
+                                          ScaleX="1"
+                                          ScaleY="1" />
+                          <TranslateTransform />
+                        </TransformGroup>
                       </Border.RenderTransform>
                       <Grid ClipToBounds="True">
                         <ContentControl Content="{Binding}"
@@ -358,6 +362,10 @@
                       </Grid>
                     </Border>
                     <DataTemplate.Triggers>
+                      <DataTrigger Binding="{Binding IsDragging}" Value="True">
+                        <Setter TargetName="StageItemCard" Property="Opacity" Value="0.12" />
+                        <Setter TargetName="StageItemActionChrome" Property="Visibility" Value="Collapsed" />
+                      </DataTrigger>
                       <Trigger SourceName="StageItemCard"
                                Property="stage:StageView.IsInteractionActive"
                                Value="True">
@@ -437,6 +445,26 @@
             </DataTemplate>
           </ListBox.ItemTemplate>
         </ListBox>
+
+        <Canvas x:Name="InternalReorderLayer"
+                Panel.ZIndex="15"
+                IsHitTestVisible="False">
+          <Border x:Name="InternalReorderGhost"
+                  Background="{DynamicResource LayerFillColorDefaultBrush}"
+                  BorderBrush="{DynamicResource ControlStrokeColorSecondaryBrush}"
+                  BorderThickness="1"
+                  CornerRadius="9"
+                  Opacity="0.98"
+                  CacheMode="BitmapCache"
+                  Visibility="Collapsed">
+            <Border.RenderTransform>
+              <TranslateTransform />
+            </Border.RenderTransform>
+            <ContentControl Content="{Binding}"
+                            ContentTemplate="{StaticResource StageCardContentTemplate}"
+                            IsHitTestVisible="False" />
+          </Border>
+        </Canvas>
 
         <Grid IsHitTestVisible="False">
           <Grid.Style>

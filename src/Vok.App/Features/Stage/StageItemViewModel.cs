@@ -9,6 +9,7 @@ public sealed class StageItemViewModel : ObservableObject
     private StageFileAvailability _availability;
     private bool _hasAvailabilityResult;
     private bool _isBusy;
+    private bool _isDragging;
 
     public StageItemViewModel(StageItem item)
     {
@@ -59,6 +60,8 @@ public sealed class StageItemViewModel : ObservableObject
 
     public bool HasAvailabilityStatus =>
         _hasAvailabilityResult && Availability is not StageFileAvailability.Available;
+
+    internal bool HasAvailabilityResult => _hasAvailabilityResult;
 
     public bool IsMissing =>
         _hasAvailabilityResult && Availability is StageFileAvailability.Missing;
@@ -140,6 +143,12 @@ public sealed class StageItemViewModel : ObservableObject
         }
     }
 
+    public bool IsDragging
+    {
+        get => _isDragging;
+        internal set => SetProperty(ref _isDragging, value);
+    }
+
     public string AutomationName
     {
         get
@@ -188,6 +197,33 @@ public sealed class StageItemViewModel : ObservableObject
         OnPropertyChanged(nameof(TypeText));
         OnPropertyChanged(nameof(Availability));
         NotifyAvailabilityChanged();
+    }
+
+    internal void ApplyReorderAuthority(StageItem item)
+    {
+        ValidateReorderAuthority(item);
+
+        Item = item;
+        OnPropertyChanged(nameof(Item));
+        OnPropertyChanged(nameof(SortOrder));
+        OnPropertyChanged(nameof(Revision));
+        OnPropertyChanged(nameof(UpdatedUtc));
+    }
+
+    internal void ValidateReorderAuthority(StageItem item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        if (item.Id != Id ||
+            item.Kind != Kind ||
+            !StringComparer.Ordinal.Equals(item.TargetValue, TargetValue) ||
+            !StringComparer.Ordinal.Equals(item.CanonicalKey, CanonicalKey) ||
+            !StringComparer.Ordinal.Equals(item.ResolvedName, DisplayName) ||
+            item.IsPinned != IsPinned ||
+            item.CreatedUtc != CreatedUtc)
+        {
+            throw new InvalidOperationException(
+                "An authoritative Stage reorder changed non-order item data.");
+        }
     }
 
     public bool ApplyAvailability(

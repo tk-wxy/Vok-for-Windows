@@ -1,6 +1,6 @@
 # M3.1 中转站管理动作实施计划
 
-> **状态（2026-09-11）**：实施中。Checkpoint 0–5、V2 静态样式、Hover/KeyboardFocus 与 Gate 3 已完成。排序 S0 合同、S1 Core/同快照分页边界/SQLite 单项快路和 S2 最多 64 项局部重平衡现已完成，完整隔离 Release 606/606、构建 0 warning / 0 error；下一步合并首个可见同页排序纵向切片。跨页排序、M3.2/M3.3 与 KI-001 均未进入本轮。
+> **状态（2026-09-11）**：实施中。Checkpoint 0–5、V2 静态样式、Hover/KeyboardFocus 与 Gate 3 已完成。排序 S0 合同、S1 Core/同快照分页边界/SQLite 单项快路、S2 最多 64 项局部重平衡和 S3 首个可见同页排序纵向切片均已完成自动实施；S3 完整隔离 Release Core 83/83 + Integration 551/551，共 634/634，构建 0 warning / 0 error，等待独立候选物理 Gate。跨页排序、M3.2/M3.3 与 KI-001 均未进入本轮。
 
 ## 1. 阶段目标与完成边界
 
@@ -493,6 +493,8 @@ IStageRepository.RelinkAsync(
 
 > **S0 修订（2026-09-11）**：用户确认不单独发布静态排序壳层；首个可见候选必须同时具备真实同页拖动终态。V2 卡片不再恢复本节旧有的独立 24 DIP 把手，排序模式改为整卡内部鼠标拖动；每次松手独立保存，标题栏使用“完成/退出排序”而非可被误解为撤销已提交移动的“取消”。下文 16.6 与 6D 中的“独立把手”文字据此失效，S0–S1 的权威合同、事务步骤与门禁见 `M3_STAGE_SORT_S0_S1_PLAN.md`；复合邻接、最多 64 项重平衡、keyset 和 schema 7 边界继续有效。
 
+> **S3 物理反馈修订（2026-09-11）**：首次同页候选的基本功能通过，但用户否决显式“排序/完成”模式、逐槽 `Items.Move` 引发的卡顿和跳变式动画，确认普通界面直接按住卡片即可排序。S3 改为 pin/menu 等交互子控件排除、其余卡面越过系统阈值后直接拖动；预览只记录目标槽并驱动合成层/邻位 `TranslateTransform`，不发布集合变化、不重建行投影，松手才移动一次集合并提交一次。下文所有“显式模式”“预览移动集合”“目标轮廓”要求均以此修订为准；Core/SQLite、复合邻接、取消与 committing 一次终态不变。
+
 ### 16.1 源码诊断与进入事实
 
 - 当前 HEAD 为 `88b3710`；Checkpoint 5 文档验收变更尚未提交，产品源码相对该提交无新增差异。最近完整基线仍为 Release Core 74/74 + Integration 433/433，共 507/507，构建 0 warning / 0 error。
@@ -506,8 +508,8 @@ IStageRepository.RelinkAsync(
 
 交付：
 
-- 独立排序把手启动的 Stage 内部鼠标排序；卡片主体继续没有点击取用或拖出行为；
-- 同页实时内存预览、Esc/隐藏/失捕/设置/外部拖入/Dispose 完整回滚；
+- 普通界面卡片主体直接启动 Stage 内部鼠标排序，pin/menu 等交互子控件不触发；
+- 同页零集合重建的视觉预览、Esc/隐藏/失捕/设置/外部拖入/Dispose 完整取消；
 - 以目标直接邻项表达的单次 SQLite 提交，普通情况只更新源项；
 - 数值间隔耗尽时最多更新 64 项的局部重平衡；
 - 页内自动滚动、一次武装的跨页切换、轻量拖影与插入标记；
@@ -518,7 +520,7 @@ IStageRepository.RelinkAsync(
 - 不进入 WPF/OLE `DoDragDrop`，不创建 source token、外部拖放 lease 或第二个窗口级 Router；
 - 不实现卡片主体点击取用、`CF_HDROP` 仅复制、成功消费或出站拖动；
 - 不改变固定项排序资格，固定只影响后续消费语义，固定与未固定项均可排序；
-- 不加入键盘重排、批量选择、分组、搜索、容量设置或 schema 8；排序把手保留键盘焦点和自动化说明，但本检查点只承诺鼠标拖动；
+- 不加入键盘重排、批量选择、分组、搜索、容量设置或 schema 8；本检查点只承诺鼠标拖动；
 - 不处理 KI-001，也不把内部鼠标捕获结果外推为活动 Explorer OLE 显隐安全证据。
 
 ### 16.3 Core 请求、页边界与终态
@@ -580,7 +582,7 @@ StageReorderResult(
 行为顺序：
 
 - `BeginReorder` 只在初始化完成、非 Loading/外部拖入/已有排序、源项属于当前页且至少存在另一项时成功；开始时只快照当前页，不持有 `_operationGate` 跨越整个鼠标会话。
-- 同页 `PreviewReorder` 只移动 `ObservableCollection` 中的现有投影；请求邻项从预览后的源项两侧生成，不用连续索引作为持久化身份。
+- 同页 `PreviewReorder` 只更新会话目标索引，`ObservableCollection` 和行投影在按住期间保持不变；松手认领 committing 后才单次 `Items.Move`，再从终态源项两侧生成请求邻项，不用连续索引作为持久化身份。
 - 跨页期间保留源项的轻量快照用于拖影，`Items` 只替换成当前目标 64 项并显示独立插入标记；返回源页时恢复原始页快照并重新进入同页预览，不产生重复源卡。
 - 页加载和最终提交仍进入 `_operationGate`。其他分页或管理命令在 `IsReordering` 时禁用；若已排队的入站/管理写入先完成并替换权威页面，必须先取消旧排序 generation。若数据库在会话期间发生合法变化，最终邻接/revision Gate 拒绝陈旧提交。
 - `Esc`、隐藏、设置、外部 DragEnter、鼠标捕获丢失、页加载失败和 Dispose 都调用同一个 `TryCancel`，只有首个终态恢复源页快照、清 Busy/拖影/插入标记并释放捕获；迟到页结果按 generation 丢弃。
@@ -592,15 +594,15 @@ StageReorderResult(
 
 ### 16.6 WPF 手势、几何与宿主收口
 
-- 激活 Card Gate 已预留的约 24 DIP 独立排序把手区，不复用文件类型图标、卡片主体、固定按钮或更多菜单。图标字体只设置在把手内部图标 `TextBlock`，避免再次通过 Button/ContextMenu 继承污染中文。
-- 把手具备 ToolTip、键盘焦点、`AutomationProperties.Name="拖动调整中转项目顺序"` 和 HelpText；按下本身不排序，移动超过 `SystemParameters.MinimumHorizontalDragDistance / MinimumVerticalDragDistance` 后才请求 `BeginReorder`。
-- 鼠标捕获归 `StageView`，不调用 OLE。拖影与目标 cell 轮廓位于 `IsHitTestVisible=false` 的轻量 overlay；拖影复用 Card Gate 的内容模板，源卡只显示 dragging 视觉，不打开菜单或创建额外 HWND。
+- 不再提供显式排序模式或第三个把手；普通界面的 pin/menu 子树保持原命令，卡片其余区域直接作为内部排序命中面。未来点击取用或 OLE 拖出若需要同一左键阈值，必须另行决策，不能静默复用。
+- 整卡按下本身不排序，移动超过 `SystemParameters.MinimumHorizontalDragDistance / MinimumVerticalDragDistance` 后才请求 `BeginReorder`；加载完成状态提示按住卡片可直接排序，每次松手立即保存。
+- 鼠标捕获归 `StageView`，不调用 OLE。跟手卡片位于 `IsHitTestVisible=false` 且缓存位图的轻量 overlay，并以 `TranslateTransform` 更新位置；原槽只保留低透明占位，区间内其他已实现卡片只在目标槽变化时以 140ms EaseOut transform 平滑让位，不触发布局重建或创建额外 HWND。140ms 是工程调优起点，物理 Gate 可继续调整。
 - 插槽几何基于当前已实现卡片的实际 `TransformToAncestor` 二维边界：先按 Y 定位真实行带，再按 X 与卡片中心确定 0..实际项数的插槽；不硬编码卡宽/卡高，不把尾行空 cell 当业务项。未实现容器只能通过页边界插槽表达。Recycling、DataContextChanged 和 Availability 绑定继续按原 id/revision 收口。
 - 当前页尚可滚动时，顶部/底部 36 DIP 命名边缘区使用 `CompositionTarget.Rendering` 的真实 elapsed time 做有界自动滚动；事件在终态、失捕、隐藏和 Dispose 时必定解绑。只有 ScrollViewer 已到当前页物理边界，才请求跨页。
 - 每次从非边缘进入顶部/底部换页区只消费一次跨页请求；必须离开该区后才重新武装，不使用 hover 延时或定时翻页。进入较旧页后初始插槽为页首，进入较新页后初始插槽为页尾，随后离开边缘再按真实容器更新。
-- Card Profile、列数或视口 generation 变化时先取消活动排序、恢复原扁平顺序并清除拖影/目标轮廓，再重组展示行；禁止在旧二维几何上继续提交。
+- Card Profile、列数或视口 generation 变化时先取消活动排序并清除拖卡/邻位 transform，再重组展示行；禁止在旧二维几何上继续提交。
 - `StageView.TryCancelReorderInteraction / CancelAllInteractions` 接入 `MainWindow` 的 Esc、设置切换和隐藏路径；`StageWorkspaceFileDropTarget.CancelInteractions` 只委托 Stage view 清理内部手势。允许补齐该 adapter 空实现，但不修改 `WorkspaceFileDropRouter` 的目标选择、数据快照或终态逻辑。
-- 外部拖入 active 时继续让 `StageInteractionSurface.IsHitTestVisible=false`；设置该状态前先取消内部排序。第一次 Esc 只取消排序并保持 Vok 可见，第二次 Esc 才沿用宿主隐藏语义，与 Launcher 一致。
+- 外部拖入 active 时继续让 `StageInteractionSurface.IsHitTestVisible=false`；设置该状态前先取消内部排序。第一次 Esc 只取消活动拖动并保持 Vok 可见，下一次 Esc 沿用宿主隐藏语义，与 Launcher 一致。
 
 ### 16.7 分步实施顺序
 
@@ -624,11 +626,13 @@ StageReorderResult(
 - 先用 fake repository 覆盖同页顶部/中间/底部、NoChange、冲突、提交异常、已提交后刷新失败、排队 mutation 与 Dispose；
 - 此步不加跨页或正式 WPF 把手。
 
-#### 6D：WPF 把手与页内交互
+#### 6D：WPF 直接拖动与页内交互
 
-- 激活独立把手，接系统阈值、真实二维卡片插槽、共享内容拖影、目标 cell 轮廓、鼠标捕获和页内事件驱动滚动；
+- 接入普通界面整卡直接命中和交互子控件排除，使用系统阈值、真实二维卡片插槽、共享内容拖卡、邻位 transform、鼠标捕获和页内事件驱动滚动；
 - 接 Esc、隐藏、设置、失捕、外部拖入和 adapter 取消；
 - 覆盖尾行空 cell 不成锚点、活动排序遇列数变化先取消，以及浅色/深色、260×408 DIP、长 Unicode、Missing/固定和字体继承回归。
+
+**S3 实施结果（2026-09-11，按物理反馈修订）**：ViewModel 使用 generation-scoped `Previewing / Committing / Ended` 会话；首次候选虽通过基本排序 Gate，但逐次 `Items.Move` 会让 `StageCardRowsProjection` 在 UI 线程清空/重建整页行、回收卡片、重调 Availability 和同步布局，形成明显卡顿，独立拖影加目标轮廓也不符合直接操控预期。修订后预览只记录目标索引，连续目标变化发布零次 `Items.CollectionChanged`；WPF 直接捕获普通卡面，跟手层使用缓存内容和 transform，邻位仅在目标槽改变时平滑让位，松手才单次移动集合并沿用既有一次提交。显式“排序/完成”和目标轮廓已删除，pin/menu 保持直接可用；Esc、外部 DragEnter、设置、隐藏、失捕、卸载、换列、committing 不回滚等收口不变。完整隔离 Release Core 83/83 + Integration 554/554，共 637/637，零警告构建与 520/260 DIP 布局截图通过；默认 Release 已替换为唯一 PID 3316，用户确认基本效果符合预期并授权提交，S3 完成。
 
 #### 6E：跨页切换与 cursor 恢复
 
@@ -652,7 +656,7 @@ StageReorderResult(
 | 数据安全 | id/canonical/target/kind/pinned/created 不变，源文件/目录/`.lnk` 摘要零变化，schema 仍为 7 |
 | 规模 | 10,000 条 keyset 无重复遗漏；普通更新 1 行、局部最多 64 行；无 `OFFSET`、全表 materialize 或全表 UPDATE |
 | ViewModel | 同页预览、跨页轻量源、一次提交、Esc/隐藏/失捕/页失败/Dispose、冲突重载、提交后刷新失败不重放 |
-| WPF | 只有把手过系统阈值才开始；卡片/固定/菜单不触发；真实二维容器、尾行实际插槽、换列取消、边缘一次武装、overlay 清理、中文字体链 |
+| WPF | 普通卡面超过系统阈值直接开始；pin/menu 不触发；预览零集合通知、邻位 transform、真实二维容器、尾行实际插槽、换列取消、边缘一次武装、overlay/动画时钟清理、中文字体链 |
 | 邻接回归 | 外部 Router、Launcher 排序、Clipboard 可见项、Workspace Esc/设置、Stage Availability/管理动作业务期望不变 |
 
 ### 16.9 Checkpoint 6 物理 Gate 与停止条件
@@ -660,8 +664,8 @@ StageReorderResult(
 Checkpoint 6 自动门禁通过后，先在隔离候选执行最小物理 Gate，结果并入 Checkpoint 7 最终矩阵：
 
 1. 默认 50 项中把文件、目录、`.lnk` 分别移动到顶部、中间和底部，重启后顺序保持；
-2. 按下未过阈值、Esc、失去捕获、切设置和隐藏均回滚，第一次 Esc 不关闭 Vok；固定/菜单操作不误触排序；
-3. 在隔离 200 条数据根中双向跨页，验证页内滚动、边缘一次武装、返回源页、目标 cell 轮廓和提交后页摘要；
+2. 无需切换模式即可从卡面直接拖动，pin/menu 点击不误触；按下未过阈值、Esc、失去捕获、切设置和隐藏均取消，第一次 Esc 不关闭 Vok；
+3. 在隔离 200 条数据根中双向跨页，验证页内滚动、边缘一次武装、返回源页、邻位让位动画和提交后页摘要；
 4. Missing 与固定项可排序但不改变状态，源目录摘要前后相同；
 5. 排序结束后立刻执行标准 Explorer/桌面拖入，确认内部捕获、拖影和目标 cell 轮廓已清零，Router 仍只分发一次；
 6. 100 次成功/取消/跨页交替后，无鼠标捕获、渲染订阅、VM、SQLite 工作或句柄单调增长。

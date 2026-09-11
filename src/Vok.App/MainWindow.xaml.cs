@@ -134,6 +134,7 @@ public partial class MainWindow : Window, IWorkspaceWindow
         if (e.NewValue is false)
         {
             CancelExternalFileDrag();
+            StagePanel.CancelAllInteractions();
         }
     }
 
@@ -162,6 +163,7 @@ public partial class MainWindow : Window, IWorkspaceWindow
         {
             CancelExternalFileDrag();
             LauncherPanel.CancelAllInteractions();
+            StagePanel.CancelAllInteractions();
         }
     }
 
@@ -171,6 +173,7 @@ public partial class MainWindow : Window, IWorkspaceWindow
     private void OnClosing(object? sender, CancelEventArgs e)
     {
         CancelExternalFileDrag();
+        StagePanel.CancelAllInteractions();
         if (Application.Current?.Dispatcher.HasShutdownStarted == true)
         {
             return;
@@ -189,7 +192,8 @@ public partial class MainWindow : Window, IWorkspaceWindow
             return;
         }
 
-        if (LauncherPanel.TryCancelReorderInteraction())
+        if (StagePanel.TryCancelReorderInteraction() ||
+            LauncherPanel.TryCancelReorderInteraction())
         {
             e.Handled = true;
             return;

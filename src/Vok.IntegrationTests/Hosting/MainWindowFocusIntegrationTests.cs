@@ -658,6 +658,80 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
         });
     }
 
+    [Fact]
+    public void EscapeCancelsDirectStagePreviewBeforeHidingWorkspace()
+    {
+        wpf.Invoke(() =>
+        {
+            var settingsStore = new InMemorySettingsStore();
+            var appearance = new AppearanceController(
+                settingsStore,
+                new WpfAppThemeApplier(wpf.Application));
+            appearance.InitializeAsync().GetAwaiter().GetResult();
+            var hotkeys = new HotkeyController(
+                settingsStore,
+                new FakeConfigurableHotkey());
+            hotkeys.InitializeAsync().GetAwaiter().GetResult();
+            var mainViewModel = new MainWindowViewModel(
+                new SettingsViewModel(appearance, hotkeys));
+            using var stageViewModel = new StageViewModel(
+                new StaticStageRepository(itemCount: 4),
+                new NoopStageFileService());
+            stageViewModel.InitializeAsync().GetAwaiter().GetResult();
+            var originalIds = stageViewModel.Items.Select(static item => item.Id).ToArray();
+            var window = new MainWindow(
+                mainViewModel,
+                CreateLauncherLayouts(500),
+                stageViewModel: stageViewModel)
+            {
+                Width = 900,
+                Height = 500,
+            };
+            WorkspaceHideReason? hideReason = null;
+            window.HideRequested += (_, eventArgs) => hideReason = eventArgs.Reason;
+
+            window.Show();
+            try
+            {
+                window.UpdateLayout();
+                window.Dispatcher.Invoke(DispatcherPriority.ApplicationIdle, static () => { });
+                var generation = stageViewModel.BeginReorder(stageViewModel.Items[2]);
+                Assert.True(stageViewModel.PreviewReorder(generation, 0));
+                Assert.Equal(
+                    originalIds,
+                    stageViewModel.Items.Select(static item => item.Id));
+
+                RaiseEscape(window);
+                Assert.Null(hideReason);
+                Assert.False(stageViewModel.IsReordering);
+                Assert.Equal(
+                    originalIds,
+                    stageViewModel.Items.Select(static item => item.Id));
+
+                RaiseEscape(window);
+                Assert.Equal(WorkspaceHideReason.Escape, hideReason);
+                hideReason = null;
+
+                generation = stageViewModel.BeginReorder(stageViewModel.Items[1]);
+                Assert.True(stageViewModel.PreviewReorder(generation, 3));
+                mainViewModel.NavigateTo(WorkspaceSection.Settings);
+                Assert.False(stageViewModel.IsReordering);
+                Assert.Equal(
+                    originalIds,
+                    stageViewModel.Items.Select(static item => item.Id));
+                mainViewModel.NavigateTo(WorkspaceSection.Workspace);
+
+                RaiseEscape(window);
+                Assert.Equal(WorkspaceHideReason.Escape, hideReason);
+            }
+            finally
+            {
+                window.Hide();
+                window.Close();
+            }
+        });
+    }
+
     private static bool FocusAtInputPriority(MainWindow window)
     {
         var frame = new DispatcherFrame();
