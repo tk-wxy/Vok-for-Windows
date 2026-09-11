@@ -1,6 +1,6 @@
 # M3 中转站排序 S0–S1 实施计划
 
-> **状态（2026-09-11）**：S0 合同与 S1 数据快路已完成。Core 请求/结果、同快照分页边界和 SQLite 单项稀疏键写入均已落地；完整隔离 Release 为 Core 82/82 + Integration 511/511，构建 0 warning / 0 error。未接正式排序入口、鼠标手势、局部重平衡、跨页交互或真实产品数据库；下一步进入 S2。
+> **状态（2026-09-11）**：S0 合同、S1 数据快路及其后续 S2 局部重平衡均已完成。Core 请求/结果、同快照分页边界、SQLite 单项稀疏键和最多 64 项重平衡均已落地；完整隔离 Release 为 Core 83/83 + Integration 523/523，构建 0 warning / 0 error。未接正式排序入口、鼠标手势、跨页交互或真实产品数据库；下一步进入 S3 首个可见同页排序纵向切片。
 
 ## 1. 结论
 
@@ -239,3 +239,11 @@ S1 通过后进入 S2 局部最多 64 项重平衡。S2 数据门禁完成后，
 - S1.3：事务内完成 source/anchor revision 校验、排除 source 的直接邻接证明、NoChange、顶部/中间/底部稀疏键和单行权威更新；间隔/端点耗尽保守返回，revision 溢出与 SQL 异常回滚传播。
 - 数据安全：测试证明仅 source 的顺序、revision、更新时间变化，文件、目录与 `.lnk` 源摘要不变；schema 保持 7，源码不含 `OFFSET`/`ROW_NUMBER` 或全表排序更新。
 - 收口：完整隔离 Release 测试 593/593（Core 82 + Integration 511），构建 0 warning / 0 error，`git diff --check` 通过；默认 Release PID 5576 保持运行且仍是 S1 前候选。
+
+## 10. S2 后续实施结果（2026-09-11）
+
+- 新增纯 `StageOrderRebalancePlanner`：目标两侧候选由近到远输入，按 2–64 的最小连续最终窗口搜索；输出使用严格递减数值键，不依赖 GUID 平局，并以 `Int128` 计算 `Int64` 边界。
+- SQLite 仅在 S1 快路无空间时从目标两侧各读取最多 64 项，查询继续使用 `(sort_order,id)` keyset；第 64 项可作为窗口外边界，但成功写入和 `ChangedItems` 永不超过 64。
+- 全部成员 revision 在首个 UPDATE 前预检；事务只更新 sort 实际变化的行，统一 revision +1/updated time，读取权威结果后提交。成员溢出、后续 SQL 失败与 65 项需求均零部分写入。
+- 2/63/64 项密集端点、65 项拒绝、中间/底部极值、窗口外行保持、文件/目录/`.lnk` 摘要和 10,000 条规模门禁通过；规模夹具实测重平衡 64 行、普通快路 1 行，两侧查询均命中 `ix_stage_items_order`。
+- 完整隔离 Release 为 Core 83/83 + Integration 523/523，共 606/606；构建 0 warning / 0 error，schema 7、Router 与 KI-001 均未改变。随后按用户要求以最新默认 Release 构建替换旧 PID 5576，当前唯一 PID 1512 包含 S1/S2 数据代码但没有可见排序消费者；用户已确认呼出/隐藏、卡片交互、外部文件/目录/`.lnk` 拖入、管理动作与重启保持的必要人工回归通过。下一步只进入 S3 同页真实交互，不提前实现跨页。

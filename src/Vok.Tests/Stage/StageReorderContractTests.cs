@@ -100,6 +100,22 @@ public sealed class StageReorderContractTests
     }
 
     [Fact]
+    public void ResultRejectsDuplicateOrUnboundedChangedItems()
+    {
+        var item = CreateItem();
+        Assert.Throws<ArgumentException>(() =>
+            new StageReorderResult(StageReorderStatus.Applied, [item, item]));
+
+        var tooMany = Enumerable.Range(
+                0,
+                StageReorderResult.MaximumChangedItems + 1)
+            .Select(_ => CreateItem())
+            .ToArray();
+        Assert.Throws<ArgumentException>(() =>
+            new StageReorderResult(StageReorderStatus.Applied, tooMany));
+    }
+
+    [Fact]
     public void ExistingStagePageConstructionKeepsOptionalBoundariesEmpty()
     {
         var page = new StagePage([], null, 0);

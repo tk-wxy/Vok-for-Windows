@@ -12,27 +12,45 @@ public enum StageReorderStatus
 
 public sealed record StageReorderResult
 {
+    public const int MaximumChangedItems = 64;
+
     public StageReorderResult(
         StageReorderStatus status,
         IReadOnlyList<StageItem> changedItems)
     {
         ArgumentNullException.ThrowIfNull(changedItems);
-        if (status is StageReorderStatus.Applied && changedItems.Count == 0)
+        var snapshot = changedItems.ToArray();
+        if (status is StageReorderStatus.Applied && snapshot.Length == 0)
         {
             throw new ArgumentException(
                 "An applied Stage reorder must return authoritative changed items.",
                 nameof(changedItems));
         }
 
-        if (status is not StageReorderStatus.Applied && changedItems.Count != 0)
+        if (status is not StageReorderStatus.Applied && snapshot.Length != 0)
         {
             throw new ArgumentException(
                 "A rejected or unchanged Stage reorder cannot return changed items.",
                 nameof(changedItems));
         }
 
+        if (snapshot.Length > MaximumChangedItems)
+        {
+            throw new ArgumentException(
+                $"A Stage reorder cannot change more than {MaximumChangedItems} items.",
+                nameof(changedItems));
+        }
+
+        if (snapshot.Select(static item => item.Id).Distinct().Count() !=
+            snapshot.Length)
+        {
+            throw new ArgumentException(
+                "A Stage reorder cannot return the same changed item more than once.",
+                nameof(changedItems));
+        }
+
         Status = status;
-        ChangedItems = Array.AsReadOnly(changedItems.ToArray());
+        ChangedItems = Array.AsReadOnly(snapshot);
     }
 
     public StageReorderStatus Status { get; }

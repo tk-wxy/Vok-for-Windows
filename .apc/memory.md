@@ -11,10 +11,10 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP 已归档，M3.1 Checkpoint 0–5 已通过人工 Gate。V2 卡片、Hover/KeyboardFocus 与 Gate 3 已完成。排序 S0 合同和 S1 Core/同快照分页边界/SQLite 单项快路已完成；S2、Gate 2/Checkpoint 6 真实交互、取用和拖出仍未实现。
-- **最近进展**：2026-09-11 完成 `StageItemVersion/StageOrderAnchor/StageReorderRequest/Result`、`IStageRepository.ReorderAsync`、页面两侧直接 anchor 和 SQLite 单项稀疏键事务。事务校验 source/anchor revision 及排除 source 后的直接邻接，只更新 source；无变化/冲突/键耗尽零写入，revision 溢出与 SQL 异常回滚传播。first/middle/last/single/empty、随机同键 SQLite 顺序、顶/中/底、10,000 条索引、文件/目录/`.lnk` 不变和全仓回归通过：Core 82/82 + Integration 511/511，构建 0 warning / 0 error。schema 7、真实数据库、Router、KI-001 与 PID 5576 未改。
-- **下一步**：进入排序 S2：设计并实现数值间隔耗尽时最多 64 项的局部重平衡，先保持无 UI 消费者；S2 门禁通过后，再把显式排序模式、整卡同页拖动、预览和一次提交合并成首个用户可见纵向切片。
-- **已知问题**：KI-001 仍延期：活动 Explorer 拖动中关闭 Vok 可能让松手落回源目录并生成副本；本轮未触碰其显隐租约。当前默认 Release PID 5576 仍是 S1 前 Gate 3 候选；运行中会锁住默认 App Release 输出，后续验证须继续使用隔离 artifacts，除非用户明确要求替换实例。测试产生的 `.lnk` 副本未经授权不得删除；M3 入站历史物理稳定性实际为 50+ 次而非计划的 100 次。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP 已归档，M3.1 Checkpoint 0–5 已通过人工 Gate。V2 卡片、Hover/KeyboardFocus 与 Gate 3 已完成。排序 S0 合同、S1 单项快路和 S2 最多 64 项局部重平衡均已完成；Gate 2/Checkpoint 6 真实交互、取用和拖出仍未实现。
+- **最近进展**：2026-09-11 完成 S2：单项快路耗尽后在同一事务内从目标两侧各有界读取最多 64 项，按最小连续窗口、严格递减数值键和统一步长规划，只更新真实变更行并返回至多 64 个唯一权威条目。2/63/64 项密集端点成功，65 项保守拒绝；非 source revision 溢出、后续成员 SQL 失败完整回滚，窗口外行与文件/目录/`.lnk` 不变。10,000 条下局部更新 64、普通更新 1 且候选查询使用顺序索引；完整隔离 Release Core 83/83 + Integration 523/523，共 606/606，构建 0 warning / 0 error。随后精确停止旧 PID 5576，以最新默认 Release 构建启动唯一 PID 1512，加载 `Vok.dll` SHA-256 为 `A3D92639DE582B77B4545F3DC2CCF65F139D0F384D9EEA2119FF600951DA44A6`；用户确认该候选的呼出/隐藏、卡片交互、外部文件/目录/`.lnk` 拖入、管理动作与重启保持必要人工回归通过。schema 7、Router 与 KI-001 未改，当前无排序 UI 可触发 S2 写入。
+- **下一步**：进入排序 S3 首个用户可见同页纵向切片：先实现 generation-scoped ViewModel 预览/取消/一次提交，再接显式排序模式、整卡系统阈值拖动、拖影/二维插槽和宿主取消路径；同页门禁通过后再进入 S4 跨页排序。
+- **已知问题**：KI-001 仍延期：活动 Explorer 拖动中关闭 Vok 可能让松手落回源目录并生成副本；本轮未触碰其显隐租约。当前唯一默认 Release PID 1512 包含 S1/S2 数据代码，但尚无可见排序消费者；运行中会锁住默认 App Release 输出，后续验证须继续使用隔离 artifacts，除非用户明确要求替换实例。测试产生的 `.lnk` 副本未经授权不得删除；M3 入站历史物理稳定性实际为 50+ 次而非计划的 100 次。
 
 ## §0A 最近会话
 
@@ -50,6 +50,7 @@
 - 用户随后确认先完成 UI/交互基础再继续功能。Redesign Gate 1 实现 Hover/KeyboardFocus 的统一状态、Subtle surface、1.02 scale、ZIndex、操作 chrome 和 Accent focus ring；定向测试发现并修复 FocusWithin 退出与 ContextMenu 进入动画竞争，最终由单一卡片交互状态唯一驱动画面。外部 drag、隐藏、换绑、回收及 100 轮快速聚焦/抑制/换列/滚动/显隐均零残留；浅色 Hover/焦点、暗色、260 DIP 截图和隔离 Release 576/576、0 warning / 0 error、`git diff --check` 通过。等待用户实际视觉确认，未发布或替换 PID 352。
 - Gate 1 提交为 `e40193e`。用户澄清只有该项已实现，其他路线项无法测试；后续依赖分析发现纯拖影没有产品终态、V2 72 DIP 卡也无法无冲突容纳第三个 24 DIP 排序把手。新增待确认方案 `docs/M3_STAGE_UI_FOUNDATION_NEXT_PLAN.md`：先以现有真实 Router 完成 Gate 3，再用显式排序模式把 Gate 2 与 Checkpoint 6 合并为真实可测闭环；未修改产品代码、既有决策或运行实例。
 - 用户确认上述调整。Gate 3 以既有 Router 状态扩展为 2 DIP 边界、0.08 Accent wash 和明确松手文案；浅色 260 DIP、深色 520 DIP 截图、完整隔离 Release 576/576 与零警告构建通过。随后精确停止旧默认 Release PID 20760，重新构建并启动唯一 PID 22220，加载 DLL SHA-256 为 `C0A514F019BDB87CEBCC8A8D7ECCB21A9192C0084F6C1C79AA94CE1BD61E3B1D`；用户真实 Explorer/桌面拖入 Gate 通过。下一步做不含拖动手势的排序模式壳层。
+- 2026-09-11 排序 S0–S2 数据基础完成：Core 复合邻接与分页边界、SQLite 单项快路及最多 64 项局部重平衡均落地；密集 2/63/64 成功、65 拒绝、成员溢出/后续 SQL 失败回滚、10,000 条有界索引与源摘要门禁通过。完整隔离 Release 606/606、零警告构建；未接 UI、Router 或 KI-001。随后按用户要求停止旧 PID 5576，以最新默认 Release 输出启动唯一 PID 1512；用户确认现有可见能力的必要人工回归通过，当前仍无 UI 路径触发排序写入，下一步合并同页真实排序纵向切片。
 
 ### 会话 2026-09-04 - M3 中转站产品契约、扩容与入站 MVP 收窄
 

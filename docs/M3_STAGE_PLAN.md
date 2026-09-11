@@ -1,6 +1,6 @@
 # M3 中转站产品契约与实施计划
 
-> **状态（2026-09-11）**：产品边界和长期路线已确认，“外部拖着文件呼出 Vok，在中转站松手后条目持久落入”的入站 MVP 已完成并归档。M3.MVP1–3、Explorer/桌面代表矩阵与用户 5 组共 50+ 次循环通过；不把它扩写为计划的 100 次。M3.1 Checkpoint 0–5、单一自适应 V2 卡片、Hover/KeyboardFocus 与 Gate 3 已完成并通过对应 Gate。排序 S0 合同和 S1 Core/同快照分页边界/SQLite 单项快路已完成，下一步进入 S2 局部重平衡；Checkpoint 6 的真实排序、取用和拖出仍未实现。KI-001 仍延期；200 条仍是首期产品开放上限，不是 schema、仓储或分页的架构上限。
+> **状态（2026-09-11）**：产品边界和长期路线已确认，“外部拖着文件呼出 Vok，在中转站松手后条目持久落入”的入站 MVP 已完成并归档。M3.MVP1–3、Explorer/桌面代表矩阵与用户 5 组共 50+ 次循环通过；不把它扩写为计划的 100 次。M3.1 Checkpoint 0–5、单一自适应 V2 卡片、Hover/KeyboardFocus 与 Gate 3 已完成并通过对应 Gate。排序 S0 合同、S1 Core/同快照分页边界/SQLite 单项快路和 S2 最多 64 项局部重平衡已完成，下一步进入首个可见同页排序纵向切片；Checkpoint 6 的真实排序、取用和拖出仍未实现。KI-001 仍延期；200 条仍是首期产品开放上限，不是 schema、仓储或分页的架构上限。
 
 ## 0. 当前最小 MVP（本轮唯一交付范围）
 
@@ -354,7 +354,7 @@ INDEX stage_items_order ON stage_items(sort_order, id)
 
 交付：固定、手工排序、打开/定位、移除、重新关联和 Missing 可见项检查。
 
-状态：Checkpoint 0–5 已完成：revision-safe 的安全移除与固定、可见项 Availability/Missing、Stage 专用隐藏后打开/定位、复制原路径和重新关联均已落地并通过实际候选 Gate。单一自适应 V2 卡片、真实行投影、逐卡 Availability 回收、Hover/KeyboardFocus 和 Gate 3 外部拖入反馈均已完成；排序 S0 合同及 S1 Core/分页边界/SQLite 单项快路已完成，下一步实施 S2 最多 64 项局部重平衡，仍不增加可见排序入口。后续整卡同页/跨页真实交互完成后，才宣布 Checkpoint 6。schema 仍保持 7，`AppSettings`、外部拖放 Router 与 KI-001 不修改。详细排序步骤见 `M3_STAGE_SORT_S0_S1_PLAN.md`，完整 Checkpoint 6 契约与历史记录见 `M3_STAGE_M31_PLAN.md`。
+状态：Checkpoint 0–5 已完成：revision-safe 的安全移除与固定、可见项 Availability/Missing、Stage 专用隐藏后打开/定位、复制原路径和重新关联均已落地并通过实际候选 Gate。单一自适应 V2 卡片、真实行投影、逐卡 Availability 回收、Hover/KeyboardFocus 和 Gate 3 外部拖入反馈均已完成；排序 S0 合同、S1 Core/分页边界/SQLite 单项快路及 S2 最多 64 项局部重平衡已完成，仍未增加可见排序入口。后续整卡同页/跨页真实交互完成后，才宣布 Checkpoint 6。schema 仍保持 7，`AppSettings`、外部拖放 Router 与 KI-001 不修改。详细排序步骤见 `M3_STAGE_SORT_S0_S1_PLAN.md`，完整 Checkpoint 6 契约与历史记录见 `M3_STAGE_M31_PLAN.md`。
 
 ### M3.2：仅复制与点击取用（MVP 后续）
 

@@ -581,48 +581,126 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
             return RejectReorder(transaction, StageReorderStatus.NoChange);
         }
 
-        if (!TryCalculateSortOrder(
+        IReadOnlyList<StageOrderRebalanceAssignment> assignments;
+        if (TryCalculateSortOrder(
                 source,
                 request.NewerNeighbor,
                 request.OlderNeighbor,
                 out var sortOrder))
         {
-            return RejectReorder(
+            assignments = [new StageOrderRebalanceAssignment(source, sortOrder)];
+        }
+        else
+        {
+            var newerCandidates = ReadRebalanceNewerCandidates(
+                connection,
                 transaction,
-                StageReorderStatus.SortOrderExhausted);
+                source.Id,
+                request.NewerNeighbor);
+            var olderCandidates = ReadRebalanceOlderCandidates(
+                connection,
+                transaction,
+                source.Id,
+                request.OlderNeighbor);
+            EnsureCandidateStartsAtAnchor(
+                newerCandidates,
+                request.NewerNeighbor,
+                "newer");
+            EnsureCandidateStartsAtAnchor(
+                olderCandidates,
+                request.OlderNeighbor,
+                "older");
+            var plan = StageOrderRebalancePlanner.TryCreate(
+                source,
+                newerCandidates,
+                olderCandidates,
+                SortOrderStep);
+            if (plan is null)
+            {
+                return RejectReorder(
+                    transaction,
+                    StageReorderStatus.SortOrderExhausted);
+            }
+
+            assignments = plan.Assignments;
         }
 
-        var nextRevision = checked(source.Revision + 1);
-        var updatedUtc = DateTimeOffset.UtcNow;
-        using (var update = connection.CreateCommand())
+        var writes = assignments
+            .Where(static assignment =>
+                assignment.Item.SortOrder != assignment.SortOrder)
+            .Select(static assignment => new StageReorderWrite(
+                assignment.Item,
+                assignment.SortOrder,
+                checked(assignment.Item.Revision + 1)))
+            .ToArray();
+        if (writes.Length is 0 or > StageReorderResult.MaximumChangedItems)
         {
-            update.Transaction = transaction;
-            update.CommandText = """
-                UPDATE stage_items
-                SET sort_order = $sortOrder,
-                    revision = $nextRevision,
-                    updated_utc = $updatedUtc
-                WHERE id = $id AND revision = $expectedRevision;
-                """;
-            update.Parameters.AddWithValue("$sortOrder", sortOrder);
-            update.Parameters.AddWithValue("$nextRevision", nextRevision);
-            update.Parameters.AddWithValue("$updatedUtc", FormatUtc(updatedUtc));
-            update.Parameters.AddWithValue("$id", source.Id.ToString("D"));
-            update.Parameters.AddWithValue(
-                "$expectedRevision",
-                request.Source.Revision);
+            throw new InvalidOperationException(
+                "A Stage reorder produced an invalid bounded write plan.");
+        }
+
+        if (writes.Select(static write => write.Item.Id).Distinct().Count() !=
+            writes.Length)
+        {
+            throw new InvalidOperationException(
+                "A Stage reorder produced duplicate bounded write entries.");
+        }
+
+        var updatedUtc = DateTimeOffset.UtcNow;
+        using var update = connection.CreateCommand();
+        update.Transaction = transaction;
+        update.CommandText = """
+            UPDATE stage_items
+            SET sort_order = $sortOrder,
+                revision = $nextRevision,
+                updated_utc = $updatedUtc
+            WHERE id = $id AND revision = $expectedRevision;
+            """;
+        var sortOrderParameter = update.Parameters.Add(
+            "$sortOrder",
+            SqliteType.Integer);
+        var nextRevisionParameter = update.Parameters.Add(
+            "$nextRevision",
+            SqliteType.Integer);
+        update.Parameters.AddWithValue("$updatedUtc", FormatUtc(updatedUtc));
+        var idParameter = update.Parameters.Add("$id", SqliteType.Text);
+        var expectedRevisionParameter = update.Parameters.Add(
+            "$expectedRevision",
+            SqliteType.Integer);
+        foreach (var write in writes)
+        {
+            sortOrderParameter.Value = write.SortOrder;
+            nextRevisionParameter.Value = write.NextRevision;
+            idParameter.Value = write.Item.Id.ToString("D");
+            expectedRevisionParameter.Value = write.Item.Revision;
             if (update.ExecuteNonQuery() != 1)
             {
                 throw new InvalidOperationException(
-                    $"Stage item {source.Id:D} changed while reordering.");
+                    $"Stage item {write.Item.Id:D} changed while reordering.");
             }
         }
 
-        var updated = ReadItemById(connection, transaction, source.Id) ??
-            throw new InvalidOperationException(
-                $"Stage item {source.Id:D} disappeared after reordering.");
+        var changedItems = new List<StageItem>(writes.Length);
+        foreach (var write in writes)
+        {
+            var updated = ReadItemById(connection, transaction, write.Item.Id) ??
+                throw new InvalidOperationException(
+                    $"Stage item {write.Item.Id:D} disappeared after reordering.");
+            if (updated.SortOrder != write.SortOrder ||
+                updated.Revision != write.NextRevision)
+            {
+                throw new InvalidOperationException(
+                    $"Stage item {write.Item.Id:D} did not retain its planned order update.");
+            }
+
+            changedItems.Add(updated);
+        }
+
+        var result = new StageReorderResult(
+            StageReorderStatus.Applied,
+            changedItems);
         transaction.Commit();
-        return new StageReorderResult(StageReorderStatus.Applied, [updated]);
+        return result;
     }
 
     private static StageReorderStatus? ValidateStoredAnchor(
@@ -737,6 +815,107 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
         return reader.Read() ? ReadItem(reader) : null;
     }
 
+    private static IReadOnlyList<StageItem> ReadRebalanceNewerCandidates(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid sourceId,
+        StageOrderAnchor? newerNeighbor)
+    {
+        if (newerNeighbor is not { } anchor)
+        {
+            return [];
+        }
+
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT id, target_kind, target_value, canonical_key,
+                   resolved_name, sort_order, is_pinned, revision,
+                   created_utc, updated_utc
+            FROM stage_items
+            WHERE id <> $sourceId
+              AND (sort_order > $sortOrder
+                   OR (sort_order = $sortOrder AND id >= $id))
+            ORDER BY sort_order ASC, id ASC
+            LIMIT $limit;
+            """;
+        command.Parameters.AddWithValue("$sourceId", sourceId.ToString("D"));
+        command.Parameters.AddWithValue("$sortOrder", anchor.SortOrder);
+        command.Parameters.AddWithValue("$id", anchor.Id.ToString("D"));
+        command.Parameters.AddWithValue(
+            "$limit",
+            StageReorderResult.MaximumChangedItems);
+        return ReadItems(command);
+    }
+
+    private static IReadOnlyList<StageItem> ReadRebalanceOlderCandidates(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid sourceId,
+        StageOrderAnchor? olderNeighbor)
+    {
+        if (olderNeighbor is not { } anchor)
+        {
+            return [];
+        }
+
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT id, target_kind, target_value, canonical_key,
+                   resolved_name, sort_order, is_pinned, revision,
+                   created_utc, updated_utc
+            FROM stage_items
+            WHERE id <> $sourceId
+              AND (sort_order < $sortOrder
+                   OR (sort_order = $sortOrder AND id <= $id))
+            ORDER BY sort_order DESC, id DESC
+            LIMIT $limit;
+            """;
+        command.Parameters.AddWithValue("$sourceId", sourceId.ToString("D"));
+        command.Parameters.AddWithValue("$sortOrder", anchor.SortOrder);
+        command.Parameters.AddWithValue("$id", anchor.Id.ToString("D"));
+        command.Parameters.AddWithValue(
+            "$limit",
+            StageReorderResult.MaximumChangedItems);
+        return ReadItems(command);
+    }
+
+    private static IReadOnlyList<StageItem> ReadItems(SqliteCommand command)
+    {
+        var items = new List<StageItem>(StageReorderResult.MaximumChangedItems);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            items.Add(ReadItem(reader));
+        }
+
+        return items;
+    }
+
+    private static void EnsureCandidateStartsAtAnchor(
+        IReadOnlyList<StageItem> candidates,
+        StageOrderAnchor? anchor,
+        string direction)
+    {
+        if (anchor is null)
+        {
+            if (candidates.Count != 0)
+            {
+                throw new InvalidOperationException(
+                    $"A boundary-free Stage {direction} candidate read returned rows.");
+            }
+
+            return;
+        }
+
+        if (candidates.Count == 0 || candidates[0].Id != anchor.Value.Id)
+        {
+            throw new InvalidOperationException(
+                $"The Stage {direction} rebalance candidates did not begin at the target anchor.");
+        }
+    }
+
     private static bool TryCalculateSortOrder(
         StageItem source,
         StageOrderAnchor? newerNeighbor,
@@ -798,6 +977,11 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
         transaction.Rollback();
         return new StageReorderResult(status, []);
     }
+
+    private readonly record struct StageReorderWrite(
+        StageItem Item,
+        long SortOrder,
+        long NextRevision);
 
     private static StageItem? ReadItemById(
         SqliteConnection connection,
