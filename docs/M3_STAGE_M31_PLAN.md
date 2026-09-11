@@ -1,6 +1,6 @@
 # M3.1 中转站管理动作实施计划
 
-> **状态（2026-09-09）**：实施中。Checkpoint 0–5 已完成并通过用户实际候选物理 Gate；Checkpoint 6 有界排序已完成源码诊断和规划但继续暂停。单一自适应卡片的 V2 静态样式与 Launcher 对齐已由用户确认通过；Hover/KeyboardFocus Gate 1 候选也已完成实现、截图和隔离 Release 576/576 自动门禁，等待用户视觉确认。内部拖影、外部 Drop 新效果、M3.2/M3.3 与 KI-001 均未进入本轮。
+> **状态（2026-09-11）**：实施中。Checkpoint 0–5、V2 静态样式、Hover/KeyboardFocus 与 Gate 3 已完成。排序 S0 合同和 S1 Core/同快照分页边界/SQLite 单项快路现已完成，完整隔离 Release 593/593、构建 0 warning / 0 error；下一步进入 S2 最多 64 项局部重平衡。真实同页/跨页排序交互、M3.2/M3.3 与 KI-001 均未进入本轮。
 
 ## 1. 阶段目标与完成边界
 
@@ -151,7 +151,7 @@ RelinkAsync(id, expectedRevision, StageTargetDescriptor)
 ReorderAsync(StageReorderRequest)
 ```
 
-最终排序方法按上述专用请求收紧为 `ReorderAsync(StageReorderRequest)`。`StagePage` 增加当前页实际直接相邻的完整 `StageItem? NewerBoundary / OlderBoundary`，构造请求时再投影为 id/revision/sort anchor；原 `NextCursor` 翻页语义保持兼容。`OlderBoundary` 可复用现有多读的一行，`NewerBoundary` 用复合顺序索引查询当前首项之前的直接一行，不能直接信任可能已陈旧的调用方 cursor。两个边界不进入 `Items` 或创建常驻 VM，只用于排序邻接、跨页连续性和提交后安全页补位。排序请求必须能描述全局相邻位置，不能把“当前页最后”误写成“全局最后”。
+最终排序方法按上述专用请求收紧为 `ReorderAsync(StageReorderRequest)`。`StagePage` 增加当前页实际直接相邻的 `StageOrderAnchor? NewerBoundary / OlderBoundary`；原 `NextCursor` 翻页语义保持兼容。`OlderBoundary` 可复用现有多读的一行，`NewerBoundary` 用复合顺序索引查询当前首项之前的直接一行，不能直接信任可能已陈旧的调用方 cursor。两个边界不进入 `Items` 或创建常驻 VM，只用于排序邻接、跨页连续性和提交后安全页补位。排序请求必须能描述全局相邻位置，不能把“当前页最后”误写成“全局最后”。
 
 所有写入在 `SqliteStorageExecutor` 内单事务执行：
 
@@ -490,6 +490,8 @@ IStageRepository.RelinkAsync(
 ## 16. Checkpoint 6 有界排序实施计划（2026-09-06）
 
 > **前置决策（更新于 2026-09-08）**：用户已确认单一自适应卡片布局，并在 Card 1D 自动门禁后要求继续重设计 Workbench 参考样式、Hover、内部拖动态和外部拖入效果。`M3_STAGE_CARD_REDESIGN_PLAN.md` 必须先于排序实现完成；本轮不实现排序。下文 16.3–16.5 的复合邻接与持久化契约保持有效，16.6、6D、6E 继续作为新视觉冻结后的二维排序设计。
+
+> **S0 修订（2026-09-11）**：用户确认不单独发布静态排序壳层；首个可见候选必须同时具备真实同页拖动终态。V2 卡片不再恢复本节旧有的独立 24 DIP 把手，排序模式改为整卡内部鼠标拖动；每次松手独立保存，标题栏使用“完成/退出排序”而非可被误解为撤销已提交移动的“取消”。下文 16.6 与 6D 中的“独立把手”文字据此失效，S0–S1 的权威合同、事务步骤与门禁见 `M3_STAGE_SORT_S0_S1_PLAN.md`；复合邻接、最多 64 项重平衡、keyset 和 schema 7 边界继续有效。
 
 ### 16.1 源码诊断与进入事实
 

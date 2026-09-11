@@ -11,10 +11,10 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP 已归档，M3.1 Checkpoint 0–5 已通过人工 Gate。V2 静态卡片及整体对齐已确认，Redesign Gate 1 已提交，Gate 3 外部拖入表现层已通过自动与人工 Gate。排序模式、Gate 2/Checkpoint 6、取用和拖出仍未实现。
-- **最近进展**：用户确认先 Gate 3，再以显式排序模式合并 Gate 2 与真实 Checkpoint 6。Gate 3 继续消费唯一 Router 的 `sessionActive/targeted`，命中时显示整区 2 DIP Accent 边界、0.08 wash 和“松开以存入中转站”，未命中时 overlay 隐藏但卡片交互保持抑制；状态矩阵、浅色 260 DIP、深色 520 DIP 截图、隔离 Release Core 74/74 + Integration 502/502 与零警告构建通过。用户随后要求重启；默认 Release 重新构建后由 PID 22220 运行。未改 Router、仓储、真实数据库或 KI-001。
-- **下一步**：只实现显式排序模式壳层的静态状态、生命周期与焦点合同，不接内部拖动或仓储；其视觉 Gate 通过后，再进入 Gate 2 + Checkpoint 6 的真实排序纵向切片。
-- **已知问题**：KI-001 仍延期：活动 Explorer 拖动中关闭 Vok 可能让松手落回源目录并生成副本；本轮未触碰其显隐租约。当前默认 Release PID 22220 已包含 Gate 3 候选。测试产生的 `.lnk` 副本未经授权不得删除；M3 入站历史物理稳定性实际为 50+ 次而非计划的 100 次。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP 已归档，M3.1 Checkpoint 0–5 已通过人工 Gate。V2 卡片、Hover/KeyboardFocus 与 Gate 3 已完成。排序 S0 合同和 S1 Core/同快照分页边界/SQLite 单项快路已完成；S2、Gate 2/Checkpoint 6 真实交互、取用和拖出仍未实现。
+- **最近进展**：2026-09-11 完成 `StageItemVersion/StageOrderAnchor/StageReorderRequest/Result`、`IStageRepository.ReorderAsync`、页面两侧直接 anchor 和 SQLite 单项稀疏键事务。事务校验 source/anchor revision 及排除 source 后的直接邻接，只更新 source；无变化/冲突/键耗尽零写入，revision 溢出与 SQL 异常回滚传播。first/middle/last/single/empty、随机同键 SQLite 顺序、顶/中/底、10,000 条索引、文件/目录/`.lnk` 不变和全仓回归通过：Core 82/82 + Integration 511/511，构建 0 warning / 0 error。schema 7、真实数据库、Router、KI-001 与 PID 5576 未改。
+- **下一步**：进入排序 S2：设计并实现数值间隔耗尽时最多 64 项的局部重平衡，先保持无 UI 消费者；S2 门禁通过后，再把显式排序模式、整卡同页拖动、预览和一次提交合并成首个用户可见纵向切片。
+- **已知问题**：KI-001 仍延期：活动 Explorer 拖动中关闭 Vok 可能让松手落回源目录并生成副本；本轮未触碰其显隐租约。当前默认 Release PID 5576 仍是 S1 前 Gate 3 候选；运行中会锁住默认 App Release 输出，后续验证须继续使用隔离 artifacts，除非用户明确要求替换实例。测试产生的 `.lnk` 副本未经授权不得删除；M3 入站历史物理稳定性实际为 50+ 次而非计划的 100 次。
 
 ## §0A 最近会话
 

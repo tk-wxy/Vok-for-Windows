@@ -951,6 +951,11 @@ public sealed class StageViewModelTests
             StageTargetDescriptor target,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
+
+        public Task<StageReorderResult> ReorderAsync(
+            StageReorderRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     private sealed class StaticStageFileService(
@@ -1081,6 +1086,11 @@ public sealed class StageViewModelTests
             return Task.FromResult(
                 _relinkResult ?? throw new InvalidOperationException());
         }
+
+        public Task<StageReorderResult> ReorderAsync(
+            StageReorderRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     private sealed class DelayedNavigationStageRepository(
@@ -1155,6 +1165,11 @@ public sealed class StageViewModelTests
             Guid itemId,
             long expectedRevision,
             StageTargetDescriptor target,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<StageReorderResult> ReorderAsync(
+            StageReorderRequest request,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
     }

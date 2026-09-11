@@ -1366,6 +1366,11 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
             StageTargetDescriptor target,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
+
+        public Task<StageReorderResult> ReorderAsync(
+            StageReorderRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     private sealed class NoopStageFileService : IStageFileService

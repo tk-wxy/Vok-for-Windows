@@ -634,6 +634,510 @@ public sealed class SqliteStageRepositoryTests
     }
 
     [Fact]
+    public async Task ReorderMovesOnlyTheSourceToTopMiddleAndBottom()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "reorder-fast-path.db");
+        try
+        {
+            await InitializeStageSchemaAsync(databasePath);
+            var ids = Enumerable.Range(1, 4)
+                .Select(index => Guid.Parse(
+                    $"00000000-0000-0000-0000-{index:D12}"))
+                .ToArray();
+            InsertStageItems(
+                databasePath,
+                new StageSeed(ids[0], StageItemKind.File, "C:\\A", "A", 40),
+                new StageSeed(ids[1], StageItemKind.Directory, "C:\\B", "B", 30),
+                new StageSeed(ids[2], StageItemKind.ShellLink, "C:\\C.lnk", "C", 20),
+                new StageSeed(ids[3], StageItemKind.File, "C:\\D", "D", 10));
+
+            using var repository = new SqliteStageRepository(databasePath);
+            var original = (await LoadAllAsync(repository)).ToDictionary(
+                static item => item.Id);
+
+            var movedToTop = await repository.ReorderAsync(
+                new StageReorderRequest(
+                    Version(original[ids[3]]),
+                    null,
+                    Anchor(original[ids[0]])),
+                TestContext.Current.CancellationToken);
+            var afterTop = await LoadAllAsync(repository);
+            var topSource = afterTop.Single(item => item.Id == ids[3]);
+            Assert.Equal(StageReorderStatus.Applied, movedToTop.Status);
+            Assert.Equal(topSource, Assert.Single(movedToTop.ChangedItems));
+            Assert.Equal(
+                [ids[3], ids[0], ids[1], ids[2]],
+                afterTop.Select(static item => item.Id));
+            Assert.Equal(40 + SqliteStageRepository.SortOrderStep, topSource.SortOrder);
+            Assert.Equal(2, topSource.Revision);
+
+            var movedToMiddle = await repository.ReorderAsync(
+                new StageReorderRequest(
+                    Version(topSource),
+                    Anchor(afterTop.Single(item => item.Id == ids[1])),
+                    Anchor(afterTop.Single(item => item.Id == ids[2]))),
+                TestContext.Current.CancellationToken);
+            var afterMiddle = await LoadAllAsync(repository);
+            var middleSource = afterMiddle.Single(item => item.Id == ids[3]);
+            Assert.Equal(StageReorderStatus.Applied, movedToMiddle.Status);
+            Assert.Equal(middleSource, Assert.Single(movedToMiddle.ChangedItems));
+            Assert.Equal(
+                [ids[0], ids[1], ids[3], ids[2]],
+                afterMiddle.Select(static item => item.Id));
+            Assert.Equal(25, middleSource.SortOrder);
+            Assert.Equal(3, middleSource.Revision);
+
+            var movedToBottom = await repository.ReorderAsync(
+                new StageReorderRequest(
+                    Version(middleSource),
+                    Anchor(afterMiddle.Single(item => item.Id == ids[2])),
+                    null),
+                TestContext.Current.CancellationToken);
+            var afterBottom = await LoadAllAsync(repository);
+            var bottomSource = afterBottom.Single(item => item.Id == ids[3]);
+            Assert.Equal(StageReorderStatus.Applied, movedToBottom.Status);
+            Assert.Equal(bottomSource, Assert.Single(movedToBottom.ChangedItems));
+            Assert.Equal(
+                [ids[0], ids[1], ids[2], ids[3]],
+                afterBottom.Select(static item => item.Id));
+            Assert.Equal(20 - SqliteStageRepository.SortOrderStep, bottomSource.SortOrder);
+            Assert.Equal(4, bottomSource.Revision);
+
+            AssertBusinessFieldsEqual(original[ids[3]], bottomSource);
+            Assert.Equal(
+                original.Where(pair => pair.Key != ids[3])
+                    .OrderByDescending(pair => pair.Value.SortOrder)
+                    .Select(static pair => pair.Value),
+                afterBottom.Where(item => item.Id != ids[3]));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task ReorderConflictsAndNoChangeNeverWrite()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "reorder-conflicts.db");
+        try
+        {
+            await InitializeStageSchemaAsync(databasePath);
+            var ids = Enumerable.Range(1, 4)
+                .Select(index => Guid.Parse(
+                    $"10000000-0000-0000-0000-{index:D12}"))
+                .ToArray();
+            InsertStageItems(
+                databasePath,
+                new StageSeed(ids[0], StageItemKind.File, "C:\\A", "A", 40),
+                new StageSeed(ids[1], StageItemKind.File, "C:\\B", "B", 30),
+                new StageSeed(ids[2], StageItemKind.File, "C:\\C", "C", 20),
+                new StageSeed(ids[3], StageItemKind.File, "C:\\D", "D", 10));
+
+            using var repository = new SqliteStageRepository(databasePath);
+            var before = await LoadAllAsync(repository);
+            var items = before.ToDictionary(static item => item.Id);
+
+            var missingSource = await repository.ReorderAsync(
+                new StageReorderRequest(
+                    new StageItemVersion(Guid.NewGuid(), 1),
+                    null,
+                    null),
+                TestContext.Current.CancellationToken);
+            var staleSource = await repository.ReorderAsync(
+                new StageReorderRequest(
+                    new StageItemVersion(ids[3], 2),
+                    null,
+                    Anchor(items[ids[0]])),
+                TestContext.Current.CancellationToken);
+            var missingAnchor = await repository.ReorderAsync(
+                new StageReorderRequest(
+                    Version(items[ids[3]]),
+                    null,
+                    new StageOrderAnchor(Guid.NewGuid(), 1, 40)),
+                TestContext.Current.CancellationToken);
+            var staleAnchor = await repository.ReorderAsync(
+                new StageReorderRequest(
+                    Version(items[ids[3]]),
+                    null,
+                    new StageOrderAnchor(ids[0], 2, 40)),
+                TestContext.Current.CancellationToken);
+            var changedAnchorOrder = await repository.ReorderAsync(
+                new StageReorderRequest(
+                    Version(items[ids[3]]),
+                    null,
+                    new StageOrderAnchor(ids[0], 1, 41)),
+                TestContext.Current.CancellationToken);
+            var interruptedSlot = await repository.ReorderAsync(
+                new StageReorderRequest(
+                    Version(items[ids[3]]),
+                    Anchor(items[ids[0]]),
+                    Anchor(items[ids[2]])),
+                TestContext.Current.CancellationToken);
+            var noChange = await repository.ReorderAsync(
+                new StageReorderRequest(
+                    Version(items[ids[1]]),
+                    Anchor(items[ids[0]]),
+                    Anchor(items[ids[2]])),
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(StageReorderStatus.NotFound, missingSource.Status);
+            Assert.Equal(StageReorderStatus.RevisionConflict, staleSource.Status);
+            Assert.Equal(StageReorderStatus.NeighborConflict, missingAnchor.Status);
+            Assert.Equal(StageReorderStatus.RevisionConflict, staleAnchor.Status);
+            Assert.Equal(StageReorderStatus.NeighborConflict, changedAnchorOrder.Status);
+            Assert.Equal(StageReorderStatus.NeighborConflict, interruptedSlot.Status);
+            Assert.Equal(StageReorderStatus.NoChange, noChange.Status);
+            Assert.Empty(missingSource.ChangedItems);
+            Assert.Empty(staleSource.ChangedItems);
+            Assert.Empty(missingAnchor.ChangedItems);
+            Assert.Empty(staleAnchor.ChangedItems);
+            Assert.Empty(changedAnchorOrder.ChangedItems);
+            Assert.Empty(interruptedSlot.ChangedItems);
+            Assert.Empty(noChange.ChangedItems);
+            Assert.Equal(before, await LoadAllAsync(repository));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task ReorderReturnsExhaustedForMiddleAndEndpointNumericLimits()
+    {
+        var sourceId = Guid.Parse("20000000-0000-0000-0000-000000000001");
+        var newerId = Guid.Parse("20000000-0000-0000-0000-000000000002");
+        var olderId = Guid.Parse("20000000-0000-0000-0000-000000000003");
+
+        await AssertReorderExhaustedAsync(
+            [
+                new StageSeed(sourceId, StageItemKind.File, "C:\\Source", "Source", 0),
+                new StageSeed(newerId, StageItemKind.File, "C:\\Newer", "Newer", 11),
+                new StageSeed(olderId, StageItemKind.File, "C:\\Older", "Older", 10),
+            ],
+            sourceId,
+            newerId,
+            olderId);
+        await AssertReorderExhaustedAsync(
+            [
+                new StageSeed(sourceId, StageItemKind.File, "C:\\Source", "Source", 0),
+                new StageSeed(olderId, StageItemKind.File, "C:\\Older", "Older", long.MaxValue),
+            ],
+            sourceId,
+            null,
+            olderId);
+        await AssertReorderExhaustedAsync(
+            [
+                new StageSeed(sourceId, StageItemKind.File, "C:\\Source", "Source", 0),
+                new StageSeed(newerId, StageItemKind.File, "C:\\Newer", "Newer", long.MinValue),
+            ],
+            sourceId,
+            newerId,
+            null);
+    }
+
+    [Fact]
+    public async Task ReorderRevisionOverflowRollsBackWithoutChangingAnyRow()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "reorder-revision-overflow.db");
+        try
+        {
+            await InitializeStageSchemaAsync(databasePath);
+            var sourceId = Guid.Parse("30000000-0000-0000-0000-000000000001");
+            var anchorId = Guid.Parse("30000000-0000-0000-0000-000000000002");
+            InsertStageItems(
+                databasePath,
+                new StageSeed(
+                    sourceId,
+                    StageItemKind.File,
+                    "C:\\Source",
+                    "Source",
+                    0,
+                    long.MaxValue),
+                new StageSeed(anchorId, StageItemKind.File, "C:\\Anchor", "Anchor", 10));
+
+            using var repository = new SqliteStageRepository(databasePath);
+            var before = await LoadAllAsync(repository);
+            var items = before.ToDictionary(static item => item.Id);
+            await Assert.ThrowsAsync<OverflowException>(() =>
+                repository.ReorderAsync(
+                    new StageReorderRequest(
+                        Version(items[sourceId]),
+                        null,
+                        Anchor(items[anchorId])),
+                    TestContext.Current.CancellationToken));
+
+            Assert.Equal(before, await LoadAllAsync(repository));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task ReorderSqlFailurePropagatesAndRollsBack()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "reorder-sql-failure.db");
+        try
+        {
+            await InitializeStageSchemaAsync(databasePath);
+            var sourceId = Guid.Parse("35000000-0000-0000-0000-000000000001");
+            var anchorId = Guid.Parse("35000000-0000-0000-0000-000000000002");
+            InsertStageItems(
+                databasePath,
+                new StageSeed(sourceId, StageItemKind.File, "C:\\Source", "Source", 0),
+                new StageSeed(anchorId, StageItemKind.File, "C:\\Anchor", "Anchor", 10));
+            using (var connection = OpenDatabase(databasePath))
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    CREATE TRIGGER reject_stage_reorder
+                    AFTER UPDATE OF sort_order ON stage_items
+                    BEGIN
+                        SELECT RAISE(ABORT, 'reorder failure');
+                    END;
+                    """;
+                command.ExecuteNonQuery();
+            }
+
+            using var repository = new SqliteStageRepository(databasePath);
+            var before = await LoadAllAsync(repository);
+            var items = before.ToDictionary(static item => item.Id);
+            await Assert.ThrowsAsync<SqliteException>(() =>
+                repository.ReorderAsync(
+                    new StageReorderRequest(
+                        Version(items[sourceId]),
+                        null,
+                        Anchor(items[anchorId])),
+                    TestContext.Current.CancellationToken));
+
+            Assert.Equal(before, await LoadAllAsync(repository));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task ReorderNeverTouchesFileDirectoryOrShellLinkSources()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "reorder-source-safety.db");
+        var filePath = Path.Combine(directory, "source.txt");
+        var sourceDirectory = Path.Combine(directory, "source-directory");
+        var directoryMarker = Path.Combine(sourceDirectory, "marker.bin");
+        var shellLinkPath = Path.Combine(directory, "source.lnk");
+        try
+        {
+            Directory.CreateDirectory(sourceDirectory);
+            await File.WriteAllTextAsync(
+                filePath,
+                "file-source",
+                TestContext.Current.CancellationToken);
+            await File.WriteAllBytesAsync(
+                directoryMarker,
+                [1, 2, 3, 4],
+                TestContext.Current.CancellationToken);
+            await File.WriteAllBytesAsync(
+                shellLinkPath,
+                [5, 6, 7, 8],
+                TestContext.Current.CancellationToken);
+            var fileSnapshot = await FileSnapshot.CreateAsync(filePath);
+            var markerSnapshot = await FileSnapshot.CreateAsync(directoryMarker);
+            var linkSnapshot = await FileSnapshot.CreateAsync(shellLinkPath);
+            var directoryWriteUtc = Directory.GetLastWriteTimeUtc(sourceDirectory);
+
+            await InitializeStageSchemaAsync(databasePath);
+            var fileId = Guid.Parse("40000000-0000-0000-0000-000000000001");
+            var directoryId = Guid.Parse("40000000-0000-0000-0000-000000000002");
+            var linkId = Guid.Parse("40000000-0000-0000-0000-000000000003");
+            InsertStageItems(
+                databasePath,
+                new StageSeed(fileId, StageItemKind.File, filePath, "File", 30),
+                new StageSeed(
+                    directoryId,
+                    StageItemKind.Directory,
+                    sourceDirectory,
+                    "Directory",
+                    20),
+                new StageSeed(
+                    linkId,
+                    StageItemKind.ShellLink,
+                    shellLinkPath,
+                    "Link",
+                    10));
+
+            using var repository = new SqliteStageRepository(databasePath);
+            await MoveToTopAsync(repository, linkId);
+            await MoveToTopAsync(repository, directoryId);
+            await MoveToTopAsync(repository, fileId);
+
+            await fileSnapshot.AssertUnchangedAsync();
+            await markerSnapshot.AssertUnchangedAsync();
+            await linkSnapshot.AssertUnchangedAsync();
+            Assert.True(Directory.Exists(sourceDirectory));
+            Assert.Equal(directoryWriteUtc, Directory.GetLastWriteTimeUtc(sourceDirectory));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task PageBoundariesTrackTheRowsImmediatelyOutsideEachPage()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "page-boundaries.db");
+        try
+        {
+            await InitializeStageSchemaAsync(databasePath);
+            var ids = Enumerable.Range(1, 5)
+                .Select(index => Guid.Parse(
+                    $"00000000-0000-0000-0000-{index:D12}"))
+                .ToArray();
+            using (var connection = OpenDatabase(databasePath))
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = $"""
+                    INSERT INTO stage_items VALUES
+                    ('{ids[0]:D}', 0, 'C:\\A', 'C:\\A', 'A', 50, 0, 1, '{UtcText}', '{UtcText}'),
+                    ('{ids[1]:D}', 0, 'C:\\B', 'C:\\B', 'B', 40, 0, 1, '{UtcText}', '{UtcText}'),
+                    ('{ids[2]:D}', 0, 'C:\\C', 'C:\\C', 'C', 30, 0, 1, '{UtcText}', '{UtcText}'),
+                    ('{ids[3]:D}', 0, 'C:\\D', 'C:\\D', 'D', 20, 0, 1, '{UtcText}', '{UtcText}'),
+                    ('{ids[4]:D}', 0, 'C:\\E', 'C:\\E', 'E', 10, 0, 1, '{UtcText}', '{UtcText}');
+                    """;
+                command.ExecuteNonQuery();
+            }
+
+            using var repository = new SqliteStageRepository(databasePath);
+            var first = await repository.LoadPageAsync(
+                null,
+                2,
+                TestContext.Current.CancellationToken);
+            var second = await repository.LoadPageAsync(
+                first.NextCursor,
+                2,
+                TestContext.Current.CancellationToken);
+            var last = await repository.LoadPageAsync(
+                second.NextCursor,
+                2,
+                TestContext.Current.CancellationToken);
+            var staleCursorPage = await repository.LoadPageAsync(
+                new StagePageCursor(0, Guid.NewGuid()),
+                2,
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(ids[..2], first.Items.Select(static item => item.Id));
+            Assert.Null(first.NewerBoundary);
+            Assert.Equal(new StageOrderAnchor(ids[2], 1, 30), first.OlderBoundary);
+            Assert.Equal(
+                new StagePageCursor(40, ids[1]),
+                Assert.IsType<StagePageCursor>(first.NextCursor));
+
+            Assert.Equal(ids[2..4], second.Items.Select(static item => item.Id));
+            Assert.Equal(new StageOrderAnchor(ids[1], 1, 40), second.NewerBoundary);
+            Assert.Equal(new StageOrderAnchor(ids[4], 1, 10), second.OlderBoundary);
+
+            Assert.Equal(ids[4], Assert.Single(last.Items).Id);
+            Assert.Equal(new StageOrderAnchor(ids[3], 1, 20), last.NewerBoundary);
+            Assert.Null(last.OlderBoundary);
+            Assert.Null(last.NextCursor);
+
+            Assert.Empty(staleCursorPage.Items);
+            Assert.Equal(5, staleCursorPage.TotalCount);
+            Assert.Null(staleCursorPage.NewerBoundary);
+            Assert.Null(staleCursorPage.OlderBoundary);
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task SingleItemPageHasNoOrderBoundaries()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "single-page-boundaries.db");
+        try
+        {
+            await InitializeStageSchemaAsync(databasePath);
+            InsertStageItems(
+                databasePath,
+                new StageSeed(
+                    Guid.NewGuid(),
+                    StageItemKind.File,
+                    "C:\\Only",
+                    "Only",
+                    10));
+
+            using var repository = new SqliteStageRepository(databasePath);
+            var page = await repository.LoadPageAsync(
+                null,
+                10,
+                TestContext.Current.CancellationToken);
+
+            Assert.Single(page.Items);
+            Assert.Null(page.NewerBoundary);
+            Assert.Null(page.OlderBoundary);
+            Assert.Null(page.NextCursor);
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task AnchorComparisonMatchesSqliteForRandomEqualSortOrders()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "random-tie-order.db");
+        try
+        {
+            await InitializeStageSchemaAsync(databasePath);
+            var ids = Enumerable.Range(0, 128)
+                .Select(static _ => Guid.NewGuid())
+                .Distinct()
+                .ToArray();
+            Assert.Equal(128, ids.Length);
+            InsertStageItems(
+                databasePath,
+                ids.Select((id, index) => new StageSeed(
+                        id,
+                        StageItemKind.File,
+                        $"C:\\Tie\\{index:D3}",
+                        index.ToString("D3", CultureInfo.InvariantCulture),
+                        10))
+                    .ToArray());
+
+            using var repository = new SqliteStageRepository(databasePath);
+            var actual = await LoadAllAsync(repository);
+            var expectedIds = ids.OrderByDescending(
+                static id => id.ToString("D"),
+                StringComparer.Ordinal);
+
+            Assert.Equal(expectedIds, actual.Select(static item => item.Id));
+            Assert.All(
+                actual.Zip(actual.Skip(1)),
+                pair => Assert.True(
+                    Anchor(pair.First).CompareTo(Anchor(pair.Second)) > 0));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
     public async Task CompositeCursorDoesNotSkipEqualSortOrders()
     {
         var directory = CreateTestDirectory();
@@ -666,6 +1170,12 @@ public sealed class SqliteStageRepositoryTests
 
             Assert.Equal(higherId, Assert.Single(first.Items).Id);
             Assert.Equal(lowerId, Assert.Single(second.Items).Id);
+            var firstOlderBoundary = Assert.IsType<StageOrderAnchor>(
+                first.OlderBoundary);
+            Assert.Equal(new StageOrderAnchor(lowerId, 1, 10), firstOlderBoundary);
+            Assert.Equal(new StageOrderAnchor(higherId, 1, 10), second.NewerBoundary);
+            Assert.True(first.Items[0].Id.ToString("D").CompareTo(
+                firstOlderBoundary.Id.ToString("D")) > 0);
             Assert.Null(second.NextCursor);
         }
         finally
@@ -752,11 +1262,57 @@ public sealed class SqliteStageRepositoryTests
                 ORDER BY sort_order DESC, id DESC
                 LIMIT 127;
                 """;
-            using var reader = planCommand.ExecuteReader();
             var details = new List<string>();
-            while (reader.Read())
+            using (var reader = planCommand.ExecuteReader())
             {
-                details.Add(reader.GetString(3));
+                while (reader.Read())
+                {
+                    details.Add(reader.GetString(3));
+                }
+            }
+
+            Assert.Contains(details, detail =>
+                detail.Contains("ix_stage_items_order", StringComparison.OrdinalIgnoreCase));
+
+            planCommand.CommandText = """
+                EXPLAIN QUERY PLAN
+                SELECT id
+                FROM stage_items
+                WHERE sort_order > 9000000000
+                   OR (sort_order = 9000000000 AND id > '00000000-0000-0000-0000-000000000000')
+                ORDER BY sort_order ASC, id ASC
+                LIMIT 1;
+                """;
+            details.Clear();
+            using (var reader = planCommand.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    details.Add(reader.GetString(3));
+                }
+            }
+
+            Assert.Contains(details, detail =>
+                detail.Contains("ix_stage_items_order", StringComparison.OrdinalIgnoreCase));
+
+            planCommand.CommandText = """
+                EXPLAIN QUERY PLAN
+                SELECT id
+                FROM stage_items
+                WHERE id <> '00000000-0000-0000-0000-000000000001'
+                  AND (sort_order < 9000000000
+                       OR (sort_order = 9000000000
+                           AND id < 'ffffffff-ffff-ffff-ffff-ffffffffffff'))
+                ORDER BY sort_order DESC, id DESC
+                LIMIT 1;
+                """;
+            details.Clear();
+            using (var reader = planCommand.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    details.Add(reader.GetString(3));
+                }
             }
 
             Assert.Contains(details, detail =>
@@ -873,6 +1429,132 @@ public sealed class SqliteStageRepositoryTests
                     1,
                     Target("", "A"),
                     TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<ArgumentNullException>(() =>
+                repository.ReorderAsync(
+                    null!,
+                    TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    private static void InsertStageItems(
+        string databasePath,
+        params StageSeed[] items)
+    {
+        using var connection = OpenDatabase(databasePath);
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO stage_items (
+                id, target_kind, target_value, canonical_key,
+                resolved_name, sort_order, is_pinned, revision,
+                created_utc, updated_utc)
+            VALUES (
+                $id, $kind, $target, $key,
+                $name, $sortOrder, $isPinned, $revision,
+                $utc, $utc);
+            """;
+        var id = command.Parameters.Add("$id", SqliteType.Text);
+        var kind = command.Parameters.Add("$kind", SqliteType.Integer);
+        var target = command.Parameters.Add("$target", SqliteType.Text);
+        var key = command.Parameters.Add("$key", SqliteType.Text);
+        var name = command.Parameters.Add("$name", SqliteType.Text);
+        var sortOrder = command.Parameters.Add("$sortOrder", SqliteType.Integer);
+        var isPinned = command.Parameters.Add("$isPinned", SqliteType.Integer);
+        var revision = command.Parameters.Add("$revision", SqliteType.Integer);
+        command.Parameters.AddWithValue("$utc", UtcText);
+        foreach (var item in items)
+        {
+            id.Value = item.Id.ToString("D");
+            kind.Value = (int)item.Kind;
+            target.Value = item.TargetValue;
+            key.Value = item.TargetValue.ToUpperInvariant();
+            name.Value = item.ResolvedName;
+            sortOrder.Value = item.SortOrder;
+            isPinned.Value = item.IsPinned ? 1 : 0;
+            revision.Value = item.Revision;
+            command.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+    }
+
+    private static async Task<IReadOnlyList<StageItem>> LoadAllAsync(
+        SqliteStageRepository repository) =>
+        (await repository.LoadPageAsync(
+            null,
+            256,
+            TestContext.Current.CancellationToken)).Items;
+
+    private static StageItemVersion Version(StageItem item) =>
+        new(item.Id, item.Revision);
+
+    private static StageOrderAnchor Anchor(StageItem item) =>
+        new(item.Id, item.Revision, item.SortOrder);
+
+    private static void AssertBusinessFieldsEqual(StageItem expected, StageItem actual)
+    {
+        Assert.Equal(expected.Id, actual.Id);
+        Assert.Equal(expected.Kind, actual.Kind);
+        Assert.Equal(expected.TargetValue, actual.TargetValue);
+        Assert.Equal(expected.CanonicalKey, actual.CanonicalKey);
+        Assert.Equal(expected.ResolvedName, actual.ResolvedName);
+        Assert.Equal(expected.IsPinned, actual.IsPinned);
+        Assert.Equal(expected.CreatedUtc, actual.CreatedUtc);
+    }
+
+    private static async Task MoveToTopAsync(
+        SqliteStageRepository repository,
+        Guid sourceId)
+    {
+        var items = await LoadAllAsync(repository);
+        var source = items.Single(item => item.Id == sourceId);
+        var firstOther = items.First(item => item.Id != sourceId);
+        var result = await repository.ReorderAsync(
+            new StageReorderRequest(
+                Version(source),
+                null,
+                Anchor(firstOther)),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(StageReorderStatus.Applied, result.Status);
+    }
+
+    private static async Task AssertReorderExhaustedAsync(
+        StageSeed[] seeds,
+        Guid sourceId,
+        Guid? newerId,
+        Guid? olderId)
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "reorder-exhausted.db");
+        try
+        {
+            await InitializeStageSchemaAsync(databasePath);
+            InsertStageItems(databasePath, seeds);
+            using var repository = new SqliteStageRepository(databasePath);
+            var before = await LoadAllAsync(repository);
+            var items = before.ToDictionary(static item => item.Id);
+            StageOrderAnchor? newer = newerId is { } presentNewerId
+                ? Anchor(items[presentNewerId])
+                : null;
+            StageOrderAnchor? older = olderId is { } presentOlderId
+                ? Anchor(items[presentOlderId])
+                : null;
+
+            var result = await repository.ReorderAsync(
+                new StageReorderRequest(
+                    Version(items[sourceId]),
+                    newer,
+                    older),
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(StageReorderStatus.SortOrderExhausted, result.Status);
+            Assert.Empty(result.ChangedItems);
+            Assert.Equal(before, await LoadAllAsync(repository));
         }
         finally
         {
@@ -950,6 +1632,15 @@ public sealed class SqliteStageRepositoryTests
                     TestContext.Current.CancellationToken)));
         }
     }
+
+    private sealed record StageSeed(
+        Guid Id,
+        StageItemKind Kind,
+        string TargetValue,
+        string ResolvedName,
+        long SortOrder,
+        long Revision = 1,
+        bool IsPinned = false);
 
     private const string UtcText = "2026-09-04T00:00:00.0000000+00:00";
 }

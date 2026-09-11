@@ -212,6 +212,11 @@ public sealed class StageActionControllerTests
                     UpdatedUtc = item.UpdatedUtc.AddSeconds(1),
                 }));
         }
+
+        public Task<StageReorderResult> ReorderAsync(
+            StageReorderRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     private sealed class FakeFiles(

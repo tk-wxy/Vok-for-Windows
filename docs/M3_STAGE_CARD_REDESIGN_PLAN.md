@@ -1,6 +1,6 @@
 # M3 中转站卡片重设计与前端效果计划
 
-> **状态（2026-09-09）**：Redesign Gate 0 V2 静态视觉已由用户确认通过，Gate 1 Hover/KeyboardFocus 已提交。Gate 3 外部拖入表现层现已完成：真实 `sessionActive/targeted` 驱动 2 DIP 边界、0.08 Accent wash 和“松开以存入中转站”，完整 Release 576/576、浅/深截图及用户真实拖入 Gate 均通过。Gate 2 将与 M3.1 Checkpoint 6 真实排序合并，不再单独交付松手取消的假拖影；下一步先实现排序模式壳层。默认 Release 由 PID 22220 运行。
+> **状态（2026-09-11）**：Redesign Gate 0 V2 静态视觉、Gate 1 Hover/KeyboardFocus 与 Gate 3 外部拖入均已完成对应 Gate。Gate 2 将与 M3.1 Checkpoint 6 真实排序合并，不单独交付假拖影或空模式壳层；排序 S0+S1 数据前置现已完成，下一步是 S2 局部重平衡，之后才合并整卡同页真实拖动。当前默认 Release PID 5576 保持运行，未包含 S1 代码。
 
 > **路线调整**：用户指出当前只有 Gate 1 可实际测试，并已确认 `M3_STAGE_UI_FOUNDATION_NEXT_PLAN.md` 的调整：先完成已有真实 Router 支撑的 Gate 3，再采用显式排序模式，把 Gate 2 拖影视觉与真实 Checkpoint 6 合并为可测试纵向切片。该文件覆盖本计划原先的纯拖影 Gate 2 顺序。
 

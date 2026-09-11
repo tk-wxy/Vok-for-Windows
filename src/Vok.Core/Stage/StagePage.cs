@@ -7,4 +7,6 @@ public readonly record struct StagePageCursor(
 public sealed record StagePage(
     IReadOnlyList<StageItem> Items,
     StagePageCursor? NextCursor,
-    long TotalCount);
+    long TotalCount,
+    StageOrderAnchor? NewerBoundary = null,
+    StageOrderAnchor? OlderBoundary = null);

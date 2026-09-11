@@ -27,4 +27,8 @@ public interface IStageRepository
         long expectedRevision,
         StageTargetDescriptor target,
         CancellationToken cancellationToken = default);
+
+    Task<StageReorderResult> ReorderAsync(
+        StageReorderRequest request,
+        CancellationToken cancellationToken = default);
 }
