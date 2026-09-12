@@ -1,8 +1,8 @@
 # M3 中转站产品契约与实施计划
 
-> **状态（2026-09-11）**：产品边界和长期路线已确认，“外部拖着文件呼出 Vok，在中转站松手后条目持久落入”的入站 MVP 已完成并归档。M3.MVP1–3、Explorer/桌面代表矩阵与用户 5 组共 50+ 次循环通过；不把它扩写为计划的 100 次。M3.1 Checkpoint 0–5、单一自适应 V2 卡片、Hover/KeyboardFocus 与 Gate 3 已完成并通过对应 Gate。排序 S0 合同、S1 Core/同快照分页边界/SQLite 单项快路和 S2 最多 64 项局部重平衡已完成，下一步进入首个可见同页排序纵向切片；Checkpoint 6 的真实排序、取用和拖出仍未实现。KI-001 仍延期；200 条仍是首期产品开放上限，不是 schema、仓储或分页的架构上限。
+> **当前路线（2026-09-12）**：当前默认容量可暂设 50，但架构必须支持超大上限并保持低内存、流畅 UI 与良好存储性能；同一路径允许重复 occurrence；单项/批量拖入和拖出都是核心。删除的是用户可见页码、较新/较早、Load More 与 S4 整页跳转，不是内部 keyset、预取/淘汰或数据虚拟化。排序 S3 已通过用户观感 Gate；后续实施与完成定义以 `M3_STAGE_FOCUSED_ROADMAP.md` 和 `decisions.md §32` 为准。本文的 M3.MVP1–3 去重/显式页面内容只记录历史已实现基线，不再代表目标产品合同。
 
-## 0. 当前最小 MVP（本轮唯一交付范围）
+## 0. 历史入站 MVP（已完成；身份与页面语义已被 §32 取代）
 
 本轮只证明这一条用户路径：
 
@@ -20,7 +20,7 @@ Explorer / 桌面选中文件、目录或 .lnk 并保持外部拖动
 本 MVP 包含：
 
 - 文件、目录、`.lnk` 和同一次多项拖入；只保存源路径引用，不复制、移动、删除或解析源对象；
-- 默认 50、首期策略上限 200，批量超限整批拒绝，canonical path 重复项不新增而回顶；
+- 固定产品容量 50，批量超限整批拒绝，canonical path 重复项不新增而回顶；
 - 中转站首屏、空状态、处理中状态、目标命中描边和可观察的成功/部分无效/整批拒绝结果；
 - schema 7、跨重启保留、`(sort_order,id)` keyset 和 64 位稀疏排序；虽然本轮不开放手工排序，重复回顶仍使用同一排序契约；
 - `MainWindow` 唯一 `AllowDrop` 和唯一窗口级外部拖放 generation，同时服务既有 Launcher 与新增 Stage，保留现有“长按呼出后松键等待拖放终态”的宿主语义。
@@ -37,9 +37,9 @@ Explorer / 桌面选中文件、目录或 .lnk 并保持外部拖动
 
 ## 1. 完整文件型切片目标（MVP 后续）
 
-以下内容保留为入站 MVP 之后的完整 M3 路线，不属于本轮完成定义。
+以下内容已按 2026-09-12 合同更新，为文件型 M3 的完整目标。
 
-中转站是一个**引用型、可消费的临时货架**：用户把稍后要交给其他窗口的文件或目录放入中转站，Vok 持久保存引用；取用成功后默认移除，固定项继续保留。
+中转站是一个**引用型、支持重复 occurrence、可消费的大容量拖放货架**：用户把稍后要交给其他窗口的文件或目录放入中转站，Vok 持久保存每次放入的独立引用；拖出成功后默认移除未固定 occurrence，固定项继续保留。
 
 首个纵向切片只处理本地文件系统引用，并完成以下闭环：
 
@@ -47,9 +47,9 @@ Explorer / 桌面选中文件、目录或 .lnk 并保持外部拖动
 外部 FileDrop
   → 单一窗口级 OLE 路由判定 Stage 目标
   → Shell STA 规范化/校验
-  → SQLite 单事务去重、容量判断、插入或回顶
-  → 分页/虚拟化展示
-  → 点击取用、仅复制、拖出、排序、固定、打开/定位、移除
+  → SQLite 单事务按 occurrence 做容量判断和批量插入
+  → 无可见分页的连续数据虚拟化展示
+  → 单项/批量拖出、排序、固定、打开/定位、移除
   → 按真实终态决定保留或消费
 ```
 
@@ -57,19 +57,19 @@ M3 文件型切片的完成定义：
 
 - 文件、目录和 `.lnk` 各自作为原始引用拖入、跨重启保留并可再次取用；`.lnk` 不静默解析成目标；
 - 启动台和中转站共用一个窗口级外部拖入会话，跨区域移动、取消、隐藏、关闭和异常都只终结一次；
-- 点击取用安全完成“写文件剪贴板 → 隐藏/恢复目标 → 校验 receipt → 注入粘贴”，拖出使用真实 OLE `COPY`；
+- 单项与批量拖出使用真实 OLE `COPY`，并在外部明确接受后按固定状态决定是否消费；
 - 只有外部交付已确认完成时才消费未固定项；失败、取消和“仅复制”均保留；
-- SQLite 是容量、去重、排序和消费的唯一权威，UI 不维护第二套真相；
-- 全量自动回归、schema 6→7 实库副本迁移、真实 Explorer 拖入/拖出和跨应用取用通过，且现有启动台、剪贴板及宿主事务无回归。
+- SQLite 是 occurrence 容量、批量插入、排序和消费的唯一权威，UI 不维护第二套真相；
+- 全量自动回归、schema 7→8 实库副本迁移、真实 Explorer 单项/批量拖入拖出和 50/10k/100k 分层规模门禁通过，且现有启动台、剪贴板及宿主事务无回归。
 
 ## 2. 首期产品契约
 
 ### 2.1 条目与引用
 
-- 一个文件系统路径对应一张卡片；批量拖入按来源顺序创建多张卡片。
+- 每一次有效放入对应一个独立 occurrence 和一张卡片；同一路径可在同批或跨批重复出现。
 - 首期接受现存文件、目录和 `.lnk`。不复制、移动、删除或接管源内容，只保存绝对路径引用。
-- 路径规范化沿用 Windows 文件引用规则：保留可展示的原值，另存大小写不敏感的 canonical key；目录尾分隔符不制造重复。不得解析符号链接、junction 或 `.lnk` 后再合并身份。
-- 同一路径再次拖入不新增条目，而是更新可刷新展示信息并把已有条目移动到本次插入位置。混合“已有 + 新增”的批量操作保持输入顺序。
+- 路径规范化沿用 Windows 文件引用规则：保留可展示的原值，另存大小写不敏感的 canonical key。canonical 只用于比较、Missing/重新关联辅助和索引查询，不参与唯一身份或去重。不得解析符号链接、junction 或 `.lnk` 后再合并 occurrence。
+- 同一路径再次拖入必须新增 occurrence；同批重复也按来源顺序逐项保存。管理、排序与清理均按 `id + expected revision` 操作，不能按 canonical 误伤同源卡片。
 - 源路径后来失效时不自动删行；`Missing` 是读取时得到的展示状态，不持久化成权威字段。卡片提供“重新关联”“复制原路径”“移除”，且失败检查不能阻塞 UI。
 
 ### 2.2 容量、保留与消费
@@ -77,11 +77,12 @@ M3 文件型切片的完成定义：
 | 规则 | 首期定义 |
 |---|---|
 | 默认容量 | 50 条 |
-| 首期产品上限 | 200 条；M3 先实现策略，设置入口归 M4；不得写成数据库约束或仓储结构上限 |
+| 当前产品策略 | 默认/暂定上限 50 条；不是架构上限 |
+| 架构规模 | 10,000 条完整工程门禁；宣布超大上限前增加 100,000 条压力门禁 |
 | 容量计数 | 固定和未固定条目都计入 |
-| 批量超限 | 先排除本批重复项，再在同一事务判断；空间不足则整批拒绝，不部分插入、不静默淘汰 |
+| 批量超限 | 按 occurrence 数量在同一事务判断；空间不足则整批拒绝，不部分插入、不去重、不静默淘汰 |
 | 跨重启 | 全部条目、顺序和固定状态保留 |
-| 成功取用/拖出 | 未固定项移除，固定项保留 |
+| 成功拖出 | 未固定项移除，固定项保留 |
 | 仅复制 | 保留，无论是否固定 |
 | 失败或取消 | 保留，不以超时或 UI 推测成功 |
 
@@ -99,10 +100,9 @@ RetentionOutcome = Removed | RetainedPinned | RetainedByPolicy |
 
 | 操作 | 外部效果 | 条目终态 |
 |---|---|---|
-| 单击卡片 / Enter | 写入 `CF_HDROP`，恢复呼出前目标并注入粘贴 | 完成后消费未固定项；只能复制或失败时保留 |
-| 仅复制 / Ctrl+C | 写入 `CF_HDROP`，不隐藏、不注入 | `CopiedOnly`，始终保留 |
 | 卡片主体拖出 | OLE `FileDrop + Preferred DropEffect(COPY)`，allowed effects 仅 `Copy` | `DoDragDrop` 返回 `Copy` 才消费未固定项；`None`/异常保留 |
-| 排序把手拖动 | 仅中转站内存预览，松手一次 SQLite 提交 | 不触发 OLE，不消费 |
+| 选中组拖出 | OLE 载荷按 occurrence 顺序包含全部选中路径，allowed effects 仅 `Copy` | `Copy` 后一次事务清理全部未固定项；任一 revision 冲突时整批保留 |
+| 卡片在 Stage 内拖动 | 仅中转站合成预览，松手一次 SQLite 提交 | 不触发 OLE，不消费 |
 | 固定/取消固定 | revision 保护的单项更新 | 改变后续成功交付的保留策略 |
 | 打开/定位 | 复用 Shell 文件动作 | 不消费 |
 | 移除 | 只删除 Stage 引用 | 不触碰源文件 |
@@ -116,7 +116,8 @@ RetentionOutcome = Removed | RetainedPinned | RetainedByPolicy |
 - 不在文件闭环前接入文本；图片须等所有模块共同参与的资产引用证明和回收事务完成后再进入；
 - 不实现虚拟文件流、Shell namespace、压缩包内部项、远程下载承诺、跨设备同步或撤销历史；
 - 不以固定延时判定 OLE 已开始/完成，不在 `DragEnter/DragOver` 读取外部数据，不新建第二个 Shell/Clipboard STA；
-- 首期不把多选、批量拖出、自定义拖影、颜色分组、标签或搜索作为完成门禁。
+- 不把自定义高成本拖影、颜色分组、标签或搜索作为完成门禁；多选只为批量拖出提供会话级选择，不在本阶段引入批量内部排序。
+- 不提供用户页码、较新/较早、Load More、整页跳转或 S4 式边缘换页；内部 keyset、双向预取、窗口淘汰和数据虚拟化必须保留。点击取用与 `CF_HDROP` 粘贴注入也不再是下一阶段完成条件。
 
 ## 3. 基于当前架构的落点
 
@@ -146,17 +147,17 @@ StageDragOutController（WPF UI STA）
 - `MainWindow` 保留唯一 `AllowDrop=true`，现有事件处理改为委托给 `WorkspaceFileDropRouter`；Launcher 和 Stage 不各自建立窗口级租约。
 - Launcher 与 Stage 可以共享已被两个真实消费者证明的 Windows 文件引用检查/图标读取内核，但聚合、结果类型、表和生命周期保持独立。提取前先用现有 Launcher 测试锁定行为。
 
-### 3.1 后续高上限兼容契约
+### 3.1 大容量无可见分页边界
 
-首期只向用户开放 200 条，但初始实现不得形成需要重建业务模型或迁移全部排序数据才能扩容的结构：
+Stage 当前默认容量为 50，但存储和 UI 必须按可提高到超大上限设计：
 
-- `StageOptions` 的 200 是组合根传入的产品策略；`stage_items` 不增加 `COUNT <= 200`、分区表或依赖 200 的字段宽度，仓储也不把 200 编入 SQL 结构。
-- `StagePage.TotalCount`、容量计算和 UI 计数从首版使用 64 位值；仓储按 `(sort_order,id)` keyset 读取，热路径禁止 `OFFSET` 和全表物化。
-- `sort_order` 从首版使用带间隔的 64 位稀疏排序键。普通插入、回顶和可见范围重排只更新受影响条目；局部间隔耗尽时只分段重平衡，不在一次用户拖动中重写全表。
-- Stage UI 使用有界页面窗口而不是“每次 LoadMore 后永久追加”：只保留视口附近的轻量 VM，离开窗口的图标、失效检查和容器可释放；图标/缩略图缓存继续有独立固定预算。
-- 启动只读取统计与首屏，不枚举、验证或取图全部引用；canonical 去重走唯一索引，Missing 只检查可见项。
-- 大批删除、重平衡和将来的保留维护使用有界批次并让出 SQLite 队列；单次结果不返回数万条完整对象或 ID 给 UI。
-- M3 仍以 200 条完成产品验收，同时直接构造 10,000 条数据验证 schema、keyset、稀疏排序和有界 VM。未来开放 10,000 或更高档位前增加 100,000 条性能门禁，但不改变 Stage 聚合、表主结构和公开分页契约。
+- `stage_items` 不增加依赖 50 的数据库约束；容量由组合根策略和 SQLite 写事务判定，改变策略不迁移聚合或主表。
+- 64 位计数、`(sort_order,id)` 复合 keyset 和 64 位稀疏顺序是高容量正式契约；禁止 `OFFSET`、全表物化、连续行号或回顶/排序全表更新。
+- UI 不显示页面概念，只呈现连续像素滚动；内部使用双向 keyset、视口前后预取、稳定锚点与窗口淘汰。
+- WPF 容器虚拟化只解决视觉容器，数据虚拟化还必须保证常驻 item VM、选择快照、图标、Availability 请求和动画状态不随总量线性增长。
+- 启动不读取全部 occurrence，也不对全部路径同步做存在性或 Shell 图标检查；Availability 只跟随真实可见容器。
+- 50 条用于完整物理功能 Gate，10,000 条验证工程窗口与排序，100,000 条验证启动/读取/写入/资源曲线；数值阈值先取同机基线。
+- 若数据库实际条数高于当前策略，必须明确诊断并仍可有界读取；不得静默隐藏、删除或淘汰数据。
 
 剪贴板已有独立聚合、keyset 分页、外置 CAS、32 MiB 缩略图缓存和有界 worker，因此条目总数不会直接变成常驻图片内存。其当前 10,000 条支持上限可以在原边界内继续提高；在开放更高档位前，应把“每次捕获后全量扫描保留集合”和“已翻页 VM 永久累积”分别替换为索引化增量保留和有界页面窗口。它们是仓储/UI 内部实现升级，不要求把 Clipboard 与 Stage 合并成通用内容模型。图片始终同时受条数、总字节和磁盘剩余空间约束；高条数不能冒充低磁盘占用。
 
@@ -214,24 +215,24 @@ StageItem
 
 仓储至少提供以下原子能力：
 
-- keyset 分页读取；
-- 批量 `AddOrMove`，在一个事务内完成去重、容量检查、排序重写和结果计数；
+- 双向有界 keyset 读取，供连续数据窗口按锚点预取和淘汰；
+- 批量 `AddBatch`，在一个事务内按 occurrence 完成容量检查、逐项插入、稳定输入顺序和结果计数；
 - revision 保护的固定、重排和移除；
 - revision 保护的成功消费；
 - 明确区分 `CapacityExceeded`、`InvalidInput`、`NotFound`、`RevisionConflict`、`Cancelled` 和存储失败。
 
-状态机分别约束“点击取用”和“OLE 拖出”，但共享一次性终态原则：每个 generation 只能被 `Completed/CopiedOnly/Failed/Cancelled` 之一认领；迟到回调只能清理自己的资源，不能修改新代条目。
+出站状态机约束 OLE 拖出的一次性终态：每个 generation 只能被 `Completed/Failed/Cancelled` 之一认领；迟到回调只能清理自己的资源，不能修改新代条目。
 
-### 4.2 schema 7
+### 4.2 schema 8 目标（schema 7 为历史基线）
 
-在现有单一 `SqliteStorageExecutor` 中把 schema 从 6 升至 7：
+在现有单一 `SqliteStorageExecutor` 中把 schema 从 7 升至 8；表列可保持，但 canonical 不再唯一：
 
 ```text
 stage_items
   id TEXT PRIMARY KEY
   target_kind INTEGER NOT NULL
   target_value TEXT NOT NULL
-  canonical_key TEXT NOT NULL COLLATE NOCASE UNIQUE
+  canonical_key TEXT NOT NULL COLLATE NOCASE
   resolved_name TEXT NOT NULL
   sort_order INTEGER NOT NULL
   is_pinned INTEGER NOT NULL
@@ -240,12 +241,13 @@ stage_items
   updated_utc TEXT NOT NULL
 
 INDEX stage_items_order ON stage_items(sort_order, id)
+INDEX stage_items_canonical ON stage_items(canonical_key)
 ```
 
-- schema 6→7 建表、结构核验和 `user_version=7` 必须在同一事务；失败完整回滚，不能留下“版本 6 + 半张 Stage 表”。
+- schema 7→8 必须在同一事务删除 `ux_stage_items_canonical`、创建非唯一 `ix_stage_items_canonical`、核验结构并设置 `user_version=8`；失败完整回滚。既有行逐条保真，不合并或重排。
 - `sort_order,id` 是稳定 keyset 游标；禁止 `OFFSET` 扫描大表。
-- schema 不编码首期 200 条上限；后续提高产品策略不需要迁移 `stage_items` 或更换分页游标。
-- 容量、canonical key 冲突、批量顺序与 revision 在 SQLite 执行器内判定；不能先由 UI 查数量再插入。
+- schema 不编码当前 50 条产品容量；提升产品上限只调整策略并增加门禁。
+- 容量、批量顺序、occurrence id 与 revision 在 SQLite 执行器内判定；不能先由 UI 查数量再插入，也不能用 canonical 冲突实现去重。
 - 排序键使用 64 位稀疏值；局部重平衡和批量维护必须有界，不能以连续行号导致回顶时更新全部记录。
 - Stage 只存引用，没有资产文件和自动过期回收；删除行永远不得触碰 `target_value` 指向的用户文件。
 
@@ -261,7 +263,9 @@ INDEX stage_items_order ON stage_items(sort_order, id)
 
 现有 `WorkspaceController` 的入站拖放 lease 继续保护工作区不被普通失活提前关闭；router 只统一所有权，不复制宿主状态机。
 
-## 6. 点击取用与仅复制
+## 6. 点击取用与仅复制（暂不进入）
+
+本节保留为早期设计记录，不属于当前聚焦路线或完成门禁；只有拖入—排序—拖出闭环归档后，才能基于真实需求重新评审。
 
 点击取用流水线：
 
@@ -292,32 +296,33 @@ INDEX stage_items_order ON stage_items(sort_order, id)
 
 ### 7.1 首选实现
 
-- 卡片主体按下后未超过系统拖动阈值仍是点击取用；超过阈值才认领 `WorkspaceOutboundDragClaim`。
-- 在 WPF UI STA 创建只包含 `FileDrop`、`Preferred DropEffect=DROPEFFECT_COPY` 和进程内 source token 的 `DataObject`，调用 `DragDrop.DoDragDrop(..., Copy)`。
+- 卡片主体按下后未超过系统拖动阈值只更新选择/焦点，不触发已后置的点击取用；从未选卡开始拖出是单项，从已选卡开始拖出包含当前 selection snapshot。
+- 在 WPF UI STA 创建只包含有序 `FileDrop`、`Preferred DropEffect=DROPEFFECT_COPY` 和进程内 source token 的 `DataObject`，调用 `DragDrop.DoDragDrop(..., Copy)`；重复路径 occurrence 不在 Vok 内去重。
 - 第一个可证明 OLE 已进入源会话的 `GiveFeedback/QueryContinueDrag` 边沿触发同 generation 的隐藏请求；不得在鼠标阈值刚越过时用延时猜测。
 - 隐藏失败设置源端取消标志，由后续 OLE 回调安全返回 cancel；所有 claim、事件订阅和视觉只清理一次。
-- `DoDragDrop` 返回 `Copy` 才算 `Completed`；`None`、Esc、目标拒绝或异常均保留条目。取消后不自动重新呼出 Vok，避免抢回用户正在操作的外部窗口。
+- `DoDragDrop` 返回 `Copy` 才算 `Completed`；`None`、Esc、目标拒绝或异常均保留条目。批量 Copy 后在一个事务核对全部 `id + expected revision`，任一冲突整批保留且不重放。取消后不自动重新呼出 Vok，避免抢回用户正在操作的外部窗口。
 
 ### 7.2 出站 Gate 必须先证明
 
 隔离探针不得读写产品数据库，至少覆盖：
 
-- WPF 源 HWND 在 OLE 开始后隐藏，Explorer、桌面和普通支持 FileDrop 的目标仍能完成 `Copy`；
+- WPF 源 HWND 在 OLE 开始后隐藏，Explorer、桌面和普通支持 FileDrop 的目标仍能完成单项及 1/10/100 项 `Copy`；
 - Explorer 不删除或移动源文件，返回效果只有 `Copy/None`；
 - Esc、拖到空白/不支持目标、源路径中途失效、隐藏失败和目标异常都结束嵌套消息循环并释放 capture/claim；
 - 隐藏发生在 OLE 真实开始之后，快速点击、未过阈值和拖动初始化失败不会误隐藏；
-- 同一 Vok 窗口拒绝自己的出站 token，Launcher/Stage 入站视觉不残留；
+- 同一 Vok 窗口拒绝自己的出站 token，Launcher/Stage 入站视觉不残留；重复路径和目标应用可能拒绝/合并重复载荷的行为必须被实际记录，不能冒充逐项成功回执；
 - 20 轮成功/取消交替后线程、句柄、事件订阅和工作区 generation 回到稳定基线。
 
 如果 WPF `DoDragDrop` 在隐藏源 HWND 后无法稳定完成，唯一允许的降级是在 **WPF UI STA** 上封装原生 `DoDragDrop/IDropSource`；不得把 OLE 源放到 Shell STA、增加固定 sleep 或保留不可见源窗骗过测试。出站 Gate 只允许保留一个通过真实结果的实现分支。
 
-## 8. 展示、分页与手势
+## 8. 展示、滚动与手势
 
-- 中转站使用 `ListBox + VirtualizingStackPanel`，开启 Recycling 和 Pixel 滚动并隐藏滚动条；数据源保留视口附近的有界 keyset 页面窗口，而不是让已加载 VM 随滚动深度单调增长。
+- 中转站使用 Recycling/Pixel 容器虚拟化并叠加有界数据窗口；用户看到连续滚动，不显示分页按钮、页码或整页替换。
+- 接近窗口边缘时异步预取，离开足够距离后淘汰旧 VM；generation + anchor 拒绝迟到结果，稳定 occurrence id/锚点保持像素位置。
 - 每张卡显示类型图标、名称、必要的父路径摘要、固定/失效状态；完整路径放入 ToolTip 和自动化名称，不把长路径撑破布局。
-- 图标和可用性只为可见项异步加载，经 item id + revision 校验后回填；旧页、旧代和已回收容器的结果直接丢弃。
-- 卡片主体承担“单击取用 / 拖出”的阈值会话；独立排序把手承担内部排序；固定、菜单和辅助按钮不参与两者。
-- 内部排序沿用“内存预览、终态认领、一次 SQLite 提交、取消完整回滚”的机制，但 Stage 拥有自己的 reorder session，不共享 Launcher ViewModel 状态。
+- 图标和可用性只为可见项异步加载，经 item id + revision 校验后回填；旧代和已回收容器的结果直接丢弃。
+- 卡片非按钮区域的首选交互是假设一次左键拖动：指针留在 Stage 内时直接排序，横向越出 Stage 后单向升级为出站 OLE；固定、菜单和辅助按钮不参与两者。无修饰手势为单卡，Ctrl 切换、Shift 范围形成批量拖出选择；该假设必须先通过 N2 物理 Gate。
+- 内部排序沿用“零集合变化预览、终态认领、一次 SQLite 提交、取消完整回滚”的机制；拖动热路径只更新合成属性。
 - 空状态只说明“将文件或文件夹拖到这里”；容量拒绝、路径失效、仅复制降级和清理延迟必须是可观察结果。
 
 ## 9. 分阶段实施与提交门禁
@@ -328,7 +333,7 @@ INDEX stage_items_order ON stage_items(sort_order, id)
 
 交付：本轮所需的 `StageItem`、`StageTargetDescriptor`、页面/新增结果、`StageOptions`、`IStageRepository`、文件规范化窄接口、`SqliteStageRepository`、schema 6→7 迁移和 DI 注册；不接 WPF/OLE。
 
-门禁：文件/目录/`.lnk` 身份、批量原子性、容量、canonical 去重回顶、64 位稀疏排序、10,000 条 keyset 分页、迁移成功/回滚全部通过；首期 200 只来自组合根策略，schema 和仓储 SQL 结构不依赖该数值；全量基线无回归。
+门禁：文件/目录/`.lnk` 身份、批量原子性、容量、canonical 去重回顶、64 位稀疏排序、10,000 条 keyset 存储健壮性、迁移成功/回滚全部通过；schema 和仓储 SQL 结构不依赖产品容量；全量基线无回归。
 
 具体 Core 契约、SQL 算法、迁移风险、实施检查点和自动验收矩阵见 `M3_STAGE_MVP1_PLAN.md`。
 
@@ -336,7 +341,7 @@ INDEX stage_items_order ON stage_items(sort_order, id)
 
 状态：已于 2026-09-04 完成实现与自动门禁；固定 64 项 keyset 页面、真实 Stage WPF、唯一三态 Router、异步入站状态、生命周期与 DI 已落地，Release 71/71 Core + 395/395 集成共 466/466，构建 0 warning / 0 error。未读取真实产品库、生成发布候选或执行 Explorer/桌面物理验收。
 
-交付：用真实 `StageView` 替换中转站空区域，接入分页展示和入站状态；把 `MainWindow` 当前面向 Launcher 的拖放代码收敛为唯一 `WorkspaceFileDropRouter`，由 Launcher/Stage target adapter 分发。现有 Workspace 外部拖放租约继续由宿主拥有，不创建第二套租约。
+交付：用真实 `StageView` 替换中转站空区域，接入有界展示和入站状态；把 `MainWindow` 当前面向 Launcher 的拖放代码收敛为唯一 `WorkspaceFileDropRouter`，由 Launcher/Stage target adapter 分发。现有 Workspace 外部拖放租约继续由宿主拥有，不创建第二套租约。最初实现的页面控件属于历史事实，将在聚焦路线 F0 移除。
 
 门禁：跨 Launcher/Stage/无目标区域移动只更新一个命中目标；Enter/Over 不读取外国数据，Drop 最多读取一次；Drop 先认领并清理视觉再异步入库；DragLeave、Esc/取消、隐藏、设置、关闭、新 DragEnter 和异常均幂等收口；源文件零改动。
 
@@ -354,35 +359,35 @@ INDEX stage_items_order ON stage_items(sort_order, id)
 
 交付：固定、手工排序、打开/定位、移除、重新关联和 Missing 可见项检查。
 
-状态：Checkpoint 0–5 已完成：revision-safe 的安全移除与固定、可见项 Availability/Missing、Stage 专用隐藏后打开/定位、复制原路径和重新关联均已落地并通过实际候选 Gate。单一自适应 V2 卡片、真实行投影、逐卡 Availability 回收、Hover/KeyboardFocus 和 Gate 3 外部拖入反馈均已完成；排序 S0 合同、S1 Core/分页边界/SQLite 单项快路及 S2 最多 64 项局部重平衡已完成，仍未增加可见排序入口。后续整卡同页/跨页真实交互完成后，才宣布 Checkpoint 6。schema 仍保持 7，`AppSettings`、外部拖放 Router 与 KI-001 不修改。详细排序步骤见 `M3_STAGE_SORT_S0_S1_PLAN.md`，完整 Checkpoint 6 契约与历史记录见 `M3_STAGE_M31_PLAN.md`。
+状态：Checkpoint 0–5 与排序 S0–S3 已完成；revision-safe 管理动作、V2 卡片、Availability、外部拖入反馈和普通卡面直接排序均已落地。S3 修订后的零集合变化 transform 预览已通过用户观感 Gate 并提交。整页切换式 S4 候选被用户否决并完整回退；M3.1 只归档当前已加载窗口的排序能力。未来连续数据窗口间排序属于 N1/N4，不恢复 S4 页跳转。schema 仍保持 7，外部拖放 Router 与 KI-001 未修改。
 
-### M3.2：仅复制与点击取用（MVP 后续）
+### M3.2：仅复制与点击取用（暂不进入）
 
-交付：Stage clipboard adapter、`StageActionController`、`StageTake` 宿主隐藏原因、成功消费和完整结果提示；按第 6 节矩阵验收。
+不再作为下一阶段或文件型 Stage 完成条件。拖入—排序—拖出闭环完成后，只在真实使用反馈证明需要时重新评审。
 
-### M3.3：出站 Gate 与卡片拖出（MVP 后续）
+### M3.3：出站 Gate 与卡片拖出（N0/N1 之后）
 
-先以隔离探针验证第 7 节的隐藏源 HWND、Copy/None、自吞拒绝和资源闭环；只保留一个通过的实现方向，再接入正式 `StageDragOutController`。出站探针不得阻塞 M3.MVP1–M3.MVP3。
+当前必须先按聚焦路线完成 N0 occurrence/schema 8 与 N1 连续数据虚拟化，再以隔离探针验证第 7 节的隐藏源 HWND、单项/批量 Copy/None、自吞拒绝和资源闭环；只保留一个通过的实现方向，再接入正式 `StageDragOutController`。出站探针不得改写已归档的 M3.MVP1–M3.MVP3 历史结论。
 
 ### M3.4：完整文件切片收口与归档
 
-交付：完整故障注入、可访问性、响应式视觉、取用/拖出物理矩阵、自包含发布和文档归档。只有“文件拖入 → 重启 → 取用/拖出 → 正确消费”的真实闭环完成后，完整 M3 文件切片才可归档。
+交付：完整故障注入、可访问性、响应式视觉、拖入/排序/拖出物理矩阵、自包含发布和文档归档。只有“文件拖入 → 排序 → 重启 → Copy-only 拖出 → 正确保留/消费”的真实闭环完成后，完整 M3 文件切片才可归档。
 
 每个阶段只引入一个主要变量，均以进入阶段时的全量测试为回归底线；一处连续失败两次应回到所有权/时序假设重新诊断，不能叠加延时或旁路。
 
 ## 10. 验收矩阵
 
-### 当前入站 MVP 自动验证
+### 历史入站 MVP 自动验证（schema 7 去重基线）
 
 - 隐藏态开始的同一次物理按压只能创建一个 Workspace generation；短按保持显示，原始长按松键在真实 FileDrop lease 内只延后到 Drop/取消终态；
 - router 覆盖 Launcher/Stage/无目标跨区、一次 `GetData`、DragLeave 缺失、隐藏、设置、关闭和新会话替换，且不会产生双重 `ExternalDragEnded`；
 - 同批重复、跨批重复、大小写差异、目录尾分隔符和 `.lnk` 身份符合 canonical 规则；
 - 49/50/51 条、混合重复批次、无效项和并发添加遵守容量与整批原子性；
 - schema 6→7 保留现有数据，半迁移、未知结构和未来版本安全拒绝并回滚；
-- 10,000 条分页不使用 OFFSET，回顶不全表改写，页面窗口与图标缓存不随滚动深度增长；
+- 10,000 条内部存储门禁不使用 OFFSET，回顶不全表改写；当时产品 UI 只承载固定页面；
 - Stage 入站的成功、拒绝、取消和异常均不修改任何源文件；现有 429 项基线持续通过。
 
-### 当前入站 MVP 真机验证
+### 历史入站 MVP 真机验证（已完成范围）
 
 - 在 Explorer/桌面按住鼠标拖动文件、目录或 `.lnk`，用当前快捷键呼出 Vok，在 Stage 松手后条目可见且重启仍存在；
 - 一次拖入多个对象保持来源顺序；重复对象回顶但不新增；无效对象和容量拒绝给出真实结果；
@@ -390,25 +395,23 @@ INDEX stage_items_order ON stage_items(sort_order, id)
 - 成功、失败和取消前后比较源路径、长度与哈希，确认 Vok 只保存引用；
 - 100 次拖入/取消交替后，UI、热键和剪贴板监听持续响应，线程、句柄和数据库队列无单调增长。
 
-### 完整文件切片自动验证（MVP 后续）
+### 当前完整文件切片自动验证
 
-- 同批重复、跨批重复、大小写差异、目录尾分隔符和 `.lnk` 身份符合 canonical 规则；
-- 49/50/51 条、混合重复批次、固定占满和并发添加均遵守 50 容量及整批原子拒绝；
-- schema 6→7 保留现有全部数据，半迁移、未知列和未来版本安全拒绝并回滚；
-- 10,000 条分页不使用 OFFSET，回顶/局部排序不全表改写，页面窗口和缓存不随滚动深度增长，容器回收后迟到图标/失效结果不串卡；
+- 同批重复、跨批重复、大小写相同 canonical、目录尾分隔符和 `.lnk` 均创建独立 occurrence，并可按 id 分别管理；
+- 49/50/51 条、混合重复批次、固定占满和并发添加均按 occurrence 遵守当前 50 策略及整批原子拒绝；
+- schema 7→8 保留全部现有行，唯一索引迁移为普通索引；半迁移、错误索引和未来版本安全拒绝并回滚；
+- 10,000 条工程门禁和 100,000 条压力门禁不使用 OFFSET，不全表物化或全表重排；数据窗口滚动/预取/淘汰后常驻 VM/资源有界，迟到图标/Availability 不串卡；
 - router 覆盖跨区、无目标、一次 GetData、自身 token、DragLeave 缺失、隐藏、设置、关闭和新会话替换；
-- 点击取用覆盖 `Failed/CopiedOnly/Completed/Cancelled` 及所有 retention outcomes；外部成功后清理失败不重放；
-- 拖出覆盖 `Copy/None`、Esc、隐藏失败、源失效、双启动、旧代回调和 Dispose；
+- 单项/批量拖出覆盖 `Copy/None`、Esc、隐藏失败、源失效、重复路径、selection revision 冲突、双启动、旧代回调和 Dispose；Copy 后冲突整批保留、不部分清理或重放；
 - Stage 删除、容量拒绝、排序和消费均不修改任何源文件；现有 429 项基线测试持续通过。
 
-### 完整文件切片真机验证（MVP 后续）
+### 当前完整文件切片真机验证
 
-- Explorer/桌面的文件、目录、Unicode 长路径和 `.lnk` 拖入后跨重启可见，重复拖入回顶且不复制源内容；
+- Explorer/桌面的文件、目录、Unicode 长路径和 `.lnk` 单项/批量拖入后跨重启可见；重复路径形成可独立操作的多张卡且不复制源内容；
 - 跨 Launcher/Stage 区域来回移动，蓝框/命中效果准确，取消和窗口隐藏后无残留；
-- 点击取用到 Explorer、记事本/编辑器和 Office：成功时未固定项消失，固定项保留；无法注入时条目保留且系统剪贴板可手动粘贴；
-- 拖出到 Explorer/桌面只复制，不移动；Esc 和拒绝目标后条目保留，Vok 不抢回前台；
+- 单项/批量拖出到 Explorer/桌面只复制，不移动；重复路径载荷按 occurrence 顺序构造，但明确记录目标应用对重复路径的实际处理；Esc 和拒绝目标后条目保留，Vok 不抢回前台；
 - 删除或改名源文件后显示失效，重新关联恢复；“移除”只删 Stage 行；
-- 100 次拖入/排序/取用/取消和 20 次 OLE 成功/取消交替后，UI、热键和剪贴板监听持续响应，线程/句柄/数据库队列无单调增长。
+- 100 次拖入/排序/取消和 20 次 OLE 成功/取消交替后，UI、热键和剪贴板监听持续响应，线程/句柄/数据库队列无单调增长。
 
 ## 11. 后续顺序
 
@@ -417,8 +420,8 @@ INDEX stage_items_order ON stage_items(sort_order, id)
 1. Stage 文本：独立文本聚合和写回语义，不借用剪贴板历史生命周期；
 2. 模块中立资产引用：让所有消费者共同参与“引用为零”的删除证明；
 3. Stage 图片：只有第 2 步完成后才接入捕获、展示、拖出和回收；
-4. 多选、批量拖出、标签/分组和搜索：由真实文件切片使用数据决定，不预埋通用模型。
+4. 批量内部排序、标签/分组和搜索：由真实文件切片使用数据决定，不预埋通用模型。多选与批量拖出已进入当前文件闭环，不列为后置项。
 
 任何后续类型都必须保持本计划的两个核心不变量：窗口级 OLE 只有一个所有者，外部交付结果与内部条目清理结果分开提交。
 
-后续提高文件型 Stage 上限时，只允许调整产品策略并新增对应规模门禁；若需要迁移 `stage_items` 主结构、替换分页游标或重写 Stage 聚合，视为首期架构门禁失败，不能把代价推迟到高上限版本。
+文件型 Stage 当前默认容量为 50，但架构不得固定上限；提高容量时只能调整产品策略和门禁，不能迁移聚合或把全部数据常驻。用户可见分页、页码和 S4 整页跳转不再进入；内部 keyset、连续数据窗口和规模门禁是高上限的必要实现。
