@@ -11,6 +11,8 @@ internal sealed class StageCardRowsProjection : IDisposable
     private DispatcherOperation? _pendingRebuild;
     private long _sourceGeneration;
     private long _layoutGeneration;
+    private long _contentVersion;
+    private long _publishedContentVersion;
     private int _columnCount = 1;
     private bool _disposed;
 
@@ -22,6 +24,9 @@ internal sealed class StageCardRowsProjection : IDisposable
     internal ObservableCollection<StageCardRowViewModel> Rows { get; } = [];
 
     internal event Action? RowsPublished;
+    internal long ContentVersion => _contentVersion;
+    internal long PublishedContentVersion => _publishedContentVersion;
+    internal long LayoutVersion => _layoutGeneration;
 
     internal bool HasPendingRebuild =>
         _pendingRebuild is { Status: DispatcherOperationStatus.Pending };
@@ -41,6 +46,7 @@ internal sealed class StageCardRowsProjection : IDisposable
         }
 
         _source = source;
+        _contentVersion++;
         _sourceGeneration = checked(_sourceGeneration + 1);
         CancelPendingRebuild();
         Rows.Clear();
@@ -108,6 +114,7 @@ internal sealed class StageCardRowsProjection : IDisposable
             Rows.Clear();
         }
 
+        _contentVersion++;
         ScheduleRebuild();
     }
 
@@ -153,6 +160,7 @@ internal sealed class StageCardRowsProjection : IDisposable
             Rows.Add(row);
         }
 
+        _publishedContentVersion = _contentVersion;
         RowsPublished?.Invoke();
     }
 

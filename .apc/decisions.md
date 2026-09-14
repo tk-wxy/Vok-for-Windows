@@ -127,13 +127,13 @@
 
 ### §10 generation 级内容呈现与 DWM 揭示栅栏
 
-- **最终方案**：主窗口继续是 `AllowsTransparency=false` 的普通不透明 HWND，只在每代 `Revealing` 内以 `DWMWA_CLOAK` 暂时阻止用户看到尚未提交的 surface，并设置 `ShowActivated=false`。该代 `CompositionTarget.Rendering` 只负责在渲染操作返回后的 Dispatcher Background 阶段请求栅栏；单一后台 worker 串行执行 `DwmFlush`。只有同代栅栏成功，UI 线程才解除 cloak，设置独立 `Presented` 门禁，然后请求 foreground/Activate/WPF 输入锚点；六项结果全部成立后才进入 `Visible`。进程采样、批量 HWND 诊断发布和旧诊断 ViewModel 更新移到完成后的 Background 阶段。2 秒具名 watchdog 只把缺失渲染/栅栏判为失败并执行 Hide、清 cloak、退出 Topmost 和目标恢复，绝不按时间强制揭示。
-- **范围**：长期隐藏主 HWND 的重复呼出、内容呈现、焦点开始时点、结构化诊断、显隐失败清理和测量工具；不改变普通不透明窗口架构、工作区矩形、Topmost/前台观察、隐藏策略或后续业务 UI。
-- **证据与根因**：修复前同代外部采样复现 native visible 约 23.4 ms、内部输入就绪约 31.1 ms、渲染回调约 41.1 ms，但约 71.5 ms 仍只有背景，约 95.9 ms 才出现整棵静态视觉树。WPF 的 `CompositionTarget.Rendering` 在实际 `MediaContext.Render` 前触发，`Show` 又先令 HWND native visible；旧实现还在该回调同步发布约 50 个 HWND 属性、采样进程并更新无 UI 消费者的诊断属性，因此它既不是 Present 证明，还延后了实际帧。修复后真实 Release 快速探针 20/20 轮及最终代码 5/5 轮均完成呼出、六门禁、隐藏和恢复且零失败；每轮首次解除 cloak 的三点屏幕像素样本都等于后续稳定样本，未再出现纯背景先暴露。真实 WPF HWND 的 cloak 往返及后台 `DwmFlush` completion 也通过集成测试。
-- **否决方案**：调整字体、透明度或动画掩盖；固定延时后显示/聚焦；把 `IsWindowVisible`、五项输入结果、`UpdateLayout`、`ContentRendered` 或渲染前回调冒充每代 Present；UI 线程同步等待 DWM；散落 `Task.Run`；永久 layered window、永久 cloak；栅栏失败仍解除 cloak或继续夺焦。
-- **新增失败模式**：Rendering 永不触发；DWM worker 队列拒绝、`DwmFlush` 或解除 cloak 失败；显示中隐藏；watchdog 与正常完成同代竞争；旧代 fence/watchdog 在新代迟到；隐藏失败需要返回原 `Revealing` 而不能冒充 `Visible`；诊断 Background 回调在隐藏后迟到。实现以先占有 pending generation、完成前清 continuation、状态机 generation 双检、隐藏后才清 cloak、失败闭环、原状态回滚并重建 reveal 监听、取消 watchdog 和完成遥测的 current-visible 检查覆盖。自动测试逐项覆盖上述路径。
-- **决定 / 最后验证**：2026-08-27 / 2026-08-27。
-- **状态**：active；Release 构建 0 警告/错误，Core 26/26 与 Windows/WPF 81/81 共 107/107 测试、win-x64 自包含发布和 25 轮真实像素/焦点往返均通过；2026-08-27 用户真机确认呼出观感测试通过。ETW/PresentMon 仅保留为额外性能分析边界，不影响已证明的“首个用户可见稀疏样本即稳定内容”结果。
+- **最终方案**：主窗口继续是 `AllowsTransparency=false` 的普通不透明 HWND，只在每代 `Revealing` 内以 `DWMWA_CLOAK` 暂时阻止用户看到尚未提交的 surface，并设置 `ShowActivated=false`。业务内容可提供实例所有的同代 readiness token；Stage token 包含 content/layout/state 版本，并只在当前 viewport 静态卡片身份、几何、投影和滚动终态一致时成立。可复用 HWND 重新可见时显式 `InvalidateVisual` 根工作区，随后按“token 就绪 → `CompositionTarget.Rendering` 返回后的 Dispatcher Background → 单一 worker `DwmFlush` → 带唯一 attempt 的同代完成 → 再核验 token”解除 cloak。之后才请求 foreground/Activate/WPF 输入锚点；输入门禁全部成立才进入 `Visible` 并允许 Stage 的有界 Availability 复查。2 秒具名 watchdog 只把缺失内容、渲染、栅栏或输入判为失败并执行 Hide、清 cloak、退出 Topmost 和目标恢复，绝不按时间强制揭示。
+- **范围**：长期隐藏主 HWND 的重复呼出、Stage 静态内容呈现、焦点开始时点、结构化诊断、显隐失败清理和测量工具；不改变普通不透明窗口架构、工作区矩形、Topmost/前台观察、隐藏策略、Stage schema 或后续大容量/拖出业务。
+- **证据与根因**：2026-08-27 已复现 native visible、输入就绪和渲染回调均早于完整视觉树，确认 Rendering 在实际 `MediaContext.Render` 前触发，回调内同步诊断还会延后帧。2026-09-14 的 46 条、约 5 分钟隐藏 A/B 进一步证明旧方案仍有缺口：即使 Stage token 已就绪、揭示前零 Availability、`DwmFlush` 已返回，未显式弄脏根视觉时约 32.9 ms 解除 cloak 后首图仍为纯背景，250 ms 后才完整；只增加重新可见时根视觉失效后，约 32.4 ms 解除 cloak，首张与稍后截图完全相同且包含全部 46 项。结论是长期隐藏可使 DWM 丢弃 redirected surface，而 WPF retained tree 仍保持布局有效；旧 fence 能同步提交，却不会凭空制造 dirty region，显式根失效才令受保护帧包含真实重绘。随后快速候选 100/100、最终精确构建 10/10；30 秒隐藏后 25.3 ms 内容就绪、36.8 ms 解除 cloak、47.8 ms 输入就绪，首图完整且揭示前零 Availability。
+- **否决方案**：调整字体、透明度或动画掩盖；固定延时后显示/聚焦；把 `IsWindowVisible`、输入结果、`UpdateLayout`、布局有效、行数、`ContentRendered`、Rendering 或单独 `DwmFlush` 冒充本代完整 Present；在首帧前批量文件检查；UI 线程同步等待 DWM；散落 `Task.Run`；周期唤醒、强制 GC、全量缓存、永久 layered window、长期可见隐藏窗或永久 cloak；栅栏失败仍解除 cloak 或继续夺焦。
+- **新增失败模式**：静态就绪、Rendering 或 fence 永不完成；内容/布局在 fence 期间换代；同 generation 的旧 fence 回调误完成新请求；DWM 队列拒绝、`DwmFlush` 或解除 cloak 失败；显示中隐藏；watchdog 与正常完成竞争；旧 generation 回调跨代迟到；Hide 失败返回 `Revealing` 后漏建新门禁；同步 readiness 回调在安装 Rendering 失败并完成清理后外层 Show 仍继续；被取消但无法中止的原生 Availability 工作挤占共享队列。实现以终态先认领、generation + attempt + token 三检、失败关闭、Hide/Dispose 全路径取消、Hide 失败重建、同步回调后状态后置检查，以及物理在途上限 4 覆盖；重复/旧回调和异常路径均有自动门禁。
+- **决定 / 最后验证**：2026-08-27、2026-09-14 / 2026-09-14。
+- **状态**：active；P0.1–4 已通过完整 Release Core 87/87 + Integration 572/572 共 659/659、零警告构建、5 分钟 A/B、快速 100/100 和最终精确构建 10/10。30 分钟、Modern Standby/Unlock 与用户最终观感仍待物理验证；ETW/PresentMon 保留为额外 Present 证据边界。
 
 ### §11 可录制全局快捷键的注册与持久化事务
 

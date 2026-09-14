@@ -12,5 +12,5 @@ public interface IWorkspacePresentationService : IDisposable
 
     bool IsCloaked(nint workspaceWindow);
 
-    bool TryRequestFence(long generation);
+    bool TryRequestFence(long generation, long attempt);
 }

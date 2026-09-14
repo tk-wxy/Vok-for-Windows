@@ -18,7 +18,9 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
     private readonly IPerformanceSampler _performanceSampler;
     private readonly IWorkspaceDiagnosticPublisher _diagnosticPublisher;
     private readonly IWorkspacePresentationService _presentationService;
+    private readonly IWorkspaceRevealReadiness? _revealReadiness;
     private readonly WorkspaceHostOptions _options;
+    private readonly RevealTrace _revealTrace;
     private EventHandler? _pendingRenderingHandler;
     private EventHandler? _pendingActivationHandler;
     private EventHandler? _pendingInputFocusHandler;
@@ -27,6 +29,10 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
     private long _pendingActivationGeneration;
     private long _pendingInputFocusGeneration;
     private long _pendingFenceGeneration;
+    private long _pendingFenceAttempt;
+    private long _nextFenceAttempt;
+    private long _pendingReadinessGeneration;
+    private WorkspaceRevealReadinessToken? _revealReadinessToken;
     private long _presentedGeneration;
     private long _revealWatchdogGeneration;
     private long _hotkeyReceivedTimestamp;
@@ -61,7 +67,8 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         IPerformanceSampler performanceSampler,
         IWorkspaceDiagnosticPublisher diagnosticPublisher,
         IWorkspacePresentationService presentationService,
-        WorkspaceHostOptions options)
+        WorkspaceHostOptions options,
+        RevealTrace? revealTrace = null)
     {
         _window = window;
         _frameSource = frameSource;
@@ -73,7 +80,9 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         _performanceSampler = performanceSampler;
         _diagnosticPublisher = diagnosticPublisher;
         _presentationService = presentationService;
+        _revealReadiness = window as IWorkspaceRevealReadiness;
         _options = options;
+        _revealTrace = revealTrace ?? RevealTrace.Disabled;
 
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(
             _options.RevealWatchdogTimeout,
@@ -86,6 +95,10 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         _window.ExternalDragStarted += OnExternalDragStarted;
         _window.ExternalDragEnded += OnExternalDragEnded;
         _presentationService.FenceCompleted += OnPresentationFenceCompleted;
+        if (_revealReadiness is not null)
+        {
+            _revealReadiness.RevealReady += OnRevealReady;
+        }
     }
 
     public event EventHandler? ShutdownRequested;
@@ -380,6 +393,8 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         DetachPendingActivation();
         DetachPendingInputFocus();
         _pendingFenceGeneration = 0;
+        _pendingFenceAttempt = 0;
+        CancelRevealReadiness(_stateMachine.Current?.Generation ?? 0);
         _activeHotkeyPress = null;
         InvalidatePasteTargetClaim();
         _hotkeyService.PressChanged -= OnHotkeyPressChanged;
@@ -389,12 +404,17 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         _window.ExternalDragStarted -= OnExternalDragStarted;
         _window.ExternalDragEnded -= OnExternalDragEnded;
         _presentationService.FenceCompleted -= OnPresentationFenceCompleted;
+        if (_revealReadiness is not null)
+        {
+            _revealReadiness.RevealReady -= OnRevealReady;
+        }
         ClearExternalDragLease();
         TryClearDiagnostic();
     }
 
     private void OnHotkeyPressChanged(object? sender, HotkeyPressEvent pressEvent)
     {
+        _revealTrace.Record("HotkeyReceived", operationId: pressEvent.PressGeneration);
         if (!_disposed && Volatile.Read(ref _exitRequested) == 0)
         {
             _window.PostInput(() => HandleHotkeyPressEvent(pressEvent));
@@ -493,6 +513,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
 
     private void HandleHotkeyPressEvent(HotkeyPressEvent pressEvent)
     {
+        _revealTrace.Record("HotkeyDispatched", operationId: pressEvent.PressGeneration);
         switch (pressEvent)
         {
             case HotkeyPressStarted started:
@@ -732,17 +753,23 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
             return;
         }
 
+        _revealTrace.Record("ShowRequested", transition.Generation,
+            value1: invocation.NativeTimestamp, value2: _lastHiddenCompletedTimestamp);
+        ObserveReveal("ShowBegin", transition.Generation);
         _hotkeyReceivedTimestamp = invocation.NativeTimestamp;
         _firstFrameTimestamp = 0;
         _inputReadyTimestamp = 0;
         _lastObservation = default;
         _lastWpfInputFocus = false;
         _pendingFenceGeneration = 0;
+        _pendingFenceAttempt = 0;
+        _pendingReadinessGeneration = 0;
+        _revealReadinessToken = null;
         _presentedGeneration = 0;
 
         try
         {
-            AttachFirstFrame(transition.Generation);
+            BeginRevealPreparation(transition.Generation);
             AttachActivation(transition.Generation);
             AttachInputFocus(transition.Generation, invocation.NativeTimestamp);
             StartRevealWatchdog(transition.Generation, foregroundTarget);
@@ -762,6 +789,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
             TryPublishDiagnostic();
             _windowPlacementService.ApplyFullScreen(_windowHandle, foregroundTarget);
             _window.Show();
+            ObserveReveal("ShowReturned", transition.Generation);
         }
         catch (Exception exception)
         {
@@ -783,6 +811,8 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         }
 
         _lastHideRequestedTimestamp = Stopwatch.GetTimestamp();
+        _revealTrace.Record("HideRequested", transition.Generation,
+            timestamp: _lastHideRequestedTimestamp);
         BeginRestoreDiagnostic(
             transition.Generation,
             policy.Reason,
@@ -794,6 +824,8 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         DetachPendingActivation();
         DetachPendingInputFocus();
         _pendingFenceGeneration = 0;
+        _pendingFenceAttempt = 0;
+        CancelRevealReadiness(transition.Generation);
 
         var cleanupFailures = new List<Exception>();
 
@@ -867,6 +899,8 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
 
         _lastEndedGeneration = transition.Generation;
         _lastHiddenCompletedTimestamp = Stopwatch.GetTimestamp();
+        ObserveReveal("Hidden", transition.Generation);
+        _revealTrace.RequestExport();
         ClearCurrentSessionDiagnostics();
         RefreshObservation(recordInViewModel: false);
         TryPublishDiagnostic();
@@ -891,6 +925,9 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
             return;
         }
 
+        ObserveReveal("RevealFailed", generation);
+        _revealTrace.Record("RevealFailureReason", generation, detail: showException.GetType().Name);
+        _revealTrace.RequestExport();
         InvalidatePasteTargetClaim();
 
         CancelRevealWatchdog();
@@ -900,7 +937,9 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         if (_pendingFenceGeneration == generation)
         {
             _pendingFenceGeneration = 0;
+            _pendingFenceAttempt = 0;
         }
+        CancelRevealReadiness(generation);
 
         var cleanupStartedTimestamp = Stopwatch.GetTimestamp();
         _lastHideRequestedTimestamp = cleanupStartedTimestamp;
@@ -953,6 +992,8 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         _viewModel.RecordFault(failures.Count == 1
             ? failures[0]
             : new AggregateException(failures));
+        _revealTrace.Record("RevealFailureCleanupCompleted", generation);
+        _revealTrace.RequestExport();
     }
 
     private ForegroundRestoreResult RestoreTarget(
@@ -1092,6 +1133,79 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         long WorkspaceGeneration,
         bool WorkspaceWasOpenAtPress);
 
+    private void BeginRevealPreparation(long generation)
+    {
+        DetachPendingFirstFrame();
+        _revealReadinessToken = null;
+        if (_revealReadiness is null)
+        {
+            _pendingReadinessGeneration = 0;
+            AttachFirstFrame(generation);
+            return;
+        }
+
+        _pendingReadinessGeneration = generation;
+        _revealTrace.Record("ContentReadinessRequested", generation);
+        _revealReadiness.BeginReveal(generation);
+        if (!_stateMachine.IsCurrentSession(generation) ||
+            _stateMachine.State is not WorkspaceState.Revealing)
+        {
+            throw new InvalidOperationException(
+                "The workspace reveal ended while static readiness was being attached.");
+        }
+    }
+
+    private void OnRevealReady(object? sender, WorkspaceRevealReadyEventArgs e)
+    {
+        var token = e.Token;
+        if (_disposed ||
+            _pendingReadinessGeneration != token.Generation ||
+            !_stateMachine.IsCurrentSession(token.Generation) ||
+            _stateMachine.State is not WorkspaceState.Revealing)
+        {
+            return;
+        }
+
+        // Claim before attaching the frame callback so duplicate readiness events cannot
+        // replace a live continuation for the same reveal attempt.
+        _pendingReadinessGeneration = 0;
+        _revealReadinessToken = token;
+        _revealTrace.Record(
+            "ContentReady",
+            token.Generation,
+            value1: token.ContentVersion,
+            value2: token.LayoutVersion);
+        try
+        {
+            AttachFirstFrame(token.Generation);
+        }
+        catch (Exception exception)
+        {
+            CleanUpFailedShow(
+                token.Generation,
+                _stateMachine.Current?.Target ?? ForegroundTarget.None,
+                exception);
+        }
+    }
+
+    private void CancelRevealReadiness(long generation)
+    {
+        _pendingReadinessGeneration = 0;
+        _revealReadinessToken = null;
+        if (generation > 0 && _revealReadiness is not null)
+        {
+            try
+            {
+                _revealReadiness.CancelReveal(generation);
+            }
+            catch (Exception exception)
+            {
+                Trace.TraceError(exception.ToString());
+                _viewModel.RecordFault(exception);
+            }
+        }
+    }
+
     private void AttachFirstFrame(long generation)
     {
         DetachPendingFirstFrame();
@@ -1112,6 +1226,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
 
             DetachPendingFirstFrame();
 
+            _revealTrace.Record("Rendering", generation);
             // CompositionTarget.Rendering runs before MediaContext renders the frame.
             // Background priority resumes only after that dispatcher render operation returns.
             try
@@ -1215,6 +1330,8 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         object? sender,
         WorkspacePresentationFenceCompletedEventArgs e)
     {
+        _revealTrace.Record("FenceReturned", e.Generation,
+            value1: e.Attempt, detail: e.Exception?.GetType().Name);
         if (Volatile.Read(ref _disposed))
         {
             return;
@@ -1242,10 +1359,13 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         }
 
         // Claim before enqueueing: a test double or future implementation may complete inline.
-        _pendingFenceGeneration = generation;
         try
         {
-            if (!_presentationService.TryRequestFence(generation))
+            var attempt = checked(++_nextFenceAttempt);
+            _pendingFenceGeneration = generation;
+            _pendingFenceAttempt = attempt;
+            _revealTrace.Record("FenceRequested", generation, value1: attempt);
+            if (!_presentationService.TryRequestFence(generation, attempt))
             {
                 throw new InvalidOperationException(
                     "The DWM presentation fence queue is full.");
@@ -1256,6 +1376,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
             if (_pendingFenceGeneration == generation)
             {
                 _pendingFenceGeneration = 0;
+                _pendingFenceAttempt = 0;
             }
 
             CleanUpFailedShow(
@@ -1269,13 +1390,15 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         WorkspacePresentationFenceCompletedEventArgs completion)
     {
         var generation = completion.Generation;
-        if (_pendingFenceGeneration != generation)
+        if (_pendingFenceGeneration != generation ||
+            _pendingFenceAttempt != completion.Attempt)
         {
             return;
         }
 
         // Claim before changing cloak/focus so duplicate or reentrant completion is harmless.
         _pendingFenceGeneration = 0;
+        _pendingFenceAttempt = 0;
         if (!_stateMachine.IsCurrentSession(generation) ||
             _stateMachine.State is not WorkspaceState.Revealing)
         {
@@ -1291,6 +1414,24 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
 
         try
         {
+            if (_revealReadiness is not null &&
+                (_revealReadinessToken is not { } token ||
+                 !_revealReadiness.IsRevealReady(token)))
+            {
+                _revealTrace.Record("ContentReadinessInvalidated", generation);
+                BeginRevealPreparation(generation);
+                return;
+            }
+        }
+        catch (Exception exception)
+        {
+            CleanUpFailedShow(generation, session.Target, exception);
+            return;
+        }
+
+        try
+        {
+            ObserveReveal("BeforeUncloak", generation);
             _presentationService.SetCloaked(_windowHandle, cloaked: false);
             if (_presentationService.IsCloaked(_windowHandle))
             {
@@ -1300,6 +1441,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
 
             _presentedGeneration = generation;
             _firstFrameTimestamp = Stopwatch.GetTimestamp();
+            _revealTrace.Record("Uncloaked", generation, timestamp: _firstFrameTimestamp);
 
             _ = _windowPlacementService.RequestForeground(_windowHandle);
             _ = _window.Activate();
@@ -1402,7 +1544,7 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
                     "The workspace could not restore its reveal cloak after Hide() failed.");
             }
 
-            AttachFirstFrame(session.Generation);
+            BeginRevealPreparation(session.Generation);
             AttachActivation(session.Generation);
             AttachInputFocus(session.Generation, session.RequestedTimestamp);
             StartRevealWatchdog(session.Generation, session.Target);
@@ -1448,6 +1590,16 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         DetachPendingInputFocus();
         CancelRevealWatchdog();
         _inputReadyTimestamp = Stopwatch.GetTimestamp();
+        _revealTrace.Record("InputReady", generation, timestamp: _inputReadyTimestamp);
+        try
+        {
+            _revealReadiness?.CompleteReveal(generation);
+        }
+        catch (Exception exception)
+        {
+            _viewModel.RecordFault(exception);
+        }
+
         try
         {
             _window.PostBackground(() => RecordCompletedPresentation(generation));
@@ -1465,6 +1617,8 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
             return;
         }
 
+        ObserveReveal("PresentationCompleted", generation);
+        _revealTrace.RequestExport();
         TryPublishDiagnostic();
         try
         {
@@ -1478,6 +1632,22 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         catch (Exception exception)
         {
             _viewModel.RecordFault(exception);
+        }
+    }
+
+    private void ObserveReveal(string phase, long generation)
+    {
+        if (!_revealTrace.Enabled) return;
+        _revealTrace.Record(phase, generation);
+        try
+        {
+            if (_window is IWorkspaceRevealDiagnostics diagnostics)
+                diagnostics.ObserveReveal(phase, generation);
+        }
+        catch (Exception exception)
+        {
+            _revealTrace.Record("ContentObservationFailed", generation,
+                detail: exception.GetType().Name);
         }
     }
 

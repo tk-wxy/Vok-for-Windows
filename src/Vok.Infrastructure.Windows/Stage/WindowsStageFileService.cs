@@ -66,7 +66,7 @@ public sealed class WindowsStageFileService : IStageFileService, IDisposable
         var snapshot = inputs.ToArray();
         return _executor.ExecuteAsync<IReadOnlyList<StageTargetResolution>>(
             () => snapshot.Select(ResolveOne).ToArray(),
-            cancellationToken);
+            cancellationToken, diagnosticKind: "StageResolve");
     }
 
     public Task<StageFileAvailability> InspectAsync(
@@ -87,7 +87,8 @@ public sealed class WindowsStageFileService : IStageFileService, IDisposable
                 WindowsFileAvailability.Unavailable => StageFileAvailability.Unavailable,
                 _ => throw new InvalidOperationException("Unsupported file availability."),
             },
-            cancellationToken);
+            cancellationToken, diagnosticKind: "StageAvailability",
+            diagnosticItemId: item.Id, diagnosticRevision: item.Revision);
     }
 
     public Task OpenAsync(
@@ -206,6 +207,6 @@ public sealed class WindowsStageFileService : IStageFileService, IDisposable
                 operation();
                 return true;
             },
-            cancellationToken);
+            cancellationToken, diagnosticKind: "StageAction");
     }
 }

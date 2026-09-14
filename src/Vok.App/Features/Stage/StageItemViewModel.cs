@@ -235,9 +235,14 @@ public sealed class StageItemViewModel : ObservableObject
             return false;
         }
 
+        var availabilityChanged = Availability != availability;
+        var hadAvailabilityResult = _hasAvailabilityResult;
         Availability = availability;
         _hasAvailabilityResult = true;
-        NotifyAvailabilityChanged();
+        if (!hadAvailabilityResult || availabilityChanged)
+        {
+            NotifyAvailabilityChanged();
+        }
         return true;
     }
 

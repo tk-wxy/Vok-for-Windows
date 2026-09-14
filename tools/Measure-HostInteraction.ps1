@@ -12,11 +12,33 @@ param(
     [switch] $Measure30SecondRecovery,
     [switch] $MeasureFiveMinuteRecovery,
     [switch] $SampleSparsePixels,
+    [ValidateRange(0, 1800)] [int[]] $HiddenBeforeShowSeconds = @(),
+    [string] $RevealTraceDirectory,
+    [string] $CaptureRevealFramesDirectory,
     [string] $OutputPath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if ($CaptureRevealFramesDirectory) {
+    if ($Cycles -gt 10) { throw 'Frame capture is limited to 10 cycles; run latency-only probes separately.' }
+    $CaptureRevealFramesDirectory = Join-Path ([IO.Path]::GetFullPath($CaptureRevealFramesDirectory)) ([Guid]::NewGuid().ToString('N'))
+    Add-Type -AssemblyName System.Drawing
+    $null = New-Item -ItemType Directory -Path $CaptureRevealFramesDirectory -Force
+}
+$frameObservationMilliseconds = 250 # Probe observation window, never a product reveal delay.
+
+function Save-RevealFrame($rect, [string] $name) {
+    $bitmap = [System.Drawing.Bitmap]::new($rect.Right - $rect.Left, $rect.Bottom - $rect.Top)
+    try {
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        try { $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size) }
+        finally { $graphics.Dispose() }
+        $bitmap.Save((Join-Path $CaptureRevealFramesDirectory $name), [System.Drawing.Imaging.ImageFormat]::Png)
+    }
+    finally { $bitmap.Dispose() }
+}
 
 Add-Type -TypeDefinition @'
 using System;
@@ -319,16 +341,20 @@ $modifierFlags = [VokHostInteractionProbe]::ModControl -bor [VokHostInteractionP
 if ($Gesture -eq 'control-alt-space') { $modifierFlags = $modifierFlags -bor [VokHostInteractionProbe]::ModAlt }
 $started = $null
 $treeIds = @()
+$probePhase = 'Preflight'
 try {
     if (-not [VokHostInteractionProbe]::RegisterHotKey([IntPtr]::Zero, $probeHotkeyId, $modifierFlags, [VokHostInteractionProbe]::VkSpace)) { throw "$Gesture is already occupied before $Label starts." }
     [void][VokHostInteractionProbe]::UnregisterHotKey([IntPtr]::Zero, $probeHotkeyId)
 
-    $startArguments = @{ FilePath = $resolved; WorkingDirectory = (Split-Path -Parent $resolved); PassThru = $true }
+    $startArguments = @{ FilePath = $resolved; WorkingDirectory = (Split-Path -Parent $resolved); PassThru = $true; WindowStyle = 'Hidden' }
     $environmentOverrides = @{}
     if ($PrecreateHwnd -eq 'enabled') { $environmentOverrides.VOK_M0_PRECREATE_HWND = '1' }
     elseif ($PrecreateHwnd -eq 'disabled') { $environmentOverrides.VOK_M0_PRECREATE_HWND = '0' }
+    if ($RevealTraceDirectory) { $environmentOverrides.VOK_REVEAL_TRACE_DIRECTORY = [IO.Path]::GetFullPath($RevealTraceDirectory) }
     if ($environmentOverrides.Count -gt 0) { $startArguments.Environment = $environmentOverrides }
     $started = Start-Process @startArguments
+    $treeIds = @([int]$started.Id) # Own cleanup even if startup fails before process-tree discovery.
+    $probePhase = 'AwaitHotkeyRegistration'
 
     $null = Wait-Until {
         $registered = [VokHostInteractionProbe]::RegisterHotKey([IntPtr]::Zero, $probeHotkeyId, $modifierFlags, [VokHostInteractionProbe]::VkSpace)
@@ -360,19 +386,34 @@ try {
     $cyclesResult = @()
     $failureCounts = [ordered]@{ Show = 0; PresentationReady = 0; Hide = 0; Restore = 0; RestoreDegraded = 0; FocusRestore = 0 }
     $lastEndedGeneration = 0L
+    $probePhase = 'MeasureCycles'
 
     for ($cycle = 1; $cycle -le $Cycles; $cycle++) {
         $sampleResources = $cycle -le 10 -or $cycle -eq $Cycles -or ($cycle % $ResourceSampleEvery) -eq 0
         $row = [ordered]@{ Cycle = $cycle; Phase = if ($cycle -le 10) { 'warmup' } else { 'steady' }; Failure = $null }
         try {
+            $idleSeconds = if ($HiddenBeforeShowSeconds.Count -gt 0) { $HiddenBeforeShowSeconds[[Math]::Min($cycle - 1, $HiddenBeforeShowSeconds.Count - 1)] } else { 0 }
+            $idleWatch = [Diagnostics.Stopwatch]::StartNew()
+            while ($idleWatch.Elapsed.TotalSeconds -lt $idleSeconds) {
+                if ([VokHostInteractionProbe]::IsWindowVisible($windowHandle)) { throw 'Workspace became visible during the idle interval.' }
+                Start-Sleep -Milliseconds 500
+            }
+            $row.HiddenBeforeShowSeconds = $idleWatch.Elapsed.TotalSeconds
             $showTimer = [Diagnostics.Stopwatch]::StartNew(); Send-Gesture
             $shown = $window; $diagnosticReady = $null; $visibleMs = $null; $userVisibleMs = $null; $foregroundMs = $null; $focusMs = $null; $presentationReadyMs = $null
             $surfaceMs = $null; $lastPixels = ''; $firstUserVisiblePixels = $null; $firstUserVisibleMatchesStable = $null; $stableCount = 0; $nextPixelSampleMs = 0.0
-            while ($showTimer.Elapsed -lt $timeout -and ($null -eq $presentationReadyMs -or ($HostDiagnostics -eq 'required' -and $null -eq $diagnosticReady) -or ($SampleSparsePixels -and $null -eq $surfaceMs))) {
+            while ($showTimer.Elapsed -lt $timeout -and ($null -eq $presentationReadyMs -or ($HostDiagnostics -eq 'required' -and $null -eq $diagnosticReady) -or ($SampleSparsePixels -and $null -eq $surfaceMs) -or ($CaptureRevealFramesDirectory -and ($null -eq $userVisibleMs -or $showTimer.Elapsed.TotalMilliseconds - $userVisibleMs -lt $frameObservationMilliseconds)))) {
                 if ([VokHostInteractionProbe]::IsWindowVisible($windowHandle)) {
                     if ($null -eq $visibleMs) { $visibleMs = $showTimer.Elapsed.TotalMilliseconds }
                     $cloaked = [VokHostInteractionProbe]::IsCloaked($windowHandle)
-                    if ($null -eq $userVisibleMs -and -not $cloaked) { $userVisibleMs = $showTimer.Elapsed.TotalMilliseconds }
+                    if ($null -eq $userVisibleMs -and -not $cloaked) {
+                        $userVisibleMs = $showTimer.Elapsed.TotalMilliseconds
+                        if ($CaptureRevealFramesDirectory) {
+                            $row.FirstCaptureStartedMs = $showTimer.Elapsed.TotalMilliseconds
+                            Save-RevealFrame ([VokHostInteractionProbe]::InspectWindow($windowHandle)).Rect "cycle-$cycle-first.png"
+                            $row.FirstCaptureReturnedMs = $showTimer.Elapsed.TotalMilliseconds
+                        }
+                    }
                     $foregroundInTree = Test-OwnerInTree ([VokHostInteractionProbe]::GetForegroundWindow()) $treeIds
                     if ($null -eq $foregroundMs -and $foregroundInTree) { $foregroundMs = $showTimer.Elapsed.TotalMilliseconds }
                     if ($null -eq $focusMs -and $foregroundInTree -and (Test-OwnerInTree ([VokHostInteractionProbe]::GetKeyboardFocusWindow()) $treeIds)) { $focusMs = $showTimer.Elapsed.TotalMilliseconds }
@@ -396,6 +437,11 @@ try {
             if ($null -eq $visibleMs) { $failureCounts.Show++; throw "Visible HWND timeout on cycle $cycle." }
             if ($null -eq $userVisibleMs) { $failureCounts.Show++; throw "User-visible HWND timeout on cycle $cycle." }
             if ($null -eq $presentationReadyMs) { $failureCounts.PresentationReady++; throw "Presentation-ready timeout on cycle $cycle." }
+            if ($CaptureRevealFramesDirectory) {
+                $row.LaterCaptureStartedMs = $showTimer.Elapsed.TotalMilliseconds
+                Save-RevealFrame ([VokHostInteractionProbe]::InspectWindow($windowHandle)).Rect "cycle-$cycle-later.png"
+                $row.LaterCaptureReturnedMs = $showTimer.Elapsed.TotalMilliseconds
+            }
             $shown = [VokHostInteractionProbe]::InspectWindow($windowHandle)
             $row.FullScreen = $shown.Rect.Left -eq $monitorWorkArea.Left -and $shown.Rect.Top -eq $monitorWorkArea.Top -and $shown.Rect.Right -eq $monitorWorkArea.Right -and $shown.Rect.Bottom -eq $monitorWorkArea.Bottom
             if (-not $row.FullScreen) { throw "Window did not match the target monitor work area on cycle $cycle." }
@@ -483,7 +529,10 @@ try {
         $peaks[$property] = ($resourceSamples | Measure-Object $property -Maximum).Maximum
     }
     $result = [pscustomobject]@{
-        Schema = 5; Label = $Label; AppPath = $resolved; ArtifactLastWriteTime = (Get-Item -LiteralPath $resolved).LastWriteTime
+        Schema = 6; Label = $Label; AppPath = $resolved; ArtifactLastWriteTime = (Get-Item -LiteralPath $resolved).LastWriteTime
+        RevealTraceDirectory = $RevealTraceDirectory
+        FrameCaptureDirectory = $CaptureRevealFramesDirectory
+        FrameCaptureNote = if ($CaptureRevealFramesDirectory) { 'First observed uncloaked capture and a later sample after a 250 ms observation window. Capture overhead affects external timing; compare Stage card/name regions manually and exclude changing status/hover areas. Not proof of the first physical display frame.' } else { 'Disabled' }
         Gesture = $Gesture; HoldMilliseconds = $HoldMilliseconds; HostDiagnostics = $HostDiagnostics; CyclesRequested = $Cycles
         SuccessfulCycles = $successful.Count; FailedCycles = $Cycles - $successful.Count; FailureCounts = [pscustomobject]$failureCounts
         Latency = [pscustomobject]@{
@@ -518,8 +567,25 @@ try {
     }
     else { $json }
 }
+catch {
+    if ($OutputPath) {
+        $failurePath = [IO.Path]::GetFullPath($OutputPath)
+        $null = New-Item -ItemType Directory -Path (Split-Path -Parent $failurePath) -Force
+        [pscustomobject]@{
+            Schema = 6; Status = 'Failed'; Phase = $probePhase; Error = $_.Exception.Message
+            ProcessId = if ($null -ne $started) { $started.Id } else { $null }
+            RevealTraceDirectory = $RevealTraceDirectory
+        } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $failurePath -Encoding utf8
+    }
+    throw
+}
 finally {
     if ($null -ne $started) {
-        foreach ($id in @($treeIds | Sort-Object -Descending)) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
+        foreach ($id in @($treeIds | Where-Object { $_ -ne $started.Id } | Sort-Object -Descending)) {
+            Stop-Process -Id $id -Force -ErrorAction SilentlyContinue
+        }
+        if (-not $started.HasExited) { $started.Kill() }
+        if (-not $started.WaitForExit(5000)) { Write-Warning 'The probe-owned process has not confirmed exit.' }
+        $started.Dispose()
     }
 }

@@ -12,7 +12,7 @@ public sealed class DwmWorkspacePresentationService : IWorkspacePresentationServ
     private const int FenceQueueCapacity = 1;
     private static readonly TimeSpan ShutdownWatchdog = TimeSpan.FromSeconds(5);
 
-    private readonly BlockingCollection<long> _fenceRequests = new(FenceQueueCapacity);
+    private readonly BlockingCollection<FenceRequest> _fenceRequests = new(FenceQueueCapacity);
     private readonly Thread _fenceThread;
     private int _disposed;
 
@@ -55,14 +55,15 @@ public sealed class DwmWorkspacePresentationService : IWorkspacePresentationServ
         return value != 0;
     }
 
-    public bool TryRequestFence(long generation)
+    public bool TryRequestFence(long generation, long attempt)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(generation);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(attempt);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
         try
         {
-            return _fenceRequests.TryAdd(generation);
+            return _fenceRequests.TryAdd(new FenceRequest(generation, attempt));
         }
         catch (InvalidOperationException) when (_fenceRequests.IsAddingCompleted)
         {
@@ -91,7 +92,7 @@ public sealed class DwmWorkspacePresentationService : IWorkspacePresentationServ
 
     private void RunFenceLoop()
     {
-        foreach (var generation in _fenceRequests.GetConsumingEnumerable())
+        foreach (var request in _fenceRequests.GetConsumingEnumerable())
         {
             Exception? failure = null;
             try
@@ -103,11 +104,11 @@ public sealed class DwmWorkspacePresentationService : IWorkspacePresentationServ
                 failure = exception;
             }
 
-            PublishFenceCompleted(generation, failure);
+            PublishFenceCompleted(request, failure);
         }
     }
 
-    private void PublishFenceCompleted(long generation, Exception? failure)
+    private void PublishFenceCompleted(FenceRequest request, Exception? failure)
     {
         var handlers = FenceCompleted?.GetInvocationList();
         if (handlers is null)
@@ -115,7 +116,10 @@ public sealed class DwmWorkspacePresentationService : IWorkspacePresentationServ
             return;
         }
 
-        var eventArgs = new WorkspacePresentationFenceCompletedEventArgs(generation, failure);
+        var eventArgs = new WorkspacePresentationFenceCompletedEventArgs(
+            request.Generation,
+            request.Attempt,
+            failure);
         foreach (var handler in handlers.Cast<EventHandler<WorkspacePresentationFenceCompletedEventArgs>>())
         {
             try
@@ -128,4 +132,6 @@ public sealed class DwmWorkspacePresentationService : IWorkspacePresentationServ
             }
         }
     }
+
+    private readonly record struct FenceRequest(long Generation, long Attempt);
 }

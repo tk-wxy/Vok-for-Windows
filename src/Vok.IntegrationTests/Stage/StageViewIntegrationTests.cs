@@ -18,7 +18,7 @@ using Xunit;
 namespace Vok.IntegrationTests.Stage;
 
 [Collection(WpfApplicationCollection.Name)]
-public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
+public sealed partial class StageViewIntegrationTests(WpfApplicationFixture wpf)
 {
     [Fact]
     public void StageRendersARecyclingFixedPageAndUsesExclusiveDropVisuals()
@@ -612,6 +612,17 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 Assert.True(projection.IsPinned);
                 Assert.Equal(2, projection.Revision);
                 Assert.False(projection.HasAvailabilityStatus);
+                if (!fileService.Requests.Any(
+                        request => request.Item.Id == projection.Id &&
+                            request.Item.Revision == projection.Revision))
+                {
+                    fileService.Requests.First(request =>
+                            !request.Completion.Task.IsCompleted)
+                        .Completion.SetResult(StageFileAvailability.Available);
+                    window.Dispatcher.Invoke(
+                        DispatcherPriority.ApplicationIdle,
+                        static () => { });
+                }
                 Assert.Contains(
                     fileService.Requests,
                     request => request.Item.Id == projection.Id &&
@@ -922,11 +933,11 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 var rowContainer = FindVisualDescendants<ListBoxItem>(list).First();
                 var rowItems = Assert.IsType<StageCardRowViewModel>(rowContainer.DataContext).Items;
                 Assert.Equal(6, rowItems.Count);
-                var rowRequests = rowItems
-                    .Select(item => Assert.Single(
-                        fileService.Requests,
-                        request => request.Item.Id == item.Id))
+                var rowRequests = fileService.Requests
+                    .Where(request => rowItems.Any(item => item.Id == request.Item.Id))
                     .ToArray();
+                Assert.NotEmpty(rowRequests);
+                Assert.InRange(rowRequests.Length, 1, 4);
 
                 view.CancelAvailabilityBindingsForRow(rowContainer);
 
@@ -999,7 +1010,7 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
                             "StageItemCard",
                             StringComparison.Ordinal));
                     Assert.InRange(view.TrackedAvailabilityCardCount, 1, realizedCards);
-                    Assert.InRange(view.ActiveAvailabilityBindingCount, 1, realizedCards);
+                    Assert.InRange(view.ActiveAvailabilityBindingCount, 0, realizedCards);
                     Assert.False(view.HasPendingDeferredWork);
 
                     var interactionCard = FindVisualDescendants<Border>(list).First(
@@ -1401,7 +1412,7 @@ public sealed class StageViewIntegrationTests(WpfApplicationFixture wpf)
             var page = _items.Take(pageSize).ToArray();
             return Task.FromResult(new StagePage(
                 page,
-                new StagePageCursor(page[^1].SortOrder, page[^1].Id),
+                page.Length == 0 ? null : new StagePageCursor(page[^1].SortOrder, page[^1].Id),
                 _items.Length));
         }
 

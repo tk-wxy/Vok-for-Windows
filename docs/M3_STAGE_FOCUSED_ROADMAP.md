@@ -162,13 +162,11 @@ WPF 容器虚拟化只能减少视觉容器，不能阻止全部业务对象常�
 
 ### P0：冷启动、长空闲与睡眠恢复呼出门禁
 
-该缺陷优先于 N0。2026-09-12 的源码与现场只读诊断已经确认：Stage 数据只在进程启动时读取，普通呼出不查询 SQLite；但宿主的首次用户可见门禁只证明通用 WPF 帧与 DWM fence，不观察 Stage 的行投影、容器实现或延后工作。Stage 在隐藏时会撤销并重置可见项 Availability，重新显示后又为每张可见卡在共享 Shell STA 排队 `File.GetAttributes` 并逐项回到 UI；当前真实库有 46 条（其中 33 个 `.lnk`），暖态顺序检查合计约 16.4 ms，但隐藏/显示会产生大量属性通知。当前正式进程自启动后经历过两次 Modern Standby，而 Resume/Unlock 只有托盘登记恢复，没有工作台内容预热。现有 M0 探针测了热循环和隐藏后的资源回落，却没有测“等待 5 分钟/Modern Standby 后再呼出”，Stage WPF 测试也只在显式 Pump 到 ApplicationIdle 后断言完成，因此无法发现用户看到的中间空白。
+具体实施、根因 A/B 和验收合同见 `M3_STAGE_P0_REVEAL_PLAN.md`。截至 2026-09-14，P0.1–4 已实施：Stage 隐藏期预建并保留有界投影，以同代内容/布局/状态 token 门禁 render-return 与 attempt 唯一的 DWM fence；长期隐藏 HWND 再次可见时显式使根视觉失效，确保受 cloak 保护的帧实际重绘；Availability 只在成功呈现后以物理在途上限 4 复查，Hide 保留状态，拖动期间暂停。完整 Release 659/659、构建 0 warning / 0 error。
 
-- 先增加 `hotkey → Show → generic first frame → Stage rows published → viewport containers realized → first user-visible content` 分段时间点，以及 pending row/layout/Availability、Shell 队列、工作集/page faults 和最近 Resume 时间；不得用总耗时掩盖 Stage 空白窗口。
-- 建立六组独立候选 Gate：进程启动后从未呼出、热呼出、隐藏 30 秒/5 分钟/30 分钟、Modern Standby 恢复、会话解锁；分别用 0/46/50 条和本地/Missing/不可用目标验证。
-- 修复方向必须把静态卡片内容准备与动态 Availability 解耦：用户可见帧不等待文件系统，但也不能先显示空 Stage；已完成的可用性结果不能仅因 Hide 无条件丢弃，重新验证应在内容呈现后有界进行。
-- 若证据显示首次投影或睡眠后的 WPF/D3D surface 重建是主耗时，再选择启动期/Resume 后的无激活预热接缝；不能用固定延时、空白遮罩、全量图标缓存或长期可见隐藏窗掩盖。
-- 完成标准是长空闲/恢复后的第一张用户可见帧已含应有 Stage 静态卡片，呼出热路径零 SQLite、零同步 Shell/文件检查；具体延迟和资源阈值按 R9 同机基线确认。
+5 分钟 A/B 已复现并定位原缺陷：没有根视觉失效时，即便 22.6 ms 内容就绪、32.9 ms 解除 cloak、揭示前零 Availability，请求后的首图仍只有背景；只增加根视觉失效后，同条件约 32.4 ms 解除 cloak、首张与稍后截图完全一致且为完整 46 项。说明长期隐藏可让 DWM surface 丢失而 WPF retained tree 仍保持有效，旧的通用 Rendering + `DwmFlush` 不能单独触发真实重绘。最终快速 100 轮为 100/100，稳定外部用户可见 P95 约 109.8 ms；最终精确构建另跑 10/10，30 秒隐藏后 25.3 ms 内容就绪、36.8 ms 解除 cloak、47.8 ms 输入就绪，首图完整且揭示前 Availability 为 0。
+
+P0.5 当前只剩 30 分钟隐藏、Modern Standby/睡眠、会话解锁和用户观感 Gate。正常 Show 已自足，不依赖 Resume 预热；现阶段不增加周期唤醒、固定延时、空白遮罩、强制 GC、全量图标缓存或长期可见隐藏窗。剩余 Gate 通过后再进入 N0；若仍有可复现耗时，才按分段证据评审窄恢复接缝。
 
 ### N0：合同与 schema 8
 

@@ -4,6 +4,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Threading;
 using Vok.Core.Workspace;
+using Vok.Core.Diagnostics;
 using Vok.Features.Clipboard;
 using Vok.Features.Launcher;
 using Vok.Features.Stage;
@@ -12,20 +13,29 @@ using Vok.Presentation;
 
 namespace Vok;
 
-public partial class MainWindow : Window, IWorkspaceWindow
+public partial class MainWindow : Window,
+    IWorkspaceWindow,
+    IWorkspaceRevealDiagnostics,
+    IWorkspaceRevealReadiness
 {
     private Application? _application;
     private readonly MainWindowViewModel _viewModel;
     private readonly WorkspaceFileDropRouter _fileDropRouter;
+    private readonly RevealTrace _revealTrace;
+    private long _activeRevealGeneration;
 
     public MainWindow(
         MainWindowViewModel viewModel,
         LauncherLayoutProfileCache launcherLayoutProfiles,
         LauncherViewModel? launcherViewModel = null,
         ClipboardViewModel? clipboardViewModel = null,
-        StageViewModel? stageViewModel = null)
+        StageViewModel? stageViewModel = null,
+        RevealTrace? revealTrace = null)
     {
         InitializeComponent();
+        _revealTrace = revealTrace ?? RevealTrace.Disabled;
+        StagePanel.ConfigureRevealDiagnostics(_revealTrace);
+        StagePanel.RevealReady += OnStageRevealReady;
         _viewModel = viewModel;
         DataContext = viewModel;
         if (launcherViewModel is not null)
@@ -59,6 +69,52 @@ public partial class MainWindow : Window, IWorkspaceWindow
     }
 
     public event EventHandler<WorkspaceHideRequestedEventArgs>? HideRequested;
+
+    event EventHandler<WorkspaceRevealReadyEventArgs>?
+        IWorkspaceRevealReadiness.RevealReady
+    {
+        add => _revealReady += value;
+        remove => _revealReady -= value;
+    }
+
+    private event EventHandler<WorkspaceRevealReadyEventArgs>? _revealReady;
+
+    void IWorkspaceRevealDiagnostics.ObserveReveal(string phase, long generation) =>
+        StagePanel.ObserveReveal(phase, generation);
+
+    void IWorkspaceRevealReadiness.BeginReveal(long generation)
+    {
+        _activeRevealGeneration = generation;
+        StagePanel.BeginReveal(generation);
+        if (IsVisible)
+        {
+            InvalidateRevealSurface();
+        }
+    }
+
+    bool IWorkspaceRevealReadiness.IsRevealReady(
+        WorkspaceRevealReadinessToken token) =>
+        StagePanel.IsRevealReady(token);
+
+    void IWorkspaceRevealReadiness.CompleteReveal(long generation)
+    {
+        if (_activeRevealGeneration == generation)
+        {
+            _activeRevealGeneration = 0;
+        }
+
+        StagePanel.CompleteReveal(generation);
+    }
+
+    void IWorkspaceRevealReadiness.CancelReveal(long generation)
+    {
+        if (_activeRevealGeneration == generation)
+        {
+            _activeRevealGeneration = 0;
+        }
+
+        StagePanel.CancelReveal(generation);
+    }
 
     public event EventHandler? ApplicationDeactivated;
 
@@ -115,6 +171,8 @@ public partial class MainWindow : Window, IWorkspaceWindow
 
     protected override void OnClosed(EventArgs e)
     {
+        StagePanel.RevealReady -= OnStageRevealReady;
+        StagePanel.DetachRevealDiagnostics();
         _fileDropRouter.Dispose();
         IsVisibleChanged -= OnWindowIsVisibleChanged;
         _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
@@ -127,15 +185,33 @@ public partial class MainWindow : Window, IWorkspaceWindow
         base.OnClosed(e);
     }
 
+    private void OnStageRevealReady(
+        object? sender,
+        WorkspaceRevealReadyEventArgs e) =>
+        _revealReady?.Invoke(this, e);
+
     private void OnWindowIsVisibleChanged(
         object sender,
         DependencyPropertyChangedEventArgs e)
     {
-        if (e.NewValue is false)
+        if (e.NewValue is true && _activeRevealGeneration > 0)
+        {
+            InvalidateRevealSurface();
+        }
+        else if (e.NewValue is false)
         {
             CancelExternalFileDrag();
             StagePanel.CancelAllInteractions();
         }
+    }
+
+    private void InvalidateRevealSurface()
+    {
+        // DWM may discard the redirected surface while this reusable HWND is hidden even
+        // though WPF's retained visual tree remains layout-valid. Mark the root dirty only
+        // after the HWND becomes visible so the guarded frame carries a real repaint.
+        WorkspaceInputAnchor.InvalidateVisual();
+        _revealTrace.Record("RevealSurfaceInvalidated", _activeRevealGeneration);
     }
 
     private void OnWorkspaceInputAnchorGotKeyboardFocus(

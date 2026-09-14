@@ -11,12 +11,19 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片与排序 S0–S3 已通过。当前 Stage 默认容量 50，但新合同要求超大上限、重复 occurrence、无可见分页的连续数据虚拟化及单项/批量拖入拖出。另有用户物理复现的高优先级缺陷：长时间后台未用或恢复后呼出迟钝，Stage 会短暂空白；必须在 N0 前解决。
-- **最近进展**：2026-09-12 只读诊断确认普通呼出不重载 Stage SQLite；真实库 446 KiB/46 条，暖态 46 项 `GetAttributes` 顺序检查约 16.4 ms。缺陷链集中在冷恢复：宿主 DWM 揭示不观察 Stage 延后行/容器准备，Stage 每次 Hide 又清空 Availability 并在 Show 后逐项经 Shell STA 重查。当前 PID 19864 自启动后经历两次 Modern Standby，而 Resume/Unlock 只有托盘恢复；既有测试没有“等待后再次呼出”或睡眠恢复时延门禁。各因素精确占比尚待分段遥测复现。
-- **下一步**：先执行聚焦路线 P0：增加 hotkey/通用首帧/Stage 行发布/视口容器/首个稳定内容与 Resume、page faults、队列的分段观测，完成首次、30 秒/5 分钟/30 分钟隐藏、Modern Standby/Unlock 和 0/46/50 条矩阵；据证据解耦静态内容与 Availability 并完成冷恢复 Gate。通过后再做 N0 schema 8 occurrence、N1 连续数据窗口和 N2 出站 OLE。
-- **已知问题**：长空闲呼出缺陷当前可确认“SQLite 非主因、呈现准备合同与 Show 后 Availability 风暴存在”，但尚未量化 WPF/D3D 冷页、首次投影和逐项检查各自占比，不得直接加延时或遮罩。拖出/批量 FileDrop 回执、直接排序/拖出手势与 KI-001 仍待后续 Gate；140ms EaseOut 只是 S3 参数。测试产生的 `.lnk` 副本未经授权不得删除。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片与排序 S0–S3 已通过。Stage 默认容量仍为 50，后续合同仍要求超大上限、重复 occurrence、无可见分页的连续数据虚拟化及单项/批量拖入拖出。N0 前置的呼出 P0.1–4 已实现，P0.5 尚余 30 分钟与睡眠/解锁、用户观感 Gate。
+- **最近进展**：2026-09-14 以 5 分钟 A/B 定位长期隐藏空白：DWM 可丢弃隐藏 HWND 的 redirected surface，而 WPF retained tree 仍显示布局有效；只有静态 token + render-return + 旧 `DwmFlush` 时首图仍为纯背景，增加重新可见时根视觉失效后首张即为完整 46 项。Stage 现以 generation/content/layout/state token 门禁揭示，fence 有唯一 attempt；Availability 在呈现后以真实在途上限 4 刷新，Hide 保留结果、拖动暂停。Release Core 87/87 + Integration 572/572 共 659/659，零警告构建；100 轮候选 100/100，最终构建另跑 10/10，30 秒隐藏后约 25.3 ms 内容就绪、36.8 ms 解除 cloak、47.8 ms 输入就绪且揭示前零 Availability。当前源码默认 Release 已启动为唯一 PID 11468，加载 DLL 与输出路径一致且进程响应正常；改动未提交。
+- **下一步**：由用户在 PID 11468 验证长期后台后的实际观感，同时补 30 分钟隐藏、Modern Standby/睡眠与会话解锁后立即/稍后呼出。若这些 Gate 通过，不增加恢复预热，结束 P0 后进入 N0/schema 8；若仍复现迟钝，先用现有分段轨迹定位再评审窄恢复接缝。
+- **已知问题**：30 分钟与睡眠/Unlock 物理样本、用户最终观感仍未验证，故不宣布整个 P0 完成；一次带截图冷启动出现完整首图但物理焦点未在 2 秒内就绪，候选按预期失败关闭，随后快速 100/100 未复现。截图不是正式 Present 证明，ETW/PresentMon 仍是额外边界。拖出、N0/N1、大容量、重复 occurrence 与 KI-001 尚未实现；140ms 仅为 S3 排序参数。测试产生的 `.lnk` 副本未经授权不得删除。
 
 ## §0A 最近会话
+
+### 会话 2026-09-13 至 2026-09-14 - Stage P0 长隐藏呼出
+
+- P0.1 增加默认关闭的有界 reveal/Shell/资源/恢复轨迹、报告工具和固定候选截图探针；真实 46 条基线证明普通 Hide 不重建行，但旧路径每次揭示前重查 46 项，且通用 Rendering 可早于行发布和滚动完成。
+- P0.2–4 将隐藏期静态投影准备、generation/content/layout/state readiness token、render-return + attempt DWM fence、Availability 状态保留及物理在途上限 4 接入生产路径；Availability 只在完成呈现后复查，内部/外部拖动期间暂停。
+- 5 分钟单变量 A/B 复现：没有根视觉失效时，managed 内容和 fence 均完成仍先暴露纯背景；重新可见时显式 `InvalidateVisual` 根工作区后，首张与稍后截图一致且含完整 46 项，确认长期隐藏后的 DWM surface 丢失而 WPF retained tree 未自动变脏是该次机制。
+- 完整 Release 659/659、零警告构建；快速候选 100/100，最终精确构建 10/10，30 秒隐藏首图完整且揭示前零 Availability。30 分钟、Modern Standby/Unlock 和用户最终观感仍待验证，故整个 P0 尚未归档；改动未提交。
 
 ### 会话 2026-09-05 至 2026-09-12 - M3.1 中转站管理动作与卡片基础
 

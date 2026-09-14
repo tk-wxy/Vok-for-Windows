@@ -138,11 +138,11 @@
   - 最后验证：2026-08-24。
   - 状态：active；进程内 WPF STA、外部结构化同代五门禁、长期曲线及真实物理呼出/输入/两种隐藏返还均已通过，M0 宿主冻结。该结论不包含正式搜索编辑器或完整 IME 语义。
 
-- [ ] R13：呼出链路必须把输入就绪与目标窗口内容真正呈现作为独立结果；`IsWindowVisible`、前台/焦点五门禁以及全局、渲染前触发的 `CompositionTarget.Rendering` 均不能单独证明该 generation 的视觉树已经提交或被 DWM 呈现。渲染回调内不得执行进程采样、批量诊断发布或无消费者的 ViewModel 更新等阻塞实际帧的同步工作；不得用固定延时掩盖空背景帧。
+- [ ] R13：呼出链路必须把输入就绪与目标窗口内容真正呈现作为独立结果；`IsWindowVisible`、前台/焦点五门禁以及全局、渲染前触发的 `CompositionTarget.Rendering` 均不能单独证明该 generation 的视觉树已经提交或被 DWM 呈现。长期隐藏后，WPF retained tree 的布局有效也不能证明 DWM redirected surface 仍有内容；可复用 HWND 重新可见时必须显式产生根视觉重绘，再由同代静态内容 token、render-return 与 attempt 隔离的 DWM fence 决定揭示。渲染回调内不得执行进程采样、批量诊断发布或无消费者的 ViewModel 更新等阻塞实际帧的同步工作；不得用固定延时掩盖空背景帧。
   - 范围：长期隐藏 WPF 主窗的重复呼出、首帧/Present 观测、渲染关键路径和宿主状态命名。
-  - 证据：2026-08-27 对修复前 Release PID 的同轮外部像素与 HWND 诊断采样复现：约 23.4 ms 时 HWND 已可见但只有背景；内部输入就绪为 31.1 ms 后，约 41.7 ms 的外部采样仍只有背景；内部 `CompositionTarget.Rendering` 时间戳为 41.1 ms 后，约 71.5 ms 的外部采样仍无静态按钮、边框和文字；约 95.9 ms 才观察到完整内容。首张与稳定截图同时证明缺失的是整棵内容视觉树而非单独文字。修复采用 `decisions.md §10` 的 generation cloak + render-return + 专属 `DwmFlush` 栅栏；最终 Release 20/20 加 5/5 轮真实快速探针均零失败，且每轮首次解除 cloak 的屏幕稀疏样本都与后续稳定样本一致。
-  - 最后验证：2026-08-27。
-  - 状态：active；generation 级内容呈现门禁、失败 watchdog、跨代清理和诊断协议已实现并通过 107/107 自动测试及 25 轮真实像素/焦点往返；2026-08-27 用户真机确认主观呼出观感测试通过，ETW/PresentMon 仅保留为额外性能分析边界。
+  - 证据：2026-08-27 的基线已证明 native visible、输入就绪和 Rendering 均可早于完整内容。2026-09-14 又在真实 46 条、隐藏约 5 分钟的 A/B 中复现更窄机制：已有 Stage 静态就绪 token 且揭示前零 Availability 时，未使根视觉失效的候选在约 32.9 ms 解除 cloak 后首图仍为纯背景；只增加重新可见时 `InvalidateVisual` 根工作区，同条件约 32.4 ms 解除 cloak，首张与稍后图像完全一致并含完整 46 项。最终快速候选 100/100、精确构建 10/10；30 秒隐藏后首图完整，揭示前零 Availability。详见 `decisions.md §10` 与 `docs/M3_STAGE_P0_REVEAL_PLAN.md §11`。
+  - 最后验证：2026-09-14。
+  - 状态：active；Stage 静态内容门禁、根 surface 重绘、attempt fence、失败 watchdog、跨代清理和呈现后有界 Availability 已实现，完整 Release 659/659、构建零警告。30 分钟及 Modern Standby/Unlock 物理 Gate和用户最终观感仍待验证；ETW/PresentMon 保留为额外 Present 证据边界。
 
 ### 性能验收
 

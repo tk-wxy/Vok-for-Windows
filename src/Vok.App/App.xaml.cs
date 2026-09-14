@@ -33,6 +33,7 @@ public partial class App : Application
 {
     private ServiceProvider? _services;
     private SingleInstanceGuard? _singleInstance;
+    private RevealTraceRecorder? _revealRecorder;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -51,6 +52,17 @@ public partial class App : Application
         }
 
         _services = BuildServices();
+        var revealTrace = _services.GetRequiredService<RevealTrace>();
+        var traceDirectory = Environment.GetEnvironmentVariable(
+            RevealTraceRecorder.DirectoryEnvironmentVariable);
+        if (revealTrace.Enabled && !string.IsNullOrWhiteSpace(traceDirectory))
+        {
+            try { _revealRecorder = new RevealTraceRecorder(revealTrace, traceDirectory); }
+            catch (Exception exception)
+            {
+                Trace.TraceWarning("Reveal diagnostics unavailable: {0}.", exception.GetType().Name);
+            }
+        }
         InitializeLauncherLayouts(_services);
         var appearance = _services.GetRequiredService<AppearanceController>();
         await appearance.InitializeAsync();
@@ -86,6 +98,7 @@ public partial class App : Application
     {
         _services?.GetService<ApplicationController>()?.Dispose();
         _services?.Dispose();
+        _revealRecorder?.Dispose();
         _singleInstance?.Dispose();
         base.OnExit(e);
     }
@@ -112,6 +125,8 @@ public partial class App : Application
         services.AddSingleton(new ClipboardImageCaptureOptions());
         services.AddSingleton(new ClipboardRetentionOptions());
         services.AddSingleton(new StageOptions());
+        services.AddSingleton(_ => new RevealTrace(!string.IsNullOrWhiteSpace(
+            Environment.GetEnvironmentVariable(RevealTraceRecorder.DirectoryEnvironmentVariable))));
         services.AddSingleton(provider => new ClipboardCaptureOptions(
             image: provider.GetRequiredService<ClipboardImageCaptureOptions>()));
         services.AddSingleton<WorkspaceSessionStateMachine>();
@@ -148,7 +163,8 @@ public partial class App : Application
                 provider.GetRequiredService<ClipboardCaptureOptions>()));
         services.AddSingleton<IClipboardCaptureNormalizer, ClipboardContentNormalizer>();
         services.AddSingleton<IPasteInputService, Win32PasteInputService>();
-        services.AddSingleton<WindowsShellStaExecutor>();
+        services.AddSingleton(provider => new WindowsShellStaExecutor(
+            provider.GetRequiredService<RevealTrace>()));
         services.AddSingleton<ILauncherShellService, WindowsLauncherShellService>();
         services.AddSingleton<IStageFileService, WindowsStageFileService>();
         services.AddSingleton<IStageClipboardService, WindowsStageClipboardService>();

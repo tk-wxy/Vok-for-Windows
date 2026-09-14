@@ -17,6 +17,7 @@ public partial class StageView : UserControl
 {
     private const double DragEdgeZone = 36;
     private const double MaximumAutoScrollSpeed = 720;
+    private const int MaximumPendingAvailabilityInspections = 4;
     private static readonly Duration ReorderShiftDuration =
         new(TimeSpan.FromMilliseconds(140));
     private static readonly CubicEase ReorderShiftEasing = CreateReorderShiftEasing();
@@ -74,6 +75,8 @@ public partial class StageView : UserControl
     private ScrollViewer? _scrollViewer;
     private readonly HashSet<Border> _availabilityCards = [];
     private readonly Dictionary<Border, AvailabilityBinding> _availabilityBindings = [];
+    private readonly Dictionary<StageItemViewModel, long>
+        _availabilityValidatedGenerations = [];
     private StageCardLayoutProfile? _cardLayoutProfile;
     private ScrollAnchor? _pendingScrollAnchor;
     private bool _externalDragActive;
@@ -82,6 +85,9 @@ public partial class StageView : UserControl
     private bool _cardLayoutRefreshPending;
     private bool _rowPublicationRefreshPending;
     private bool _availabilityRefreshPending;
+    private bool _availabilityRequestsAllowed = true;
+    private long _availabilityRefreshGeneration;
+    private int _availabilityOutstandingOperations;
     private Border? _pressedCard;
     private StageItemViewModel? _pressedItem;
     private Point _pressPoint;
@@ -196,6 +202,9 @@ public partial class StageView : UserControl
 
     internal int ActiveAvailabilityBindingCount => _availabilityBindings.Count;
 
+    internal int OutstandingAvailabilityOperationCount =>
+        _availabilityOutstandingOperations;
+
     internal int TrackedAvailabilityCardCount => _availabilityCards.Count;
 
     internal bool HasPendingDeferredWork =>
@@ -239,6 +248,11 @@ public partial class StageView : UserControl
                 UpdateCardInteractionState(card);
             }
         }
+
+        if (!sessionActive)
+        {
+            ScheduleAvailabilityRefresh();
+        }
     }
 
     private void OnDataContextChanged(
@@ -247,7 +261,7 @@ public partial class StageView : UserControl
     {
         CancelAllInteractions(_observedViewModel);
         DetachObservedViewModel();
-        if (IsLoaded && e.NewValue is StageViewModel newViewModel)
+        if (e.NewValue is StageViewModel newViewModel)
         {
             AttachObservedViewModel(newViewModel);
         }
@@ -258,6 +272,12 @@ public partial class StageView : UserControl
 
     private void OnViewLoaded(object sender, RoutedEventArgs e)
     {
+        TraceStage("StageLoaded");
+        AttachRevealLayoutObservation();
+        if (_activeRevealGeneration == 0 && _completedRevealGeneration == 0)
+        {
+            _availabilityRequestsAllowed = true;
+        }
         ApplyCardLayoutFromRealizedViewport();
         if (DataContext is StageViewModel viewModel)
         {
@@ -270,9 +290,14 @@ public partial class StageView : UserControl
 
     private void OnViewUnloaded(object sender, RoutedEventArgs e)
     {
+        TraceStage("StageUnloaded");
+        CancelRevealCore();
+        _completedRevealGeneration = 0;
+        _availabilityRequestsAllowed = false;
+        DetachRevealDiagnostics();
         CancelAllInteractions();
         DetachObservedViewModel();
-        CancelAllAvailabilityBindings();
+        CancelAllAvailabilityBindings(resetState: false);
         _availabilityCards.Clear();
         _pendingScrollAnchor = null;
         _scrollResetPending = false;
@@ -294,10 +319,12 @@ public partial class StageView : UserControl
         _scrollResetPending = true;
         _pendingScrollAnchor = null;
         _cardRowsProjection.Attach(_observedItems);
+        TraceStage("StageSourceAttached");
     }
 
     private void DetachObservedViewModel()
     {
+        var hadSource = _observedItems is not null;
         if (_observedItems is not null)
         {
             _observedItems.CollectionChanged -= OnItemsCollectionChanged;
@@ -311,8 +338,10 @@ public partial class StageView : UserControl
             _observedViewModel = null;
         }
 
-        CancelAllAvailabilityBindings();
+        CancelAllAvailabilityBindings(resetState: false);
+        _availabilityValidatedGenerations.Clear();
         _cardRowsProjection.Attach(null);
+        if (hadSource) TraceStage("StageSourceDetached");
     }
 
     private void OnObservedViewModelPropertyChanged(
@@ -331,11 +360,26 @@ public partial class StageView : UserControl
             {
                 UpdateCardInteractionState(card);
             }
+
+            if (!IsReorderInteractionActive())
+            {
+                ScheduleAvailabilityRefresh();
+            }
+        }
+
+        if (e.PropertyName is nameof(StageViewModel.IsLoading) or
+            nameof(StageViewModel.IsEmpty) or
+            nameof(StageViewModel.ShowErrorState))
+        {
+            _staticPresentationVersion = unchecked(_staticPresentationVersion + 1);
+            EvaluateRevealReadiness();
         }
     }
 
     private void OnItemAuthorityChanged(StageItemViewModel item)
     {
+        _staticPresentationVersion = unchecked(_staticPresentationVersion + 1);
+        _availabilityValidatedGenerations.Remove(item);
         foreach (var card in _availabilityCards.Where(
                      card => ReferenceEquals(card.DataContext, item)).ToArray())
         {
@@ -349,6 +393,18 @@ public partial class StageView : UserControl
         object? sender,
         NotifyCollectionChangedEventArgs e)
     {
+        if (e.Action is NotifyCollectionChangedAction.Reset)
+        {
+            _availabilityValidatedGenerations.Clear();
+        }
+        else if (e.OldItems is not null)
+        {
+            foreach (var oldItem in e.OldItems.OfType<StageItemViewModel>())
+            {
+                _availabilityValidatedGenerations.Remove(oldItem);
+            }
+        }
+
         if (e.Action is not NotifyCollectionChangedAction.Reset || _scrollResetPending)
         {
             return;
@@ -360,6 +416,7 @@ public partial class StageView : UserControl
 
     private void OnCardRowsPublished()
     {
+        TraceStage("StageRowsPublished");
         if (_rowPublicationRefreshPending)
         {
             return;
@@ -393,6 +450,9 @@ public partial class StageView : UserControl
             {
                 ScheduleReorderVisualRefresh();
             }
+            TraceStage("StageScrollApplied");
+            EvaluateRevealReadiness();
+            if (_revealTrace.Enabled) OnRevealLayoutUpdated(this, EventArgs.Empty);
         });
     }
 
@@ -599,6 +659,8 @@ public partial class StageView : UserControl
             var owner = viewModel ?? _observedViewModel ?? DataContext as StageViewModel;
             _ = owner?.TryCancelReorderPreview(generation);
         }
+
+        ScheduleAvailabilityRefresh();
     }
 
     private void UpdateInternalReorder(Point pointerInViewport)
@@ -955,7 +1017,7 @@ public partial class StageView : UserControl
         _reorderTranslationTargets.Remove(card);
         ResetTranslation(card);
         _availabilityCards.Remove(card);
-        CancelAvailabilityBinding(card, resetState: !IsReorderInteractionActive());
+        CancelAvailabilityBinding(card, resetState: false);
     }
 
     private void OnStageItemCardDataContextChanged(
@@ -970,7 +1032,7 @@ public partial class StageView : UserControl
         ResetContextMenuState(card);
         _reorderTranslationTargets.Remove(card);
         ResetTranslation(card);
-        CancelAvailabilityBinding(card, resetState: !IsReorderInteractionActive());
+        CancelAvailabilityBinding(card, resetState: false);
         ScheduleAvailabilityRefresh();
     }
 
@@ -997,7 +1059,7 @@ public partial class StageView : UserControl
                      rowRoot,
                      "StageItemCard").ToArray())
         {
-            CancelAvailabilityBinding(card, resetState: !IsReorderInteractionActive());
+            CancelAvailabilityBinding(card, resetState: false);
         }
     }
 
@@ -1005,8 +1067,13 @@ public partial class StageView : UserControl
         object sender,
         DependencyPropertyChangedEventArgs e)
     {
+        TraceStage(IsVisible ? "StageVisible" : "StageHidden");
         if (IsVisible)
         {
+            if (_activeRevealGeneration == 0 && _completedRevealGeneration == 0)
+            {
+                _availabilityRequestsAllowed = true;
+            }
             ScheduleAvailabilityRefresh();
         }
         else
@@ -1017,7 +1084,8 @@ public partial class StageView : UserControl
                 ResetContextMenuState(card);
             }
 
-            CancelAllAvailabilityBindings();
+            _availabilityRequestsAllowed = false;
+            CancelAllAvailabilityBindings(resetState: false);
         }
     }
 
@@ -1068,7 +1136,7 @@ public partial class StageView : UserControl
                 _pendingScrollAnchor = CaptureScrollAnchor();
             }
 
-            CancelAllAvailabilityBindings();
+            CancelAllAvailabilityBindings(resetState: false);
         }
 
         _cardLayoutProfile = profile;
@@ -1176,6 +1244,7 @@ public partial class StageView : UserControl
         }
 
         _availabilityRefreshPending = true;
+        TraceStage("StageAvailabilityScheduled");
         _ = Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
         {
             _availabilityRefreshPending = false;
@@ -1185,16 +1254,31 @@ public partial class StageView : UserControl
 
     private void RefreshAvailabilityBindings()
     {
+        if (!_availabilityRequestsAllowed || _externalDragActive ||
+            IsReorderInteractionActive())
+        {
+            return;
+        }
+
         _scrollViewer ??= FindVisualDescendant<ScrollViewer>(StageItemsList);
+        var activeCount = _availabilityOutstandingOperations;
         foreach (var card in _availabilityCards.ToArray())
         {
             if (!IsCardInViewport(card))
             {
-                CancelAvailabilityBinding(card, resetState: true);
+                CancelAvailabilityBinding(card, resetState: false);
                 continue;
             }
 
-            EnsureAvailabilityBinding(card);
+            if (activeCount >= MaximumPendingAvailabilityInspections)
+            {
+                continue;
+            }
+
+            if (EnsureAvailabilityBinding(card))
+            {
+                activeCount++;
+            }
         }
     }
 
@@ -1226,13 +1310,13 @@ public partial class StageView : UserControl
         }
     }
 
-    private void EnsureAvailabilityBinding(Border card)
+    private bool EnsureAvailabilityBinding(Border card)
     {
         if (DataContext is not StageViewModel viewModel ||
             card.DataContext is not StageItemViewModel item)
         {
-            CancelAvailabilityBinding(card, resetState: true);
-            return;
+            CancelAvailabilityBinding(card, resetState: false);
+            return false;
         }
 
         var key = new AvailabilityBindingKey(item.Id, item.Revision);
@@ -1241,21 +1325,42 @@ public partial class StageView : UserControl
             ReferenceEquals(current.Item, item) &&
             ReferenceEquals(current.ViewModel, viewModel))
         {
-            return;
+            return false;
         }
 
         CancelAvailabilityBinding(card, resetState: false);
-        if (item.HasAvailabilityResult)
+        if (item.HasAvailabilityResult &&
+            (_availabilityRefreshGeneration == 0 ||
+             (_availabilityValidatedGenerations.TryGetValue(item, out var generation) &&
+              generation == _availabilityRefreshGeneration)))
         {
-            return;
+            return false;
         }
 
-        var binding = new AvailabilityBinding(viewModel, item, key);
+        var binding = new AvailabilityBinding(viewModel, item, key)
+        {
+            TraceId = _revealTrace.NextId(),
+            TraceGeneration = _diagnosticGeneration,
+        };
         _availabilityBindings.Add(card, binding);
-        _ = CompleteAvailabilityBindingAsync(
-            card,
-            binding,
-            viewModel.InspectAvailabilityAsync(item, binding.CancellationToken));
+        _availabilityOutstandingOperations++;
+        _revealTrace.Record("StageAvailabilityRequested", binding.TraceGeneration,
+            _revealSourceId, binding.TraceId, item.Id, item.Revision);
+        try
+        {
+            _ = CompleteAvailabilityBindingAsync(
+                card,
+                binding,
+                viewModel.InspectAvailabilityAsync(item, binding.CancellationToken));
+        }
+        catch (Exception exception)
+        {
+            _ = CompleteAvailabilityBindingAsync(
+                card,
+                binding,
+                Task.FromException<StageFileAvailability>(exception));
+        }
+        return true;
     }
 
     private async Task CompleteAvailabilityBindingAsync(
@@ -1266,11 +1371,18 @@ public partial class StageView : UserControl
         try
         {
             var availability = await operation.ConfigureAwait(true);
+            _revealTrace.Record("StageAvailabilityReturned", binding.TraceGeneration,
+                _revealSourceId, binding.TraceId, binding.Key.ItemId, binding.Key.Revision,
+                value1: (int)availability);
             if (IsCurrentAvailabilityBinding(card, binding))
             {
+                _revealTrace.Record("StageAvailabilityApplied", binding.TraceGeneration,
+                    _revealSourceId, binding.TraceId, binding.Key.ItemId, binding.Key.Revision);
                 _ = binding.Item.ApplyAvailability(
                     binding.Key.Revision,
                     availability);
+                _availabilityValidatedGenerations[binding.Item] =
+                    _availabilityRefreshGeneration;
             }
         }
         catch (OperationCanceledException) when (binding.IsCancellationRequested)
@@ -1283,6 +1395,8 @@ public partial class StageView : UserControl
                 _ = binding.Item.ApplyAvailability(
                     binding.Key.Revision,
                     StageFileAvailability.Unavailable);
+                _availabilityValidatedGenerations[binding.Item] =
+                    _availabilityRefreshGeneration;
             }
         }
         catch (Exception exception)
@@ -1292,6 +1406,8 @@ public partial class StageView : UserControl
                 _ = binding.Item.ApplyAvailability(
                     binding.Key.Revision,
                     StageFileAvailability.Unavailable);
+                _availabilityValidatedGenerations[binding.Item] =
+                    _availabilityRefreshGeneration;
             }
 
             Trace.TraceWarning(
@@ -1300,7 +1416,16 @@ public partial class StageView : UserControl
         }
         finally
         {
+            _revealTrace.Record("StageAvailabilityCompleted", binding.TraceGeneration,
+                _revealSourceId, binding.TraceId, binding.Key.ItemId, binding.Key.Revision);
             binding.CompleteOperation();
+            _availabilityOutstandingOperations = Math.Max(
+                0,
+                _availabilityOutstandingOperations - 1);
+            if (_availabilityRequestsAllowed)
+            {
+                ScheduleAvailabilityRefresh();
+            }
         }
     }
 
@@ -1322,17 +1447,20 @@ public partial class StageView : UserControl
         }
 
         binding.CancelOperation();
+        _revealTrace.Record("StageAvailabilityDetached", binding.TraceGeneration,
+            _revealSourceId, binding.TraceId, binding.Key.ItemId, binding.Key.Revision,
+            value1: resetState ? 1 : 0, value2: binding.IsOperationCompleted ? 1 : 0);
         if (resetState)
         {
             binding.Item.ResetAvailability(binding.Key.Revision);
         }
     }
 
-    private void CancelAllAvailabilityBindings()
+    private void CancelAllAvailabilityBindings(bool resetState = false)
     {
         foreach (var card in _availabilityBindings.Keys.ToArray())
         {
-            CancelAvailabilityBinding(card, resetState: true);
+            CancelAvailabilityBinding(card, resetState);
         }
     }
 
@@ -1516,6 +1644,9 @@ public partial class StageView : UserControl
         public StageItemViewModel Item { get; } = item;
 
         public AvailabilityBindingKey Key { get; } = key;
+        public long TraceId { get; init; }
+        public long TraceGeneration { get; init; }
+        public bool IsOperationCompleted => Volatile.Read(ref _operationCompleted) != 0;
 
         public CancellationToken CancellationToken => _cancellation.Token;
 

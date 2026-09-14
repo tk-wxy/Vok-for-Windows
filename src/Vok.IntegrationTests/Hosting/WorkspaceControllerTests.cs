@@ -12,7 +12,7 @@ using Xunit;
 
 namespace Vok.IntegrationTests.Hosting;
 
-public sealed class WorkspaceControllerTests
+public sealed partial class WorkspaceControllerTests
 {
     [Fact]
     public async Task ShortPressFromHiddenShowsAndRemainsVisibleAfterRelease()
@@ -905,6 +905,117 @@ public sealed class WorkspaceControllerTests
     }
 
     [Fact]
+    public async Task StaticContentReadinessMustPrecedeRenderingAndFenceRequest()
+    {
+        using var rig = await TestRig.CreateAsync();
+        rig.Window.AutoRevealReady = false;
+        rig.Placement.OsGatesReady = true;
+        rig.Window.FocusSucceeds = true;
+
+        rig.Hotkey.Raise(ExternalTarget);
+        rig.Frames.RaiseRendering();
+
+        Assert.Equal(WorkspaceState.Revealing, rig.StateMachine.State);
+        Assert.True(rig.Presentation.Cloaked);
+        Assert.DoesNotContain("presentation.fence-request", rig.Log);
+
+        rig.Window.RaiseRevealReady();
+        rig.Frames.RaiseRendering();
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.False(rig.Presentation.Cloaked);
+        Assert.Equal(1, rig.Window.CompletedRevealCount);
+        AssertOrdered(
+            rig.Log,
+            "window.reveal-begin",
+            "presentation.cloak",
+            "window.show",
+            "presentation.fence-request",
+            "presentation.uncloak",
+            "window.reveal-complete");
+    }
+
+    [Fact]
+    public async Task ChangedContentRearmsReadinessAndRejectsOldSameGenerationFenceAttempt()
+    {
+        using var rig = await TestRig.CreateAsync();
+        rig.Presentation.AutoComplete = false;
+        rig.Placement.OsGatesReady = true;
+        rig.Window.FocusSucceeds = true;
+
+        rig.Hotkey.Raise(ExternalTarget);
+        rig.Window.RevealTokenIsCurrent = false;
+        rig.Presentation.CompleteNext();
+
+        Assert.Equal(WorkspaceState.Revealing, rig.StateMachine.State);
+        Assert.True(rig.Presentation.Cloaked);
+        Assert.Equal(2, rig.Log.Count(entry => entry == "window.reveal-begin"));
+
+        rig.Frames.RaiseRendering();
+        rig.Presentation.RepeatLastCompletion();
+
+        Assert.Equal(WorkspaceState.Revealing, rig.StateMachine.State);
+        Assert.True(rig.Presentation.Cloaked);
+
+        rig.Window.RevealTokenIsCurrent = true;
+        rig.Presentation.CompleteNext();
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.False(rig.Presentation.Cloaked);
+        Assert.Equal(1, rig.Window.CompletedRevealCount);
+    }
+
+    [Fact]
+    public async Task MissingStaticContentReadinessFailsClosedAndCancelsItsGeneration()
+    {
+        using var rig = await TestRig.CreateAsync();
+        rig.Window.AutoRevealReady = false;
+
+        rig.Hotkey.Raise(ExternalTarget);
+        rig.Window.RaiseLastScheduledAction();
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.False(rig.Window.IsVisible);
+        Assert.False(rig.Presentation.Cloaked);
+        Assert.Equal(1, rig.Window.CancelledRevealCount);
+        Assert.DoesNotContain("presentation.fence-request", rig.Log);
+    }
+
+    [Fact]
+    public async Task DuplicateStaticReadinessCannotCompletePresentationTwice()
+    {
+        using var rig = await TestRig.CreateAsync();
+        rig.Window.AutoRevealReady = false;
+        rig.Placement.OsGatesReady = true;
+        rig.Window.FocusSucceeds = true;
+        rig.Window.RaiseRenderingAfterShow = false;
+
+        rig.Hotkey.Raise(ExternalTarget);
+        rig.Window.RaiseRevealReady();
+        rig.Window.RaiseRevealReady();
+        rig.Frames.RaiseRendering();
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+        Assert.Equal(1, rig.Window.CompletedRevealCount);
+        Assert.Equal(1, rig.Log.Count(entry => entry == "presentation.fence-request"));
+    }
+
+    [Fact]
+    public async Task SynchronousReadinessContinuationFailureCannotResumeShowAfterCleanup()
+    {
+        using var rig = await TestRig.CreateAsync();
+        rig.Frames.SubscribeFailuresRemaining = 1;
+
+        rig.Hotkey.Raise(ExternalTarget);
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.False(rig.Window.IsVisible);
+        Assert.False(rig.Presentation.Cloaked);
+        Assert.DoesNotContain("window.show", rig.Log);
+        Assert.Equal(1, rig.Window.CancelledRevealCount);
+    }
+
+    [Fact]
     public async Task RenderingCallbackDefersFenceUntilAfterTheRenderDispatcherOperation()
     {
         using var rig = await TestRig.CreateAsync();
@@ -1150,7 +1261,7 @@ public sealed class WorkspaceControllerTests
 
     private sealed class TestRig : IDisposable
     {
-        private TestRig()
+        private TestRig(RevealTrace? trace = null)
         {
             Window = new FakeWindow(Log);
             Frames = new FakeFrameSource();
@@ -1174,7 +1285,7 @@ public sealed class WorkspaceControllerTests
                 Sampler,
                 Publisher,
                 Presentation,
-                new WorkspaceHostOptions(false));
+                new WorkspaceHostOptions(false), trace);
         }
 
         public List<string> Log { get; } = [];
@@ -1190,9 +1301,9 @@ public sealed class WorkspaceControllerTests
         public MainWindowViewModel ViewModel { get; }
         public WorkspaceController Controller { get; }
 
-        public static async Task<TestRig> CreateAsync()
+        public static async Task<TestRig> CreateAsync(RevealTrace? trace = null)
         {
-            var rig = new TestRig();
+            var rig = new TestRig(trace);
             await rig.Controller.StartAsync();
             rig.Log.Clear();
             return rig;
@@ -1229,8 +1340,16 @@ public sealed class WorkspaceControllerTests
         }
     }
 
-    private sealed class FakeWindow(List<string> log) : IWorkspaceWindow
+    private sealed class FakeWindow(List<string> log) :
+        IWorkspaceWindow,
+        IWorkspaceRevealDiagnostics,
+        IWorkspaceRevealReadiness
     {
+        private EventHandler<WorkspaceRevealReadyEventArgs>? _revealReady;
+        private WorkspaceRevealReadinessToken? _currentRevealToken;
+
+        public Action<string, long>? RevealObservation { get; set; }
+        public void ObserveReveal(string phase, long generation) => RevealObservation?.Invoke(phase, generation);
         private EventHandler? _activated;
         private EventHandler? _inputFocused;
         private readonly List<EventHandler> _removedActivated = [];
@@ -1256,6 +1375,11 @@ public sealed class WorkspaceControllerTests
         public event EventHandler? ApplicationDeactivated;
         public event EventHandler<WorkspaceExternalDragStartedEventArgs>? ExternalDragStarted;
         public event EventHandler<WorkspaceExternalDragEndedEventArgs>? ExternalDragEnded;
+        event EventHandler<WorkspaceRevealReadyEventArgs>? IWorkspaceRevealReadiness.RevealReady
+        {
+            add => _revealReady += value;
+            remove => _revealReady -= value;
+        }
         public bool IsVisible { get; private set; }
         public bool HasInputAnchorFocus => InputFocus;
         public bool InputFocus { get; set; }
@@ -1270,6 +1394,50 @@ public sealed class WorkspaceControllerTests
         public bool TopmostWasAppliedWhenShown { get; private set; }
         public Func<bool>? IsTopmost { get; set; }
         public Action? AfterShow { get; set; }
+        public bool AutoRevealReady { get; set; } = true;
+        public bool RevealTokenIsCurrent { get; set; } = true;
+        public int CompletedRevealCount { get; private set; }
+        public int CancelledRevealCount { get; private set; }
+
+        public void BeginReveal(long generation)
+        {
+            log.Add("window.reveal-begin");
+            _currentRevealToken = new WorkspaceRevealReadinessToken(generation, 1, 1, 1);
+            if (AutoRevealReady)
+            {
+                RaiseRevealReady();
+            }
+        }
+
+        public bool IsRevealReady(WorkspaceRevealReadinessToken token) =>
+            RevealTokenIsCurrent && _currentRevealToken == token;
+
+        public void CompleteReveal(long generation)
+        {
+            if (_currentRevealToken?.Generation == generation)
+            {
+                CompletedRevealCount++;
+                log.Add("window.reveal-complete");
+            }
+        }
+
+        public void CancelReveal(long generation)
+        {
+            if (_currentRevealToken?.Generation == generation)
+            {
+                CancelledRevealCount++;
+                _currentRevealToken = null;
+                log.Add("window.reveal-cancel");
+            }
+        }
+
+        public void RaiseRevealReady()
+        {
+            if (_currentRevealToken is { } token)
+            {
+                _revealReady?.Invoke(this, new WorkspaceRevealReadyEventArgs(token));
+            }
+        }
 
         public nint EnsureHandle() { log.Add("window.ensure"); return 0x777; }
         public void Show()
@@ -1387,9 +1555,19 @@ public sealed class WorkspaceControllerTests
     {
         private EventHandler? _rendering;
         private readonly List<EventHandler> _removed = [];
+        public int SubscribeFailuresRemaining { get; set; }
         public event EventHandler? Rendering
         {
-            add => _rendering += value;
+            add
+            {
+                if (SubscribeFailuresRemaining > 0)
+                {
+                    SubscribeFailuresRemaining--;
+                    throw new InvalidOperationException("render subscription failure");
+                }
+
+                _rendering += value;
+            }
             remove { if (value is not null) _removed.Add(value); _rendering -= value; }
         }
 
@@ -1572,7 +1750,8 @@ public sealed class WorkspaceControllerTests
     private sealed class FakePresentationService(List<string> log)
         : IWorkspacePresentationService
     {
-        private readonly Queue<long> _requests = [];
+        private readonly Queue<(long Generation, long Attempt)> _requests = [];
+        private (long Generation, long Attempt)? _lastCompletedRequest;
 
         public event EventHandler<WorkspacePresentationFenceCompletedEventArgs>? FenceCompleted;
 
@@ -1595,7 +1774,7 @@ public sealed class WorkspaceControllerTests
 
         public bool IsCloaked(nint workspaceWindow) => Cloaked;
 
-        public bool TryRequestFence(long generation)
+        public bool TryRequestFence(long generation, long attempt)
         {
             log.Add("presentation.fence-request");
             if (RejectFenceRequest)
@@ -1603,7 +1782,7 @@ public sealed class WorkspaceControllerTests
                 return false;
             }
 
-            _requests.Enqueue(generation);
+            _requests.Enqueue((generation, attempt));
             if (AutoComplete)
             {
                 CompleteNext();
@@ -1614,11 +1793,28 @@ public sealed class WorkspaceControllerTests
 
         public void CompleteNext(Exception? exception = null)
         {
-            var generation = _requests.Dequeue();
+            var request = _requests.Dequeue();
+            _lastCompletedRequest = request;
             log.Add("presentation.fence-complete");
             FenceCompleted?.Invoke(
                 this,
-                new WorkspacePresentationFenceCompletedEventArgs(generation, exception));
+                new WorkspacePresentationFenceCompletedEventArgs(
+                    request.Generation,
+                    request.Attempt,
+                    exception));
+        }
+
+        public void RepeatLastCompletion(Exception? exception = null)
+        {
+            var request = _lastCompletedRequest ?? throw new InvalidOperationException(
+                "No presentation fence has completed.");
+            log.Add("presentation.fence-complete-duplicate");
+            FenceCompleted?.Invoke(
+                this,
+                new WorkspacePresentationFenceCompletedEventArgs(
+                    request.Generation,
+                    request.Attempt,
+                    exception));
         }
 
         public void Dispose()

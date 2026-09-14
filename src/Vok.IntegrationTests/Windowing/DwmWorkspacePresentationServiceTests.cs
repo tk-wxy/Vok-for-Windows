@@ -46,12 +46,13 @@ public sealed class DwmWorkspacePresentationServiceTests(WpfApplicationFixture w
             completed.Set();
         };
 
-        Assert.True(service.TryRequestFence(42));
+        Assert.True(service.TryRequestFence(42, 7));
         Assert.True(completed.Wait(
             TimeSpan.FromSeconds(5),
             TestContext.Current.CancellationToken));
         Assert.NotNull(observed);
         Assert.Equal(42, observed.Generation);
+        Assert.Equal(7, observed.Attempt);
         Assert.Null(observed.Exception);
     }
 }
