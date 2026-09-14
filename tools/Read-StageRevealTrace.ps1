@@ -17,11 +17,12 @@ function Get-ElapsedMs($entry, [long] $start) {
 $sessions = @(foreach ($group in @($entries | Where-Object Generation -gt 0 | Group-Object Generation)) {
     $events = @($group.Group)
     $request = $events | Where-Object Phase -eq 'ShowRequested' | Select-Object -First 1
+    if ($null -eq $request) { continue }
     $uncloaked = $events | Where-Object Phase -eq 'Uncloaked' | Select-Object -First 1
     $checkpoint = $events | Where-Object { $_.Phase -eq 'StageCheckpoint' -and $_.Detail -eq 'BeforeUncloak' } | Select-Object -First 1
     $ready = $events | Where-Object { $null -ne $_.Stage -and $_.Stage.StaticContentReady } | Select-Object -First 1
     $readyAfterUncloak = if ($null -ne $uncloaked) { $events | Where-Object { $_.Timestamp -ge $uncloaked.Timestamp -and $null -ne $_.Stage -and $_.Stage.StaticContentReady } | Select-Object -First 1 } else { $null }
-    $start = if ($null -ne $request) { [long]$request.Value1 } else { 0L }
+    $start = [long]$request.Value1
     $showBegin = $events | Where-Object Phase -eq 'ShowBegin' | Select-Object -First 1
     $rendering = $events | Where-Object Phase -eq 'Rendering' | Select-Object -First 1
     $contentReady = $events | Where-Object Phase -eq 'ContentReady' | Select-Object -First 1
@@ -30,8 +31,7 @@ $sessions = @(foreach ($group in @($entries | Where-Object Generation -gt 0 | Gr
     $inputReady = $events | Where-Object Phase -eq 'InputReady' | Select-Object -First 1
     [pscustomobject]@{
         Generation = [long]$group.Name
-        HasShowRequest = $null -ne $request
-        HiddenSeconds = if ($null -ne $request -and $request.Value2 -gt 0) { [Math]::Round(($request.Value1 - $request.Value2) / $frequency, 3) } else { $null }
+        HiddenSeconds = if ($request.Value2 -gt 0) { [Math]::Round(($request.Value1 - $request.Value2) / $frequency, 3) } else { $null }
         UiShowBeginMs = Get-ElapsedMs $showBegin $start
         ContentReadyMs = Get-ElapsedMs $contentReady $start
         RenderingMs = Get-ElapsedMs $rendering $start
@@ -74,6 +74,7 @@ $jobs = @(foreach ($group in @($entries | Where-Object { $_.Phase -like 'Shell*'
     LastResumeTimestamp = $snapshot.LastResumeTimestamp
     LastUnlockTimestamp = $snapshot.LastUnlockTimestamp
     Evidence = 'Managed readiness observations; not a physical Present or pixel-completeness assertion. Missing milestones remain null. Compare timestamps, not cross-thread append order.'
+    InitialWarmupEvents = @($entries | Where-Object { $_.Phase -like 'InitialWarmup*' })
     Sessions = $sessions
     RecoveryEvents = @($entries | Where-Object { $_.Phase -in 'PowerMode','SessionSwitch','RecoveryObservationUnavailable' })
     ResourceSamples = @($entries | Where-Object Phase -eq 'ResourceSample')

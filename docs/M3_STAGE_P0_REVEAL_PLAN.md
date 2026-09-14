@@ -1,6 +1,6 @@
 # Stage P0：呼出无空白加载修复计划
 
-日期：2026-09-13，2026-09-14 更新。状态：P0.1–4 已实施并通过自动及实机候选门禁，详见 §10–11；P0.5 的 5 分钟长隐藏 A/B 已通过，30 分钟与 Modern Standby/解锁后物理 Gate、用户最终观感仍待验证，因此尚不宣布整个 P0 完成。
+日期：2026-09-13，2026-09-14 更新。状态：**P0 已达到用户预期并完成验收**。P0.1–4 已提交；P0.5 一次性初始 surface materialization 已通过完整自动门禁、首次/30 秒/5 分钟首帧样本与用户长静置观感。用户观察到的冷/热细微差异和剪贴板图片短暂空白分别登记为 KI-002/KI-003，不扩展本阶段范围；P0.5 源码尚待提交。
 
 本计划细化 `M3_STAGE_FOCUSED_ROADMAP.md §7 P0`，先于 N0 执行。目标是 Stage 在首次、热态、长期隐藏和睡眠/解锁恢复后，快速呈现已有内容；第一张用户可见帧不先出现空 Stage，再逐步补出卡片。
 
@@ -131,7 +131,7 @@ WPF 优先级中，Stage 的 `ContextIdle` 回调低于宿主 `Background`，fen
 
 依次交付 P0.1 观测/失败夹具 → P0.2 静态准备 → P0.3 同代呈现门禁 → P0.4 可用性刷新 → P0.5 恢复验收及证据驱动预热。每个切片独立记录收益和新增失败模式，避免一次混改宿主、Shell 执行器和存储。
 
-P0.1–4 已完成源码与自动门禁，5 分钟 A/B 证明必须在隐藏 HWND 重新可见时显式弄脏根视觉面，随后才由静态内容 token、render-return 和 attempt 隔离的 DWM fence 决定揭示。下一步不增加周期预热，先完成 30 分钟、Modern Standby/解锁和用户实际观感 Gate；若仍有剩余耗时，再按证据决定 P0.5 是否需要恢复接缝。
+P0.1–4 已完成源码与自动门禁，5 分钟 A/B 证明必须在隐藏 HWND 重新可见时显式弄脏根视觉面，随后才由静态内容 token、render-return 和 attempt 隔离的 DWM fence 决定揭示。P0.5 的用户反例进一步证明数据/投影提前挂接不等于真实 WPF view 已加载；当前只增加启动期一次性 cloak 内真实 materialization，不增加周期或 Resume 全量预热。下一步完成 30 分钟、Modern Standby/解锁和用户实际观感 Gate。
 
 ## 10. P0.1 实施与验证记录
 
@@ -207,4 +207,34 @@ dotnet build src/Vok.sln -c Release --artifacts-path .artifacts/p0-reveal
 - 最终源码成功路径不变的精确构建再跑 10/10，零显示、呈现、隐藏、恢复或焦点失败。另一次最终构建 30 秒隐藏样本在 25.3 ms 静态就绪、36.8 ms 解除 cloak、47.8 ms 输入就绪；揭示时 46/46 视口卡片已实现，揭示前 Availability 请求为 0，首图目视完整。首图与 250 ms 后图像差异只落在一张卡的状态区域，符合呈现后 Availability 局部刷新合同，不是整区或卡片补载。
 - 本地忽略证据位于 `.artifacts/p0-reveal-exact-final/`、`.artifacts/p0-reveal-final-verified/` 及此前 5 分钟 A/B 候选目录；探针候选结束后均已退出。没有修改 schema、真实 Stage 数据或容量/重复 occurrence 合同。
 
-**仍未验证**：30 分钟隐藏、Modern Standby/睡眠与会话解锁后立即/稍后呼出，以及用户对最终候选的主观观感。5 分钟热恢复已在约 32 ms 内自足完成，没有证据支持增加周期唤醒、强制 GC、常驻可见隐藏窗或 Resume 全量预热；这些方案继续不实施。P0.1–4 可视为实现完成，整个 P0 仍以剩余物理 Gate 和用户验收为结束条件。
+**P0.1–4 阶段当时仍未验证**：30 分钟隐藏、Modern Standby/睡眠与会话解锁后立即/稍后呼出，以及用户对候选的主观观感。随后用户反例与 P0.5 修复/验收见 §11.3–12。最终证据只支持启动期一次性真实 materialization，不支持周期唤醒、强制 GC、Resume 全量预热或长期保持窗口可见，这些方案继续不实施。
+
+### 11.3 P0.5 首轮长隐藏/恢复探针边界
+
+2026-09-14 首轮计划的 30 分钟自动样本被真实电源状态改变污染，不能判为产品通过或失败。候选 PID 19784 的第一轮冷启动正常：46/46 卡片已实现，477.1 ms 内容就绪、482.3 ms 解除 cloak、514.6 ms 输入就绪，揭示前 Availability 为 0，首张与稍后 PNG 相同。随后候选保持隐藏；系统在 13:25:34 因 Idle Timeout 进入 S0 Modern Standby，13:52:37 才退出，实际隐藏约 2,551.3 秒。应用记录到 SessionLock/SessionUnlock，但没有 `PowerMode Resume`。
+
+旧探针在线程恢复后立即合成 `Ctrl+Space`，该时刻早于应用收到 SessionUnlock；候选轨迹没有 `HotkeyReceived`、`ShowBegin` 或第二代 session，外部最终得到 `Visible HWND timeout`。因此失败发生在安全桌面尚未切回用户 `Default` 桌面的输入注入边界，Stage readiness、重绘和 fence 根本没有执行，不能写成“30 分钟后 Stage 仍空白”或“恢复修复失败”。
+
+测量工具已改为发送前读取当前 input desktop 的真实名称并等待可交互 `Default` 桌面，同时通过 `RegisterHotKey` 冲突确认配置组合仍被注册；冲突不能识别所有者，发送后仍以候选自身 `HotkeyReceived` 确认归属。不使用固定 sleep 猜测解锁完成。60 秒是探针等待人工桌面恢复的失败 watchdog，不计入 Show 时延且不进入产品。脚本解析与当前交互桌面 1/1 烟雾通过，实际等待 2 ms、组合仍被注册、候选收到热键且显隐/呈现/焦点/恢复零失败。
+
+候选 PID 18952 加载的 `Vok.dll` SHA-256 为 `42BCB7ABDEE9FDFF9C9532FAFA013C066974D33A84BDB1BA2073C1AFC85BC6B5`；其后续用户反例见 §11.4。该 PID 的轨迹已保留并已在替换候选前精确终止。
+
+### 11.4 用户反例与一次性初始 surface 预热
+
+用户在 PID 18952 长时间静置并经历 SessionLock/Unlock 后首次手动呼出，确认界面迟钝且 Stage 先空白再显示，故 P0.1–4 候选判定未通过。轨迹完整记录了本次 Show：解锁后约 11.976 秒收到候选自身 `HotkeyReceived`，热键到 UI 为 25.5 ms；`ShowBegin` 26.6 ms、Stage 首次 `Loaded` 264.3 ms、`ShowReturned` 281.8 ms、10 列行投影发布 291.6 ms，布局直到 485.2 ms 仍在变化，静态 token 495.6 ms、解除 cloak 528.4 ms、输入就绪 562.5 ms。第二次 48.7 秒热隐藏后呼出则在 56.7 ms 内输入就绪。由此确认“界面慢”的主延迟不在热键、SQLite 或 Availability，而是进程启动后从未真实显示时，DataContext/初始投影虽已准备，Stage 的 Loaded、真实宽度列投影、容器模板和布局仍全部推迟到第一次 Show。
+
+P0.5 候选在默认预创建 HWND 路径增加一次性初始 surface 预热：先 cloak，挂接同一静态 readiness 所有者，按当前前台显示器应用工作区尺寸后立即退出 Topmost，以 `ShowActivated=false` 做一次真实 Show；静态内容与一次 Rendering 返回后的 Dispatcher Background 均完成后取消预热、Hide、再次退出 Topmost 并解除 cloak。它不创建 Workspace session、不请求前台/焦点、不启动首帧前 Availability，不增加固定延时、周期唤醒或 Resume 全量工作。普通 Show 继续自足；预热失败但能恢复安全 Hidden 时回落原路径，Hide 失败则保持 cloak 并让启动失败关闭。保留的 `long.MaxValue` 预热代次不属于用户 Show，读取器现只把含 `ShowRequested` 的 generation 报作 session。
+
+同一真实 46 条数据的候选结果：预热后首次呼出在 39.9 ms 解除 cloak、71.1 ms 输入就绪，30 秒后为 34.0/43.3 ms；四张首图/250 ms 后图像 SHA-256 相同。另一候选启动预热后保持 5 分钟、期间从未由用户打开，首次呼出在 52.3 ms 解除 cloak、84.4 ms 输入就绪，46/46 身份已实现、零行发布、零源重挂、揭示前零 Availability，首图与稍后图像 SHA-256 相同。完整 Release 为 Core 87/87 + Integration 575/575，共 **662/662**，构建 0 warning / 0 error。
+
+代价边界：真实 WPF materialization 会把“从未显示”的隐藏进程提升到已使用后的资源档位；两个样本预热后隐藏私有内存约 165.9–169.8 MiB，5 分钟后约 165.9 MiB，首次使用后约 158.6 MiB，没有周期活动或随静置上升。本次接受该有界一次性成本作为“进程启动后首次呼出也快速”的候选交换，但仍须由用户观感和后续资源路线确认；它不外推到未来超大集合，N1 仍必须只实现当前数据窗口/视口。30 分钟、S0/解锁立即与稍后呼出仍未完成，截图仍不是正式 Present 证明。
+
+最终用户候选为 PID 18352，默认 Release `Vok.dll` SHA-256 为 `2B05AAF8C07F212EC8D77EE250E7634A56146BE2A84E21E90362157022C837EE`。启动轨迹已明确落盘 `InitialWarmupBegin → InitialWarmupReady → InitialWarmupHidden`，无失败；启动后进程响应正常。该候选已通过用户长静置观感，尚未提交。
+
+## 12. P0 用户验收与剩余边界
+
+2026-09-14 用户确认 PID 18352 相比此前实例呼出明显改善：“呼出无缓慢、中转站无白屏”，并明确当前 P0 已完成预期。当前轨迹环形缓冲因逐项 Availability 事件覆盖 2,412 条，最早的用户长静置 session 已不完整，因此不为它补写精确时延；仍保留的四轮均在 28.6–37.4 ms 解除 cloak、35.5–45.7 ms 输入就绪，Stage 静态 token 成立，零行重发、零源重挂、揭示前零 Availability且无失败。用户观感、受控 5 分钟首后帧和 662/662 自动门禁共同构成本阶段完成证据。
+
+完成结论严格限于 P0 的工作台/Stage 呼出目标。用户同时记录：(1) 长静置第一次仍略慢于连续热呼出，但已无明显迟缓；(2) 剪贴板图片缩略图在长静置呼出时仍会短暂空白。前者登记 KI-002，后者由 `ClipboardView` 隐藏时清空 `Image.Source`、显示后按 viewport 异步重绑的独立生命周期解释并登记 KI-003。两项均按用户要求不在本轮继续修改。
+
+原计划中的独立纯 30 分钟与明确 Modern Standby/Unlock 分档没有各自形成未覆盖的完整轨迹；当前用户长静置实机 Gate 已足以完成产品预期，但该证据缺口仍明确保留，不能写成这些细分场景均已逐项自动通过。截图也继续不冒充正式 Present/ETW 证据。

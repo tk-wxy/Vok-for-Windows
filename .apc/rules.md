@@ -138,19 +138,19 @@
   - 最后验证：2026-08-24。
   - 状态：active；进程内 WPF STA、外部结构化同代五门禁、长期曲线及真实物理呼出/输入/两种隐藏返还均已通过，M0 宿主冻结。该结论不包含正式搜索编辑器或完整 IME 语义。
 
-- [ ] R13：呼出链路必须把输入就绪与目标窗口内容真正呈现作为独立结果；`IsWindowVisible`、前台/焦点五门禁以及全局、渲染前触发的 `CompositionTarget.Rendering` 均不能单独证明该 generation 的视觉树已经提交或被 DWM 呈现。长期隐藏后，WPF retained tree 的布局有效也不能证明 DWM redirected surface 仍有内容；可复用 HWND 重新可见时必须显式产生根视觉重绘，再由同代静态内容 token、render-return 与 attempt 隔离的 DWM fence 决定揭示。渲染回调内不得执行进程采样、批量诊断发布或无消费者的 ViewModel 更新等阻塞实际帧的同步工作；不得用固定延时掩盖空背景帧。
+- [ ] R13：呼出链路必须把输入就绪与目标窗口内容真正呈现作为独立结果；`IsWindowVisible`、前台/焦点五门禁以及全局、渲染前触发的 `CompositionTarget.Rendering` 均不能单独证明该 generation 的视觉树已经提交或被 DWM 呈现。DataContext 已挂接、数据已加载和初始行投影已发布，也不能证明从未显示的 WPF view 已完成 Loaded、真实宽度列投影、容器模板与布局。长期隐藏后，WPF retained tree 的布局有效仍不能证明 DWM redirected surface 有内容。默认预创建路径须在启动期于 DWM cloak 内、不激活且退出 Topmost 后真实 materialize 一次有界窗口，并安全回到 Hidden；可复用 HWND 重新可见时仍显式产生根视觉重绘，再由同代静态内容 token、render-return 与 attempt 隔离的 DWM fence 决定揭示。渲染回调内不得执行进程采样、批量诊断发布或无消费者的 ViewModel 更新等同步工作；不得用固定延时、周期唤醒或 Resume 全量工作掩盖空背景帧。
   - 范围：长期隐藏 WPF 主窗的重复呼出、首帧/Present 观测、渲染关键路径和宿主状态命名。
-  - 证据：2026-08-27 的基线已证明 native visible、输入就绪和 Rendering 均可早于完整内容。2026-09-14 又在真实 46 条、隐藏约 5 分钟的 A/B 中复现更窄机制：已有 Stage 静态就绪 token 且揭示前零 Availability 时，未使根视觉失效的候选在约 32.9 ms 解除 cloak 后首图仍为纯背景；只增加重新可见时 `InvalidateVisual` 根工作区，同条件约 32.4 ms 解除 cloak，首张与稍后图像完全一致并含完整 46 项。最终快速候选 100/100、精确构建 10/10；30 秒隐藏后首图完整，揭示前零 Availability。详见 `decisions.md §10` 与 `docs/M3_STAGE_P0_REVEAL_PLAN.md §11`。
+  - 证据：2026-08-27 的基线已证明 native visible、输入就绪和 Rendering 均可早于完整内容。2026-09-14 的真实 46 条、隐藏约 5 分钟 A/B 又证明根视觉失效是 redirected surface 重绘的必要条件。其后用户在 PID 18952 的长静置首次 Show 仍复现迟钝/Stage 先空白；同进程轨迹为 Hotkey→UI 25.5 ms、Stage Loaded 264.3 ms、行发布 291.6 ms、静态 token 495.6 ms、解除 cloak 528.4 ms，而 48.7 秒热隐藏后输入仅 56.7 ms，证明 P0.2 的数据/初始投影准备未覆盖首次真实 view materialization。只增加一次性 cloak 内预热后，首次/30 秒/5 分钟解除 cloak 为 39.9/34.0/52.3 ms，首后帧一致且揭示前零 Availability。详见 `decisions.md §10` 与 `docs/M3_STAGE_P0_REVEAL_PLAN.md §11`。
   - 最后验证：2026-09-14。
-  - 状态：active；Stage 静态内容门禁、根 surface 重绘、attempt fence、失败 watchdog、跨代清理和呈现后有界 Availability 已实现，完整 Release 659/659、构建零警告。30 分钟及 Modern Standby/Unlock 物理 Gate和用户最终观感仍待验证；ETW/PresentMon 保留为额外 Present 证据边界。
+  - 状态：active；Stage 静态内容门禁、一次性初始 surface materialization、根重绘、attempt fence、失败 watchdog、跨代清理和呈现后有界 Availability 已实现，完整 Release 662/662、构建零警告。预热失败安全回落、Hide 失败保持 cloak 及非会话代次排除均有门禁；2026-09-14 用户长静置确认呼出无明显迟缓且 Stage 无白屏，P0 达到预期。纯 30 分钟、明确 Modern Standby/Unlock 分档及 ETW/PresentMon 仍是未逐项完成的证据边界；冷/热细微差异与 Clipboard 图片空白见 KI-002/KI-003。
 
 ### 性能验收
 
-- [ ] R9：不得凭主观感受或单点进程快照制定/宣布 M0 性能通过；先在同机同条件下记录 Workbench、vok(old) 与 Vok 的隐藏常驻、冷/热呼出、稳定帧、输入就绪、恢复、资源峰值/回落及重复显隐增长斜率，再提出 Vok 门槛并由用户确认。
+- [ ] R9：不得凭主观感受或单点进程快照制定/宣布 M0 性能通过；先在同机同条件下记录 Workbench、vok(old) 与 Vok 的隐藏常驻、冷/热呼出、稳定帧、输入就绪、恢复、资源峰值/回落及重复显隐增长斜率，再提出 Vok 门槛并由用户确认。长空闲探针跨过锁屏或 Modern Standby 时，必须先观察真实 `Default` 输入桌面恢复并重新核对配置组合仍被注册，之后才能注入组合键；注册冲突本身不证明所有者，最终必须以候选自身的 `HotkeyReceived` 归属本次 Show。没有该事件的外部 Show timeout 不能归为工作台呈现失败。
   - 范围：M0 性能遥测、外部探针、参照物对照和最终验收。
-  - 证据：Workbench 历史探针记录透明 WebView2 HWND 可见后 surface 仍晚约 60–570ms；2026-08-24 已完成三方初始对照及 Vok 固定 HWND 1000 轮/5 分钟回落。Vok 自身已有可靠分布，但两个参照物仍只有约三份热样本，不能形成 P95；正式 Present 证据也尚缺，详见 `docs/M0_HOST_KERNEL.md`。
-  - 最后验证：2026-08-24。
-  - 状态：active；Vok 1000 轮与 5 分钟曲线已形成，但参照物热样本及正式 Present 证据不足，现阶段不提出最终门槛。
+  - 证据：Workbench 历史探针记录透明 WebView2 HWND 可见后 surface 仍晚约 60–570ms；2026-08-24 已完成三方初始对照及 Vok 固定 HWND 1000 轮/5 分钟回落。2026-09-14 的 P0.5 探针在候选隐藏 15.5 分钟后遇到系统 Idle Timeout 进入 S0，约 27.1 分钟后退出；旧探针在 `SessionUnlock` 前合成快捷键，候选没有任何 `HotkeyReceived/ShowBegin`，外部却记为 Show timeout。系统 Kernel-Power 506/507 与应用 SessionLock/Unlock 时间线共同证明该样本混入了安全桌面输入边界，不能用来否定 Stage 修复。
+  - 最后验证：2026-09-14。
+  - 状态：active；Vok 1000 轮、5 分钟及 P0 reveal 候选已有曲线，但参照物热样本及正式 Present 证据仍不足。探针已改为基于输入桌面状态而非延时猜测，发送前再查组合仍被注册，发送后仍以候选 `HotkeyReceived` 确认归属；脚本解析和真实交互桌面 1/1 烟雾通过。60 秒仅是探针等待用户桌面恢复的失败 watchdog，不进入产品呼出路径或性能计时。
 
 ### 剪贴板
 

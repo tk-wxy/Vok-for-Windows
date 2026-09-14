@@ -15,6 +15,71 @@ namespace Vok.IntegrationTests.Hosting;
 public sealed partial class WorkspaceControllerTests
 {
     [Fact]
+    public async Task StartupWarmupRealizesWindowWhileCloakedWithoutCreatingSession()
+    {
+        using var rig = new TestRig(precreateWindowHandle: true);
+
+        await rig.Controller.StartAsync();
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.False(rig.Window.IsVisible);
+        Assert.False(rig.Presentation.Cloaked);
+        Assert.False(rig.Placement.IsTopmost);
+        Assert.False(rig.Window.TopmostWasAppliedWhenShown);
+        Assert.Equal(0, rig.ViewModel.ShowCount);
+        Assert.Equal(0, rig.Window.CompletedRevealCount);
+        Assert.Equal(1, rig.Window.CancelledRevealCount);
+        AssertOrdered(
+            rig.Log,
+            "window.ensure",
+            "presentation.cloak",
+            "window.reveal-begin",
+            "placement.apply",
+            "placement.exit",
+            "window.show",
+            "window.post-background",
+            "window.reveal-cancel",
+            "window.hide",
+            "presentation.uncloak");
+    }
+
+    [Fact]
+    public async Task StartupWarmupFailureFallsBackAfterRestoringHiddenWindow()
+    {
+        using var rig = new TestRig(precreateWindowHandle: true);
+        rig.Frames.SubscribeFailuresRemaining = 1;
+
+        await rig.Controller.StartAsync();
+
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+        Assert.False(rig.Window.IsVisible);
+        Assert.False(rig.Presentation.Cloaked);
+        Assert.False(rig.Placement.IsTopmost);
+
+        rig.Placement.OsGatesReady = true;
+        rig.Window.FocusSucceeds = true;
+        rig.Hotkey.Raise(ExternalTarget);
+
+        Assert.Equal(WorkspaceState.Visible, rig.StateMachine.State);
+    }
+
+    [Fact]
+    public async Task StartupWarmupHideFailureKeepsVisibleWindowCloakedAndFailsClosed()
+    {
+        using var rig = new TestRig(precreateWindowHandle: true);
+        rig.Window.HideFailuresRemaining = 1;
+
+        var exception = await Assert.ThrowsAsync<AggregateException>(
+            () => rig.Controller.StartAsync());
+
+        Assert.Contains("safe hidden state", exception.Message);
+        Assert.True(rig.Window.IsVisible);
+        Assert.True(rig.Presentation.Cloaked);
+        Assert.False(rig.Placement.IsTopmost);
+        Assert.Equal(WorkspaceState.Hidden, rig.StateMachine.State);
+    }
+
+    [Fact]
     public async Task ShortPressFromHiddenShowsAndRemainsVisibleAfterRelease()
     {
         using var rig = await TestRig.CreateAsync();
@@ -1261,7 +1326,9 @@ public sealed partial class WorkspaceControllerTests
 
     private sealed class TestRig : IDisposable
     {
-        private TestRig(RevealTrace? trace = null)
+        internal TestRig(
+            RevealTrace? trace = null,
+            bool precreateWindowHandle = false)
         {
             Window = new FakeWindow(Log);
             Frames = new FakeFrameSource();
@@ -1285,7 +1352,7 @@ public sealed partial class WorkspaceControllerTests
                 Sampler,
                 Publisher,
                 Presentation,
-                new WorkspaceHostOptions(false), trace);
+                new WorkspaceHostOptions(precreateWindowHandle), trace);
         }
 
         public List<string> Log { get; } = [];

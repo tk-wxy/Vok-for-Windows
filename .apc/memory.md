@@ -11,10 +11,10 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片与排序 S0–S3 已通过。Stage 默认容量仍为 50，后续合同仍要求超大上限、重复 occurrence、无可见分页的连续数据虚拟化及单项/批量拖入拖出。N0 前置的呼出 P0.1–4 已实现，P0.5 尚余 30 分钟与睡眠/解锁、用户观感 Gate。
-- **最近进展**：2026-09-14 以 5 分钟 A/B 定位长期隐藏空白：DWM 可丢弃隐藏 HWND 的 redirected surface，而 WPF retained tree 仍显示布局有效；只有静态 token + render-return + 旧 `DwmFlush` 时首图仍为纯背景，增加重新可见时根视觉失效后首张即为完整 46 项。Stage 现以 generation/content/layout/state token 门禁揭示，fence 有唯一 attempt；Availability 在呈现后以真实在途上限 4 刷新，Hide 保留结果、拖动暂停。Release Core 87/87 + Integration 572/572 共 659/659，零警告构建；100 轮候选 100/100，最终构建另跑 10/10，30 秒隐藏后约 25.3 ms 内容就绪、36.8 ms 解除 cloak、47.8 ms 输入就绪且揭示前零 Availability。当前源码默认 Release 已启动为唯一 PID 11468，加载 DLL 与输出路径一致且进程响应正常；改动未提交。
-- **下一步**：由用户在 PID 11468 验证长期后台后的实际观感，同时补 30 分钟隐藏、Modern Standby/睡眠与会话解锁后立即/稍后呼出。若这些 Gate 通过，不增加恢复预热，结束 P0 后进入 N0/schema 8；若仍复现迟钝，先用现有分段轨迹定位再评审窄恢复接缝。
-- **已知问题**：30 分钟与睡眠/Unlock 物理样本、用户最终观感仍未验证，故不宣布整个 P0 完成；一次带截图冷启动出现完整首图但物理焦点未在 2 秒内就绪，候选按预期失败关闭，随后快速 100/100 未复现。截图不是正式 Present 证明，ETW/PresentMon 仍是额外边界。拖出、N0/N1、大容量、重复 occurrence 与 KI-001 尚未实现；140ms 仅为 S3 排序参数。测试产生的 `.lnk` 副本未经授权不得删除。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片与排序 S0–S3 已通过。Stage 默认容量仍为 50，后续合同要求超大上限、重复 occurrence、无可见分页的连续数据虚拟化及单项/批量拖入拖出。呼出 P0 已达到用户预期：P0.1–4 提交为 `22005ce`，P0.5 一次性初始 surface materialization 已通过自动/实机 Gate但尚未提交。
+- **最近进展**：失败候选 PID 18952 将首次真实 Show 的 528.4 ms 定位到 Stage Loaded/真实宽度行投影/模板布局；P0.5 在 cloak 内、不激活、不置顶地真实 materialize 一次窗口并安全 Hide。预热后首次/30 秒/5 分钟解除 cloak 为 39.9/34.0/52.3 ms，首后帧一致且揭示前零 Availability；Release Core 87/87 + Integration 575/575 共 662/662、零警告。用户在 PID 18352 长静置确认呼出明显优于此前、无缓慢且 Stage 无白屏，明确 P0 完成预期；保留轨迹四轮解除 cloak 28.6–37.4 ms、输入 35.5–45.7 ms，零行重发/源重挂/首帧前 Availability及失败。
+- **下一步**：先提交尚未提交的 P0.5 源码、测试、工具与状态记录，再进入 N0 occurrence/schema 8。用户当前仅要求记录的冷/热细微差异和 Clipboard 图片短暂空白不得顺手扩展修复；后续分别从 KI-002/KI-003 重开并重新取证。
+- **已知问题**：KI-002 为长静置第一次呼出仍略慢于连续热呼出，但没有明显迟缓或 Stage 白屏；KI-003 为长静置呼出时 Clipboard 图片缩略图先空白后异步出现，当前隐藏生命周期会清 `Image.Source`。纯 30 分钟、明确 Modern Standby/Unlock 分档及正式 Present 证据未逐项完成；一次性 materialization 的隐藏私有内存约 166–170 MiB。拖出、N0/N1、大容量、重复 occurrence 与 KI-001 尚未实现；测试产生的 `.lnk` 副本未经授权不得删除。
 
 ## §0A 最近会话
 
@@ -24,6 +24,8 @@
 - P0.2–4 将隐藏期静态投影准备、generation/content/layout/state readiness token、render-return + attempt DWM fence、Availability 状态保留及物理在途上限 4 接入生产路径；Availability 只在完成呈现后复查，内部/外部拖动期间暂停。
 - 5 分钟单变量 A/B 复现：没有根视觉失效时，managed 内容和 fence 均完成仍先暴露纯背景；重新可见时显式 `InvalidateVisual` 根工作区后，首张与稍后截图一致且含完整 46 项，确认长期隐藏后的 DWM surface 丢失而 WPF retained tree 未自动变脏是该次机制。
 - 完整 Release 659/659、零警告构建；快速候选 100/100，最终精确构建 10/10，30 秒隐藏首图完整且揭示前零 Availability。30 分钟、Modern Standby/Unlock 和用户最终观感仍待验证，故整个 P0 尚未归档；改动未提交。
+- 用户随后在长静置且从未真实 Show 的 PID 18952 复现迟钝/Stage 先空白；轨迹将 528.4 ms 揭示定位到首次 Loaded/列投影/模板布局，而非热键、数据库或 Availability。一次性 cloak 内 materialization 候选把首次/30 秒/5 分钟解除 cloak 降为 39.9/34.0/52.3 ms，首后帧一致；完整 Release 662/662，仍待用户与 30 分钟/S0 Gate。
+- 用户在 PID 18352 长静置后确认呼出无明显迟缓、Stage 无白屏，明确 P0 完成预期；冷呼出仍略慢于连续热呼出、Clipboard 图片会短暂空白，仅登记 KI-002/KI-003，不在本轮继续修改。
 
 ### 会话 2026-09-05 至 2026-09-12 - M3.1 中转站管理动作与卡片基础
 

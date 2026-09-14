@@ -43,6 +43,7 @@ function Save-RevealFrame($rect, [string] $name) {
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 
 public static class VokHostInteractionProbe
 {
@@ -58,6 +59,8 @@ public static class VokHostInteractionProbe
     public const int DwmwaCloaked = 14;
     public const long WsExTopmost = 0x00000008L;
     public const long AllReadyFlags = 0x3f;
+    private const uint DesktopReadObjects = 0x0001;
+    private const int UoiName = 2;
     private const string Prefix = "Vok.M0.Diagnostics.";
 
     public sealed class WindowSnapshot
@@ -125,6 +128,9 @@ public static class VokHostInteractionProbe
     [DllImport("gdi32.dll")] private static extern uint GetPixel(IntPtr dc, int x, int y);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out uint value, int valueSize);
     [DllImport("user32.dll")] public static extern uint GetGuiResources(IntPtr process, uint flags);
+    [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint desiredAccess);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool CloseDesktop(IntPtr desktop);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool GetUserObjectInformation(IntPtr handle, int index, StringBuilder information, uint length, out uint needed);
 
     public static WindowSnapshot FindLargestWindow(uint[] processIds)
     {
@@ -184,6 +190,25 @@ public static class VokHostInteractionProbe
         return value != 0;
     }
 
+    public static bool IsInteractiveDesktopReady()
+    {
+        IntPtr desktop = OpenInputDesktop(0, false, DesktopReadObjects);
+        if (desktop == IntPtr.Zero) return false;
+        try
+        {
+            var name = new StringBuilder(64);
+            uint needed;
+            return GetUserObjectInformation(desktop, UoiName, name,
+                (uint)(name.Capacity * sizeof(char)), out needed) &&
+                string.Equals(name.ToString(), "Default", StringComparison.OrdinalIgnoreCase) &&
+                GetForegroundWindow() != IntPtr.Zero;
+        }
+        finally
+        {
+            CloseDesktop(desktop);
+        }
+    }
+
     public static DiagnosticSnapshot ReadDiagnostic(IntPtr window)
     {
         for (int attempt = 0; attempt < 64; attempt++)
@@ -240,6 +265,7 @@ public static class VokHostInteractionProbe
 
 $probeHotkeyId = 0x5650
 $timeout = [TimeSpan]::FromSeconds(5)
+$interactiveDesktopTimeout = [TimeSpan]::FromSeconds(60)
 $pollMilliseconds = 5
 
 function Wait-Until {
@@ -251,6 +277,30 @@ function Wait-Until {
         Start-Sleep -Milliseconds $pollMilliseconds
     }
     throw $FailureMessage
+}
+
+function Wait-ForInteractiveDesktop {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    while ($timer.Elapsed -lt $interactiveDesktopTimeout) {
+        if ([VokHostInteractionProbe]::IsInteractiveDesktopReady()) {
+            return $timer.Elapsed.TotalMilliseconds
+        }
+        Start-Sleep -Milliseconds 50
+    }
+    throw 'The interactive Default input desktop did not become ready after resume or unlock.'
+}
+
+function Test-HotkeyRegistrationOccupied {
+    $registered = [VokHostInteractionProbe]::RegisterHotKey(
+        [IntPtr]::Zero,
+        $probeHotkeyId,
+        $modifierFlags,
+        [VokHostInteractionProbe]::VkSpace)
+    if ($registered) {
+        [void][VokHostInteractionProbe]::UnregisterHotKey([IntPtr]::Zero, $probeHotkeyId)
+        return $false
+    }
+    [Runtime.InteropServices.Marshal]::GetLastWin32Error() -eq 1409
 }
 
 function Get-ProcessTreeIds {
@@ -399,6 +449,12 @@ try {
                 Start-Sleep -Milliseconds 500
             }
             $row.HiddenBeforeShowSeconds = $idleWatch.Elapsed.TotalSeconds
+            $row.InteractiveDesktopWaitMs = [Math]::Round((Wait-ForInteractiveDesktop), 1)
+            $row.HotkeyRegistrationOccupiedBeforeShow = Test-HotkeyRegistrationOccupied
+            if (-not $row.HotkeyRegistrationOccupiedBeforeShow) {
+                $failureCounts.Show++
+                throw "$Gesture was no longer registered before show on cycle $cycle."
+            }
             $showTimer = [Diagnostics.Stopwatch]::StartNew(); Send-Gesture
             $shown = $window; $diagnosticReady = $null; $visibleMs = $null; $userVisibleMs = $null; $foregroundMs = $null; $focusMs = $null; $presentationReadyMs = $null
             $surfaceMs = $null; $lastPixels = ''; $firstUserVisiblePixels = $null; $firstUserVisibleMatchesStable = $null; $stableCount = 0; $nextPixelSampleMs = 0.0

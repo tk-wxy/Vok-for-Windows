@@ -8,6 +8,7 @@ namespace Vok.Hosting;
 
 public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
 {
+    private const long InitialWarmupGeneration = long.MaxValue;
     private readonly IWorkspaceWindow _window;
     private readonly IWorkspaceFrameSource _frameSource;
     private readonly MainWindowViewModel _viewModel;
@@ -109,12 +110,195 @@ public sealed class WorkspaceController : IWorkspaceCommands, IDisposable
         if (_options.PrecreateWindowHandle)
         {
             _windowHandle = _window.EnsureHandle();
+            await WarmUpInitialSurfaceAsync();
             RefreshObservation(recordInViewModel: false);
             TryPublishDiagnostic();
         }
 
         await _hotkeyService.StartAsync();
         _viewModel.MarkReady();
+    }
+
+    private async Task WarmUpInitialSurfaceAsync()
+    {
+        if (_revealReadiness is null || _windowHandle == 0)
+        {
+            return;
+        }
+
+        WorkspaceRevealReadinessToken? readyToken = null;
+        var readiness = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var rendered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        EventHandler<WorkspaceRevealReadyEventArgs>? readinessHandler = null;
+        EventHandler? renderingHandler = null;
+        var renderingClaimed = 0;
+        Exception? warmupFailure = null;
+        var cleanupFailures = new List<Exception>();
+
+        readinessHandler = (_, e) =>
+        {
+            if (e.Token.Generation != InitialWarmupGeneration)
+            {
+                return;
+            }
+
+            readyToken = e.Token;
+            readiness.TrySetResult();
+        };
+        renderingHandler = (_, _) =>
+        {
+            if (readyToken is null ||
+                Interlocked.CompareExchange(ref renderingClaimed, 1, 0) != 0)
+            {
+                return;
+            }
+
+            _frameSource.Rendering -= renderingHandler;
+            try
+            {
+                // Rendering is raised before MediaContext submits the frame. Background
+                // priority resumes after that dispatcher render operation has returned.
+                _window.PostBackground(() => rendered.TrySetResult());
+            }
+            catch (Exception exception)
+            {
+                rendered.TrySetException(exception);
+            }
+        };
+
+        _revealReadiness.RevealReady += readinessHandler;
+        try
+        {
+            _frameSource.Rendering += renderingHandler;
+            _revealTrace.Record("InitialWarmupBegin");
+            _presentationService.SetCloaked(_windowHandle, cloaked: true);
+            if (!_presentationService.IsCloaked(_windowHandle))
+            {
+                throw new InvalidOperationException(
+                    "DWM did not cloak the workspace before its initial warmup.");
+            }
+
+            _revealReadiness.BeginReveal(InitialWarmupGeneration);
+
+            ForegroundTarget target;
+            try
+            {
+                target = _foregroundWindowService.Capture();
+            }
+            catch (Exception exception)
+            {
+                _viewModel.RecordFault(exception);
+                target = ForegroundTarget.None;
+            }
+
+            _windowPlacementService.ApplyFullScreen(_windowHandle, target);
+            _windowPlacementService.ExitTopmost(_windowHandle);
+            _window.Show();
+
+            await Task.WhenAll(readiness.Task, rendered.Task)
+                .WaitAsync(_options.RevealWatchdogTimeout);
+            if (readyToken is not { } token ||
+                !_revealReadiness.IsRevealReady(token))
+            {
+                throw new InvalidOperationException(
+                    "The workspace initial warmup readiness changed before rendering completed.");
+            }
+
+            _revealTrace.Record("InitialWarmupReady");
+        }
+        catch (Exception exception)
+        {
+            warmupFailure = exception;
+            _revealTrace.Record(
+                "InitialWarmupFailed",
+                detail: exception.GetType().Name);
+        }
+        finally
+        {
+            _revealReadiness.RevealReady -= readinessHandler;
+            _frameSource.Rendering -= renderingHandler;
+            try
+            {
+                _revealReadiness.CancelReveal(InitialWarmupGeneration);
+            }
+            catch (Exception exception)
+            {
+                cleanupFailures.Add(exception);
+            }
+
+            if (_window.IsVisible)
+            {
+                try
+                {
+                    _window.Hide();
+                }
+                catch (Exception exception)
+                {
+                    cleanupFailures.Add(exception);
+                }
+            }
+
+            try
+            {
+                _windowPlacementService.ExitTopmost(_windowHandle);
+            }
+            catch (Exception exception)
+            {
+                cleanupFailures.Add(exception);
+            }
+
+            if (!_window.IsVisible)
+            {
+                try
+                {
+                    _presentationService.SetCloaked(_windowHandle, cloaked: false);
+                    if (_presentationService.IsCloaked(_windowHandle))
+                    {
+                        cleanupFailures.Add(new InvalidOperationException(
+                            "The hidden workspace remained cloaked after its initial warmup."));
+                    }
+                }
+                catch (Exception exception)
+                {
+                    cleanupFailures.Add(exception);
+                }
+            }
+            else
+            {
+                cleanupFailures.Add(new InvalidOperationException(
+                    "The initial warmup could not return the workspace to its hidden state."));
+            }
+        }
+
+        if (cleanupFailures.Count > 0)
+        {
+            _revealTrace.Record(
+                "InitialWarmupCleanupFailed",
+                value1: cleanupFailures.Count,
+                detail: warmupFailure?.GetType().Name);
+            _revealTrace.RequestExport();
+            if (warmupFailure is not null)
+            {
+                cleanupFailures.Insert(0, warmupFailure);
+            }
+
+            throw new AggregateException(
+                "The workspace initial warmup could not restore a safe hidden state.",
+                cleanupFailures);
+        }
+
+        _revealTrace.Record(
+            "InitialWarmupHidden",
+            detail: warmupFailure?.GetType().Name);
+        _revealTrace.RequestExport();
+        if (warmupFailure is not null)
+        {
+            // Warmup is an optimization. A cleanly restored hidden window can still use the
+            // normal self-contained reveal transaction and its failure watchdog.
+            _viewModel.RecordFault(warmupFailure);
+        }
     }
 
     public void EnsureVisible(
