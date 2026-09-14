@@ -7,7 +7,7 @@ public interface IStageRepository
         int pageSize,
         CancellationToken cancellationToken = default);
 
-    Task<StageAddOrMoveResult> AddOrMoveAsync(
+    Task<StageAddBatchResult> AddBatchAsync(
         IReadOnlyList<StageTargetDescriptor> targets,
         CancellationToken cancellationToken = default);
 

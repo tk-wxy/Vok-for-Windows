@@ -1,16 +1,15 @@
 namespace Vok.Core.Stage;
 
-public enum StageAddOrMoveStatus
+public enum StageAddBatchStatus
 {
     Applied,
     CapacityExceeded,
     SortOrderExhausted,
 }
 
-public sealed record StageAddOrMoveResult(
-    StageAddOrMoveStatus Status,
+public sealed record StageAddBatchResult(
+    StageAddBatchStatus Status,
     long CountBefore,
     long CountAfter,
     long AddedCount,
-    long MovedCount,
     long Capacity);

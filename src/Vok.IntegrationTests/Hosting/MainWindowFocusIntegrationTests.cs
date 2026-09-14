@@ -1172,7 +1172,7 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                 _items.Count));
         }
 
-        public Task<StageAddOrMoveResult> AddOrMoveAsync(
+        public Task<StageAddBatchResult> AddBatchAsync(
             IReadOnlyList<StageTargetDescriptor> targets,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();

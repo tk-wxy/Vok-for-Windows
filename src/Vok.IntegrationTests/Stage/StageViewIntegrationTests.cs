@@ -1416,7 +1416,7 @@ public sealed partial class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 _items.Length));
         }
 
-        public Task<StageAddOrMoveResult> AddOrMoveAsync(
+        public Task<StageAddBatchResult> AddBatchAsync(
             IReadOnlyList<StageTargetDescriptor> targets,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();

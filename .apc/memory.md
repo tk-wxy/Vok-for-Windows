@@ -11,14 +11,14 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片、排序 S0–S3 和呼出 P0 已通过。N0.1 schema 8 迁移与结构核验已完成并提交；它只移除 Stage canonical 唯一性，产品仓储仍为 `AddOrMoveAsync`，故重复 occurrence 的端到端合同尚未完成。运行中的 PID 18352 与真实产品库保持既有 schema 7，本轮未替换候选。
-- **最近进展**：schema 7→8 在单事务中把 `ux_stage_items_canonical` 换为普通 NOCASE 索引，并拒绝缺表、提前出现的 Stage 表、错误/隐藏唯一索引和未来版本；真实 schema 7 在线备份副本经 7→8→8 与 schema 8 再重放均保持八张业务表摘要不变、46 条 Stage 全保留、`quick_check=ok`、0 外键违规。Release Core 87/87 + Integration 581/581 共 668/668、构建零警告、11/11 PowerShell AST 通过；组合根测试已强制注入隔离存储，完整测试前后真实库版本、schema 和表摘要一致。
-- **下一步**：进入 N0.2：以 occurrence 为唯一身份实现原子 `AddBatchAsync`，覆盖同批/跨批重复、大小写相同 canonical、49/50/51、失败回滚和源摘要，然后接 Router/ViewModel；在 N0 闭环前不发布或迁移真实库。
-- **已知问题**：N0 整体、N1、大容量连续 UI 与单项/批量拖出尚未实现，当前源码若单独部署仍会由 `AddOrMoveAsync` 去重，不是产品候选。KI-001 仍后置；KI-002 为长静置首次呼出略慢于连续热呼出，KI-003 为 Clipboard 图片缩略图短暂空白。纯 30 分钟、明确 Modern Standby/Unlock 分档及正式 Present 证据未逐项完成；测试产生的 `.lnk` 副本未经授权不得删除。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片、排序 S0–S3 和呼出 P0 已通过。N0 occurrence/schema 8 已完成并提交但未部署；产品入站现使用原子 `AddBatchAsync`，同批/跨批相同 canonical 均创建独立 occurrence，重新关联也不再按 canonical 拒绝。运行中的 PID 18352 与真实产品库仍保持既有 schema 7，本轮未替换候选。
+- **最近进展**：N0.2 删除仓储批内 `HashSet`、canonical 查旧项与回顶路径，每个 descriptor 生成独立 id/revision/稀疏顺序；容量按 occurrence 计数，49/50/51、schema 7 升级后立即重复写入、同批/跨批大小写重复、SQL 第二项失败整批回滚、参数失败零写入、源摘要、Router 原序重复和 ViewModel 纵切均有门禁。Release Core 87/87 + Integration 582/582 共 669/669、构建零警告；Clipboard 丢弃测试曾因诊断计数早于 `finally` 释放而竞态失败，改等真实 job/lease 终态后 20/20 且全套通过。完整测试前后真实库版本 7、schema 与八表摘要一致，46 条 Stage、`quick_check=ok`、0 外键违规。
+- **下一步**：进入 N1 连续数据虚拟化：先冻结双向复合 keyset 窗口、预取/淘汰、稳定锚点与迟到 generation 合同，再移除用户可见页脚/整页切换；本轮不发布或迁移真实库，是否生成 N0 候选另行确认。
+- **已知问题**：N1、大容量连续 UI、N2/N3 单项/批量拖出与交付后清理尚未实现，因此当前源码仍不是完整 Stage 产品候选。KI-001 仍后置；KI-002 为长静置首次呼出略慢于连续热呼出，KI-003 为 Clipboard 图片缩略图短暂空白。纯 30 分钟、明确 Modern Standby/Unlock 分档及正式 Present 证据未逐项完成；测试产生的 `.lnk` 副本未经授权不得删除。
 
 ## §0A 最近会话
 
-### 会话 2026-09-13 至 2026-09-14 - Stage P0 与 N0.1 schema 8
+### 会话 2026-09-13 至 2026-09-14 - Stage P0 与 N0 occurrence/schema 8
 
 - P0.1 增加默认关闭的有界 reveal/Shell/资源/恢复轨迹、报告工具和固定候选截图探针；真实 46 条基线证明普通 Hide 不重建行，但旧路径每次揭示前重查 46 项，且通用 Rendering 可早于行发布和滚动完成。
 - P0.2–4 将隐藏期静态投影准备、generation/content/layout/state readiness token、render-return + attempt DWM fence、Availability 状态保留及物理在途上限 4 接入生产路径；Availability 只在完成呈现后复查，内部/外部拖动期间暂停。
@@ -29,6 +29,8 @@
 - 用户确认进入下一阶段第一步后，将 N0.1 收窄为 schema 8：迁移 canonical 唯一索引为普通 NOCASE 索引，严格核验 schema 7/8 结构和事务回滚；本切片不改 `AddOrMoveAsync`、Router、ViewModel、UI、重新关联或运行实例。
 - 实施中完整测试暴露组合根测试会解析默认产品存储并把真实库从 7 迁至 8。八张业务表摘要确认零变化后，在同一事务中仅恢复 schema 7 版本与旧唯一索引；随后把产品默认工厂改为组合根显式参数，两个组合测试各注入唯一临时库。修复后完整测试前后真实库版本、schema 与表摘要完全一致，原触发机制已消除。
 - 最终 Release 668/668、零警告构建、11/11 PowerShell AST 与差异检查通过；真实 schema 7 在线备份保持源稳定，副本 7→8→8、schema 8 再重放及派生 6→8/历史 5→8 均成功，业务表零变化、46 条 Stage 全保留、`quick_check=ok`、0 外键违规。改动已提交但未发布，PID 18352 和真实库均保持旧版本。
+- N0.2 将 Core/SQLite/ViewModel 从 `AddOrMoveAsync` 全量切换为 `AddBatchAsync`，删除同批去重、查旧项回顶和 `CanonicalConflict`；每次放入独立生成 occurrence，Router 原序重复透传不改生产逻辑。自动门禁覆盖同批/跨批与 canonical 大小写重复、49/50/51、schema 7→8 后立即重复写、SQL 中途失败/非法 descriptor 零写入、并发容量和源文件摘要。
+- 最终 Release Core 87/87 + Integration 582/582 共 669/669、零警告构建；完整测试首次暴露 Clipboard 丢弃诊断早于 `finally` 清理的既有测试竞态，改为等待真实 job/lease 回落后单测 20/20、全套通过。真实库前后保持 schema 7、schema/八表摘要不变、46 条 Stage、`quick_check=ok`、0 外键违规；N0.2 已提交但未部署，PID 18352 未替换。
 
 ### 会话 2026-09-05 至 2026-09-12 - M3.1 中转站管理动作与卡片基础
 

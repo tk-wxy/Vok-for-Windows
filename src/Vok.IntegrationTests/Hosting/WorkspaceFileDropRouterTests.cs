@@ -21,7 +21,13 @@ public sealed class WorkspaceFileDropRouterTests
             started.Add,
             (id, accepted) => ended.Add((id, accepted)),
             () => true);
-        var sourcePaths = new[] { @"C:\Stage\alpha.txt" };
+        var sourcePaths = new[]
+        {
+            @"C:\Stage\alpha.txt",
+            @"c:\stage\ALPHA.TXT",
+            @"C:\Stage\alpha.txt",
+        };
+        var expectedPaths = sourcePaths.ToArray();
         var data = new CountingFileDropDataObject(sourcePaths);
 
         Assert.True(router.Begin(data, WorkspaceFileDropTargetKind.Launcher));
@@ -44,8 +50,8 @@ public sealed class WorkspaceFileDropRouterTests
         await stage.Received.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
 
         Assert.True(completion.Accepted);
-        Assert.Equal(@"C:\Stage\alpha.txt", Assert.Single(completion.Paths));
-        Assert.Equal(@"C:\Stage\alpha.txt", Assert.Single(stage.ReceivedPaths!));
+        Assert.Equal(expectedPaths, completion.Paths);
+        Assert.Equal(expectedPaths, stage.ReceivedPaths);
         Assert.Null(launcher.ReceivedPaths);
         Assert.Equal(1, data.GetDataCallCount);
         Assert.Single(started);

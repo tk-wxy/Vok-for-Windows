@@ -176,7 +176,9 @@ public sealed class WindowsClipboardPlatformServiceTests
             service.ListenerWindowHandle,
             ClipboardListenerNativeMethods.ClipboardUpdateMessage));
         await WaitUntilAsync(
-            () => service.GetDiagnosticSnapshot().DroppedSnapshotCount >= 1,
+            () => service.GetDiagnosticSnapshot().DroppedSnapshotCount >= 1 &&
+                  service.OutstandingImageJobCount == 1 &&
+                  service.OutstandingImageLeaseCount == 1,
             TestContext.Current.CancellationToken);
 
         Assert.Equal(2, service.GetDiagnosticSnapshot().CapturedSnapshotCount);

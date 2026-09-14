@@ -64,12 +64,11 @@ public sealed class StageViewModelTests
                 CreatePage(original),
                 CreatePage(committed),
             ],
-            addResult: new StageAddOrMoveResult(
-                StageAddOrMoveStatus.Applied,
+            addResult: new StageAddBatchResult(
+                StageAddBatchStatus.Applied,
                 CountBefore: 2,
                 CountAfter: 3,
                 AddedCount: 1,
-                MovedCount: 1,
                 Capacity: 200));
         var valid = new StageTargetDescriptor(
             StageItemKind.File,
@@ -98,7 +97,64 @@ public sealed class StageViewModelTests
         Assert.Equal(valid, Assert.Single(Assert.Single(repository.AddCalls)));
         Assert.Equal(committed.Select(static item => item.Id), viewModel.Items.Select(static item => item.Id));
         Assert.Equal(3, viewModel.TotalCount);
-        Assert.Equal("新增 1 项，回顶 1 项，1 项无效。", viewModel.StatusText);
+        Assert.Equal("新增 1 项，1 项无效。", viewModel.StatusText);
+        Assert.False(viewModel.HasError);
+    }
+
+    [Fact]
+    public async Task AppliedDropPreservesSameBatchDuplicateDescriptorsInSourceOrder()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var descriptors = new[]
+        {
+            new StageTargetDescriptor(
+                StageItemKind.File,
+                @"C:\Stage\repeat.txt",
+                @"C:\STAGE\REPEAT.TXT",
+                "first"),
+            new StageTargetDescriptor(
+                StageItemKind.File,
+                @"c:\stage\REPEAT.TXT",
+                @"c:\stage\repeat.txt",
+                "second"),
+            new StageTargetDescriptor(
+                StageItemKind.File,
+                @"C:\Stage\repeat.txt",
+                @"C:\STAGE\REPEAT.TXT",
+                "third"),
+        };
+        var committed = CreateItems(3, namePrefix: "已提交");
+        var repository = new ScriptedStageRepository(
+            pages:
+            [
+                CreatePage([]),
+                CreatePage(committed),
+            ],
+            addResult: new StageAddBatchResult(
+                StageAddBatchStatus.Applied,
+                CountBefore: 0,
+                CountAfter: 3,
+                AddedCount: 3,
+                Capacity: 50));
+        var resolutions = descriptors
+            .Select(descriptor => new StageTargetResolution(
+                descriptor.TargetValue,
+                descriptor,
+                null,
+                null))
+            .ToArray();
+        using var viewModel = new StageViewModel(
+            repository,
+            new StaticStageFileService(resolutions));
+        await viewModel.InitializeAsync(cancellationToken);
+
+        await viewModel.AddDroppedPathsAsync(
+            descriptors.Select(static descriptor => descriptor.TargetValue).ToArray(),
+            cancellationToken);
+
+        Assert.Equal(descriptors, Assert.Single(repository.AddCalls));
+        Assert.Equal(3, viewModel.TotalCount);
+        Assert.Equal("新增 3 项。", viewModel.StatusText);
         Assert.False(viewModel.HasError);
     }
 
@@ -115,11 +171,10 @@ public sealed class StageViewModelTests
 
         var capacityRepository = new ScriptedStageRepository(
             pages: [CreatePage(CreateItems(1))],
-            addResult: new StageAddOrMoveResult(
-                StageAddOrMoveStatus.CapacityExceeded,
+            addResult: new StageAddBatchResult(
+                StageAddBatchStatus.CapacityExceeded,
                 1,
                 1,
-                0,
                 0,
                 1));
         using (var capacityViewModel = new StageViewModel(
@@ -138,12 +193,11 @@ public sealed class StageViewModelTests
 
         var refreshFailureRepository = new ScriptedStageRepository(
             pages: [CreatePage(CreateItems(1))],
-            addResult: new StageAddOrMoveResult(
-                StageAddOrMoveStatus.Applied,
+            addResult: new StageAddBatchResult(
+                StageAddBatchStatus.Applied,
                 1,
                 2,
                 1,
-                0,
                 200),
             failPageLoadAfter: 1);
         using (var refreshFailureViewModel = new StageViewModel(
@@ -265,16 +319,22 @@ public sealed class StageViewModelTests
                 Assert.False(viewModel.IsLoading);
             }
 
-            var item = Assert.Single(viewModel.Items);
-            Assert.Equal(descriptor.TargetValue, item.TargetValue);
-            Assert.Equal(1, viewModel.TotalCount);
+            Assert.Equal(50, viewModel.Items.Count);
+            Assert.All(
+                viewModel.Items,
+                item => Assert.Equal(descriptor.TargetValue, item.TargetValue));
+            Assert.Equal(
+                50,
+                viewModel.Items.Select(static item => item.Id).Distinct().Count());
+            Assert.Equal(50, viewModel.TotalCount);
             Assert.False(viewModel.HasError);
 
             var page = await repository.LoadPageAsync(
                 null,
                 StageViewModel.PageSize,
                 TestContext.Current.CancellationToken);
-            Assert.Equal(50, Assert.Single(page.Items).Revision);
+            Assert.Equal(50, page.Items.Count);
+            Assert.All(page.Items, item => Assert.Equal(1, item.Revision));
         }
         finally
         {
@@ -643,7 +703,7 @@ public sealed class StageViewModelTests
     }
 
     [Fact]
-    public async Task RelinkConflictIsExplicitAndConfirmedWriteIsNotReplayed()
+    public async Task RelinkConfirmedWriteWithInvalidAuthorityReloadsWithoutReplay()
     {
         var original = Assert.Single(CreateItems(1));
         var target = new StageTargetDescriptor(
@@ -651,25 +711,8 @@ public sealed class StageViewModelTests
             @"C:\Stage\Existing.txt",
             @"C:\STAGE\EXISTING.TXT",
             "Existing.txt");
-        var conflictRepository = new ScriptedStageRepository(
-            pages: [CreatePage([original])],
-            relinkResult: new StageRelinkResult(
-                StageRelinkStatus.CanonicalConflict,
-                null));
         var files = new StaticStageFileService(
             [new StageTargetResolution(target.TargetValue, target, null, null)]);
-        using (var conflictViewModel = new StageViewModel(conflictRepository, files)
-        {
-            RelinkTargetPickerAsync = (_, _) => Task.FromResult(
-                StageRelinkSelection.Selected(target.TargetValue)),
-        })
-        {
-            await conflictViewModel.InitializeAsync(TestContext.Current.CancellationToken);
-            await conflictViewModel.RelinkCommand.ExecuteAsync(conflictViewModel.Items[0]);
-            Assert.Contains("已在中转站", conflictViewModel.StatusText, StringComparison.Ordinal);
-            Assert.Equal(original, Assert.Single(conflictViewModel.Items).Item);
-        }
-
         var authoritative = original with
         {
             TargetValue = target.TargetValue,
@@ -1245,7 +1288,7 @@ public sealed class StageViewModelTests
             return Task.FromResult(new StagePage(page, next, Items.Count));
         }
 
-        public Task<StageAddOrMoveResult> AddOrMoveAsync(
+        public Task<StageAddBatchResult> AddBatchAsync(
             IReadOnlyList<StageTargetDescriptor> targets,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
@@ -1308,7 +1351,7 @@ public sealed class StageViewModelTests
     private sealed class ScriptedStageRepository : IStageRepository
     {
         private readonly Queue<StagePage> _pages;
-        private readonly StageAddOrMoveResult? _addResult;
+        private readonly StageAddBatchResult? _addResult;
         private readonly Exception? _addException;
         private readonly StageRemoveResult? _removeResult;
         private readonly StageItemMutationResult? _setPinnedResult;
@@ -1321,7 +1364,7 @@ public sealed class StageViewModelTests
 
         public ScriptedStageRepository(
             IEnumerable<StagePage> pages,
-            StageAddOrMoveResult? addResult = null,
+            StageAddBatchResult? addResult = null,
             Exception? addException = null,
             StageRemoveResult? removeResult = null,
             StageItemMutationResult? setPinnedResult = null,
@@ -1370,7 +1413,7 @@ public sealed class StageViewModelTests
             return Task.FromResult(_pages.Dequeue());
         }
 
-        public Task<StageAddOrMoveResult> AddOrMoveAsync(
+        public Task<StageAddBatchResult> AddBatchAsync(
             IReadOnlyList<StageTargetDescriptor> targets,
             CancellationToken cancellationToken = default)
         {
@@ -1471,17 +1514,16 @@ public sealed class StageViewModelTests
             return committed;
         }
 
-        public Task<StageAddOrMoveResult> AddOrMoveAsync(
+        public Task<StageAddBatchResult> AddBatchAsync(
             IReadOnlyList<StageTargetDescriptor> targets,
             CancellationToken cancellationToken = default)
         {
             AddCallCount++;
-            return Task.FromResult(new StageAddOrMoveResult(
-                StageAddOrMoveStatus.Applied,
+            return Task.FromResult(new StageAddBatchResult(
+                StageAddBatchStatus.Applied,
                 first.TotalCount,
                 committed.TotalCount,
                 1,
-                0,
                 200));
         }
 

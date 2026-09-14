@@ -30,7 +30,7 @@ public sealed class SqliteStageRepositoryTests
             var newSnapshot = await FileSnapshot.CreateAsync(newSource);
             var databasePath = Path.Combine(directory, "relink.db");
             using var repository = new SqliteStageRepository(databasePath);
-            _ = await repository.AddOrMoveAsync(
+            _ = await repository.AddBatchAsync(
                 [Target(oldSource, "old.txt"), Target("C:\\Neighbor.txt", "Neighbor")],
                 TestContext.Current.CancellationToken);
             var original = (await repository.LoadPageAsync(
@@ -114,14 +114,14 @@ public sealed class SqliteStageRepositoryTests
     }
 
     [Fact]
-    public async Task RelinkCanonicalConflictRejectsWithoutChangingEitherItem()
+    public async Task RelinkAllowsAnotherOccurrenceToUseTheSameCanonicalTarget()
     {
         var directory = CreateTestDirectory();
         try
         {
             using var repository = new SqliteStageRepository(
                 Path.Combine(directory, "relink-conflict.db"));
-            _ = await repository.AddOrMoveAsync(
+            _ = await repository.AddBatchAsync(
                 [Target("C:\\A.txt", "A"), Target("C:\\B.txt", "B")],
                 TestContext.Current.CancellationToken);
             var before = await repository.LoadPageAsync(
@@ -130,21 +130,34 @@ public sealed class SqliteStageRepositoryTests
                 TestContext.Current.CancellationToken);
             var source = before.Items.Single(item => item.ResolvedName == "A");
 
-            var conflict = await repository.RelinkAsync(
+            var relinked = await repository.RelinkAsync(
                 source.Id,
                 source.Revision,
                 Target("c:\\b.TXT", "B replacement"),
                 TestContext.Current.CancellationToken);
 
-            Assert.Equal(StageRelinkStatus.CanonicalConflict, conflict.Status);
-            Assert.Null(conflict.Item);
+            Assert.Equal(StageRelinkStatus.Applied, relinked.Status);
+            var authoritative = Assert.IsType<StageItem>(relinked.Item);
+            Assert.Equal(source.Id, authoritative.Id);
+            Assert.Equal(source.Revision + 1, authoritative.Revision);
+            Assert.Equal("c:\\b.TXT", authoritative.TargetValue);
+            Assert.Equal("C:\\B.TXT", authoritative.CanonicalKey);
+            Assert.Equal("B replacement", authoritative.ResolvedName);
             var after = await repository.LoadPageAsync(
                 null,
                 10,
                 TestContext.Current.CancellationToken);
             Assert.Equal(before.TotalCount, after.TotalCount);
             Assert.Equal(before.NextCursor, after.NextCursor);
-            Assert.Equal(before.Items, after.Items);
+            Assert.Equal(2, after.Items.Select(static item => item.Id).Distinct().Count());
+            Assert.Equal(
+                2,
+                after.Items.Count(item => string.Equals(
+                    item.CanonicalKey,
+                    "C:\\B.TXT",
+                    StringComparison.OrdinalIgnoreCase)));
+            var untouched = before.Items.Single(item => item.ResolvedName == "B");
+            Assert.Equal(untouched, after.Items.Single(item => item.Id == untouched.Id));
         }
         finally
         {
@@ -163,7 +176,7 @@ public sealed class SqliteStageRepositoryTests
             using var repository = new SqliteStageRepository(
                 executor,
                 new StageOptions());
-            _ = await repository.AddOrMoveAsync(
+            _ = await repository.AddBatchAsync(
                 [Target("C:\\Original.txt", "Original")],
                 TestContext.Current.CancellationToken);
             var original = Assert.Single((await repository.LoadPageAsync(
@@ -210,7 +223,7 @@ public sealed class SqliteStageRepositoryTests
         {
             var databasePath = Path.Combine(directory, "pin.db");
             using var repository = new SqliteStageRepository(databasePath);
-            _ = await repository.AddOrMoveAsync(
+            _ = await repository.AddBatchAsync(
                 [Target("C:\\Pinned.txt", "Pinned")],
                 TestContext.Current.CancellationToken);
             var original = Assert.Single((await repository.LoadPageAsync(
@@ -295,7 +308,7 @@ public sealed class SqliteStageRepositoryTests
             using var repository = new SqliteStageRepository(
                 executor,
                 new StageOptions());
-            _ = await repository.AddOrMoveAsync(
+            _ = await repository.AddBatchAsync(
                 [Target("C:\\Overflow.txt", "Overflow")],
                 TestContext.Current.CancellationToken);
             var original = Assert.Single((await repository.LoadPageAsync(
@@ -351,7 +364,7 @@ public sealed class SqliteStageRepositoryTests
                 source,
                 TestContext.Current.CancellationToken));
             using var repository = new SqliteStageRepository(databasePath);
-            _ = await repository.AddOrMoveAsync(
+            _ = await repository.AddBatchAsync(
                 [Target(source, "source.txt")],
                 TestContext.Current.CancellationToken);
             var original = Assert.Single((await repository.LoadPageAsync(
@@ -359,8 +372,10 @@ public sealed class SqliteStageRepositoryTests
                 10,
                 TestContext.Current.CancellationToken)).Items);
 
-            _ = await repository.AddOrMoveAsync(
-                [Target(source, "source refreshed")],
+            _ = await repository.SetPinnedAsync(
+                original.Id,
+                original.Revision,
+                isPinned: true,
                 TestContext.Current.CancellationToken);
             var conflict = await repository.RemoveAsync(
                 original.Id,
@@ -374,6 +389,7 @@ public sealed class SqliteStageRepositoryTests
                 TestContext.Current.CancellationToken)).Items);
             Assert.Equal(original.Id, current.Id);
             Assert.Equal(original.Revision + 1, current.Revision);
+            Assert.True(current.IsPinned);
 
             var removed = await repository.RemoveAsync(
                 current.Id,
@@ -406,67 +422,97 @@ public sealed class SqliteStageRepositoryTests
     }
 
     [Fact]
-    public async Task AddAndMixedDuplicateMovePreserveInputOrderAndUnaffectedRows()
+    public async Task SameBatchAndCrossBatchDuplicatesCreateIndependentOccurrences()
     {
         var directory = CreateTestDirectory();
-        var databasePath = Path.Combine(directory, "add-move.db");
+        var databasePath = Path.Combine(directory, "occurrences.db");
+        var source = Path.Combine(directory, "repeat.txt");
         try
         {
+            await File.WriteAllTextAsync(
+                source,
+                "source-content",
+                TestContext.Current.CancellationToken);
+            var sourceSnapshot = await FileSnapshot.CreateAsync(source);
             using var executor = new SqliteStorageExecutor(databasePath);
             using var repository = new SqliteStageRepository(
                 executor,
                 new StageOptions(capacity: 50));
-            var first = await repository.AddOrMoveAsync(
-                [Target("C:\\A.txt", "A"), Target("C:\\B.txt", "B"), Target("C:\\C.txt", "C")],
+            var first = await repository.AddBatchAsync(
+                [
+                    new StageTargetDescriptor(
+                        StageItemKind.File,
+                        source,
+                        source.ToUpperInvariant(),
+                        "first"),
+                    new StageTargetDescriptor(
+                        StageItemKind.File,
+                        source,
+                        source.ToLowerInvariant(),
+                        "second"),
+                    new StageTargetDescriptor(
+                        StageItemKind.File,
+                        source,
+                        source.ToUpperInvariant(),
+                        "third"),
+                ],
                 TestContext.Current.CancellationToken);
-            Assert.Equal(StageAddOrMoveStatus.Applied, first.Status);
-            Assert.Equal(3, first.AddedCount);
-            Assert.Equal(0, first.MovedCount);
 
+            Assert.Equal(StageAddBatchStatus.Applied, first.Status);
+            Assert.Equal(0, first.CountBefore);
+            Assert.Equal(3, first.CountAfter);
+            Assert.Equal(3, first.AddedCount);
             var initial = await repository.LoadPageAsync(
                 null,
                 10,
                 TestContext.Current.CancellationToken);
-            Assert.Equal(["A", "B", "C"], initial.Items.Select(static item => item.ResolvedName));
-            var aBefore = initial.Items[0];
-            var bBefore = initial.Items[1];
-            var cBefore = initial.Items[2];
-            var aPinned = Assert.IsType<StageItem>((await repository.SetPinnedAsync(
-                aBefore.Id,
-                aBefore.Revision,
+            Assert.Equal(
+                ["first", "second", "third"],
+                initial.Items.Select(static item => item.ResolvedName));
+            Assert.Equal(3, initial.Items.Select(static item => item.Id).Distinct().Count());
+            Assert.All(initial.Items, item =>
+            {
+                Assert.Equal(1, item.Revision);
+                Assert.Equal(source, item.CanonicalKey, ignoreCase: true);
+            });
+            AssertStrictlyDescendingSortOrders(initial.Items);
+
+            var second = initial.Items[1];
+            _ = await repository.SetPinnedAsync(
+                second.Id,
+                second.Revision,
                 isPinned: true,
-                TestContext.Current.CancellationToken)).Item);
+                TestContext.Current.CancellationToken);
+            var beforeCrossBatch = await repository.LoadPageAsync(
+                null,
+                10,
+                TestContext.Current.CancellationToken);
+            var originals = beforeCrossBatch.Items.ToDictionary(static item => item.Id);
 
-            var moved = await repository.AddOrMoveAsync(
+            var crossBatch = await repository.AddBatchAsync(
                 [
-                    Target("c:\\c.TXT", "C refreshed"),
-                    Target("C:\\D.txt", "D"),
-                    Target("c:\\a.txt", "A refreshed"),
-                    Target("C:\\C.txt", "C ignored duplicate"),
+                    new StageTargetDescriptor(
+                        StageItemKind.File,
+                        source,
+                        source.ToLowerInvariant(),
+                        "cross-batch"),
                 ],
                 TestContext.Current.CancellationToken);
 
-            Assert.Equal(StageAddOrMoveStatus.Applied, moved.Status);
-            Assert.Equal(3, moved.CountBefore);
-            Assert.Equal(4, moved.CountAfter);
-            Assert.Equal(1, moved.AddedCount);
-            Assert.Equal(2, moved.MovedCount);
+            Assert.Equal(StageAddBatchStatus.Applied, crossBatch.Status);
+            Assert.Equal(3, crossBatch.CountBefore);
+            Assert.Equal(4, crossBatch.CountAfter);
+            Assert.Equal(1, crossBatch.AddedCount);
             var page = await repository.LoadPageAsync(
                 null,
                 10,
                 TestContext.Current.CancellationToken);
-            Assert.Equal(
-                ["C refreshed", "D", "A refreshed", "B"],
-                page.Items.Select(static item => item.ResolvedName));
-            Assert.Equal(cBefore.Id, page.Items[0].Id);
-            Assert.Equal(aBefore.Id, page.Items[2].Id);
-            Assert.True(page.Items[2].IsPinned);
-            Assert.Equal(aPinned.CreatedUtc, page.Items[2].CreatedUtc);
-            Assert.Equal(2, page.Items[0].Revision);
-            Assert.Equal(3, page.Items[2].Revision);
-            Assert.Equal(bBefore.Id, page.Items[3].Id);
-            Assert.Equal(bBefore.Revision, page.Items[3].Revision);
-            Assert.Equal(bBefore.SortOrder, page.Items[3].SortOrder);
+            Assert.Equal(4, page.Items.Select(static item => item.Id).Distinct().Count());
+            Assert.Equal("cross-batch", page.Items[0].ResolvedName);
+            Assert.Equal(1, page.Items[0].Revision);
+            Assert.All(page.Items.Skip(1), item => Assert.Equal(originals[item.Id], item));
+            AssertStrictlyDescendingSortOrders(page.Items);
+            await sourceSnapshot.AssertUnchangedAsync();
         }
         finally
         {
@@ -475,91 +521,11 @@ public sealed class SqliteStageRepositoryTests
     }
 
     [Fact]
-    public async Task CapacityFailureRejectsTheWholeValidUniqueBatch()
+    public async Task SchemaSevenDatabaseMigratesBeforeAddingDuplicateOccurrence()
     {
         var directory = CreateTestDirectory();
-        try
-        {
-            using var repository = new SqliteStageRepository(
-                Path.Combine(directory, "capacity.db"),
-                new StageOptions(capacity: 3));
-            _ = await repository.AddOrMoveAsync(
-                [Target("C:\\A.txt", "A"), Target("C:\\B.txt", "B")],
-                TestContext.Current.CancellationToken);
-            var before = await repository.LoadPageAsync(
-                null,
-                10,
-                TestContext.Current.CancellationToken);
-
-            var rejected = await repository.AddOrMoveAsync(
-                [
-                    Target("c:\\a.txt", "A changed"),
-                    Target("C:\\C.txt", "C"),
-                    Target("C:\\D.txt", "D"),
-                ],
-                TestContext.Current.CancellationToken);
-
-            Assert.Equal(StageAddOrMoveStatus.CapacityExceeded, rejected.Status);
-            Assert.Equal(2, rejected.CountBefore);
-            Assert.Equal(2, rejected.CountAfter);
-            Assert.Equal(0, rejected.AddedCount);
-            Assert.Equal(0, rejected.MovedCount);
-            var after = await repository.LoadPageAsync(
-                null,
-                10,
-                TestContext.Current.CancellationToken);
-            Assert.Equal(before.Items, after.Items);
-        }
-        finally
-        {
-            DeleteTestDirectory(directory);
-        }
-    }
-
-    [Fact]
-    public async Task ExistingItemCanRefreshAtCapacityWithoutOpeningANewSlot()
-    {
-        var directory = CreateTestDirectory();
-        try
-        {
-            using var repository = new SqliteStageRepository(
-                Path.Combine(directory, "at-capacity.db"),
-                new StageOptions(capacity: 2));
-            _ = await repository.AddOrMoveAsync(
-                [Target("C:\\A.txt", "A"), Target("C:\\B.txt", "B")],
-                TestContext.Current.CancellationToken);
-
-            var refreshed = await repository.AddOrMoveAsync(
-                [Target("c:\\a.TXT", "A refreshed")],
-                TestContext.Current.CancellationToken);
-            var rejected = await repository.AddOrMoveAsync(
-                [Target("C:\\C.txt", "C")],
-                TestContext.Current.CancellationToken);
-
-            Assert.Equal(StageAddOrMoveStatus.Applied, refreshed.Status);
-            Assert.Equal(0, refreshed.AddedCount);
-            Assert.Equal(1, refreshed.MovedCount);
-            Assert.Equal(StageAddOrMoveStatus.CapacityExceeded, rejected.Status);
-            var page = await repository.LoadPageAsync(
-                null,
-                10,
-                TestContext.Current.CancellationToken);
-            Assert.Equal(2, page.TotalCount);
-            Assert.Equal(
-                ["A refreshed", "B"],
-                page.Items.Select(static item => item.ResolvedName));
-        }
-        finally
-        {
-            DeleteTestDirectory(directory);
-        }
-    }
-
-    [Fact]
-    public async Task RevisionOverflowRollsBackEarlierWritesInTheBatch()
-    {
-        var directory = CreateTestDirectory();
-        var databasePath = Path.Combine(directory, "revision-overflow.db");
+        var databasePath = Path.Combine(directory, "schema-seven-occurrence.db");
+        var originalId = Guid.Parse("31000000-0000-0000-0000-000000000001");
         try
         {
             await InitializeStageSchemaAsync(databasePath);
@@ -567,20 +533,173 @@ public sealed class SqliteStageRepositoryTests
             using (var command = connection.CreateCommand())
             {
                 command.CommandText = $"""
+                    BEGIN IMMEDIATE;
+                    DROP INDEX ix_stage_items_canonical;
+                    CREATE UNIQUE INDEX ux_stage_items_canonical
+                    ON stage_items(canonical_key COLLATE NOCASE);
                     INSERT INTO stage_items VALUES
-                    ('00000000-0000-0000-0000-000000000001', 0,
-                     'C:\Existing', 'C:\EXISTING', 'Existing',
-                     1, 0, {long.MaxValue}, '{UtcText}', '{UtcText}');
+                    ('{originalId:D}', 0, 'C:\Legacy.txt', 'C:\LEGACY.TXT',
+                     'legacy', 1048576, 1, 4, '{UtcText}', '{UtcText}');
+                    PRAGMA user_version = 7;
+                    COMMIT;
+                    """;
+                command.ExecuteNonQuery();
+            }
+
+            using var repository = new SqliteStageRepository(
+                databasePath,
+                new StageOptions(capacity: 50));
+            var added = await repository.AddBatchAsync(
+                [Target(@"c:\legacy.TXT", "new occurrence")],
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(StageAddBatchStatus.Applied, added.Status);
+            Assert.Equal(1, added.CountBefore);
+            Assert.Equal(2, added.CountAfter);
+            var page = await repository.LoadPageAsync(
+                null,
+                10,
+                TestContext.Current.CancellationToken);
+            Assert.Equal(["new occurrence", "legacy"], page.Items.Select(
+                static item => item.ResolvedName));
+            var original = page.Items.Single(item => item.Id == originalId);
+            Assert.True(original.IsPinned);
+            Assert.Equal(4, original.Revision);
+            Assert.Equal(1048576, original.SortOrder);
+
+            using var auditConnection = OpenDatabase(databasePath);
+            using var version = auditConnection.CreateCommand();
+            version.CommandText = "PRAGMA user_version;";
+            Assert.Equal(8L, Convert.ToInt64(
+                version.ExecuteScalar(),
+                CultureInfo.InvariantCulture));
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task CapacityCountsOccurrencesAtTheFortyNineFiftyFiftyOneBoundaries()
+    {
+        var directory = CreateTestDirectory();
+        try
+        {
+            using var repository = new SqliteStageRepository(
+                Path.Combine(directory, "capacity.db"),
+                new StageOptions(capacity: 50));
+            var seed = Enumerable.Range(0, 49)
+                .Select(index => Target(
+                    $"C:\\Seed\\{index:D2}.txt",
+                    $"seed-{index:D2}"))
+                .ToArray();
+            var seeded = await repository.AddBatchAsync(
+                seed,
+                TestContext.Current.CancellationToken);
+            Assert.Equal(StageAddBatchStatus.Applied, seeded.Status);
+            Assert.Equal(49, seeded.CountAfter);
+
+            var fiftieth = await repository.AddBatchAsync(
+                [Target("c:\\seed\\00.TXT", "fiftieth duplicate")],
+                TestContext.Current.CancellationToken);
+            Assert.Equal(StageAddBatchStatus.Applied, fiftieth.Status);
+            Assert.Equal(49, fiftieth.CountBefore);
+            Assert.Equal(50, fiftieth.CountAfter);
+            Assert.Equal(1, fiftieth.AddedCount);
+            var atCapacity = await repository.LoadPageAsync(
+                null,
+                64,
+                TestContext.Current.CancellationToken);
+
+            var fiftyFirst = await repository.AddBatchAsync(
+                [Target("c:\\seed\\00.txt", "fifty-first duplicate")],
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(StageAddBatchStatus.CapacityExceeded, fiftyFirst.Status);
+            Assert.Equal(50, fiftyFirst.CountBefore);
+            Assert.Equal(50, fiftyFirst.CountAfter);
+            Assert.Equal(0, fiftyFirst.AddedCount);
+            var after = await repository.LoadPageAsync(
+                null,
+                64,
+                TestContext.Current.CancellationToken);
+            Assert.Equal(atCapacity.Items, after.Items);
+
+            using var fortyNineRepository = new SqliteStageRepository(
+                Path.Combine(directory, "capacity-batch.db"),
+                new StageOptions(capacity: 50));
+            _ = await fortyNineRepository.AddBatchAsync(
+                seed,
+                TestContext.Current.CancellationToken);
+            var beforeRejectedBatch = await fortyNineRepository.LoadPageAsync(
+                null,
+                64,
+                TestContext.Current.CancellationToken);
+            var rejectedBatch = await fortyNineRepository.AddBatchAsync(
+                [
+                    Target("C:\\Seed\\00.txt", "duplicate one"),
+                    Target("c:\\seed\\00.TXT", "duplicate two"),
+                ],
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(StageAddBatchStatus.CapacityExceeded, rejectedBatch.Status);
+            Assert.Equal(49, rejectedBatch.CountBefore);
+            Assert.Equal(49, rejectedBatch.CountAfter);
+            Assert.Equal(0, rejectedBatch.AddedCount);
+            Assert.Equal(
+                beforeRejectedBatch.Items,
+                (await fortyNineRepository.LoadPageAsync(
+                    null,
+                    64,
+                    TestContext.Current.CancellationToken)).Items);
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task SqlFailureRollsBackEarlierBatchInsertsAndPreservesSources()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "insert-failure.db");
+        var firstSource = Path.Combine(directory, "first.txt");
+        var rejectedSource = Path.Combine(directory, "rejected.txt");
+        try
+        {
+            await File.WriteAllTextAsync(
+                firstSource,
+                "first-source",
+                TestContext.Current.CancellationToken);
+            await File.WriteAllTextAsync(
+                rejectedSource,
+                "rejected-source",
+                TestContext.Current.CancellationToken);
+            var firstSnapshot = await FileSnapshot.CreateAsync(firstSource);
+            var rejectedSnapshot = await FileSnapshot.CreateAsync(rejectedSource);
+            await InitializeStageSchemaAsync(databasePath);
+            using (var connection = OpenDatabase(databasePath))
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = """
+                    CREATE TRIGGER fail_rejected_stage_insert
+                    BEFORE INSERT ON stage_items
+                    WHEN NEW.resolved_name = 'Reject'
+                    BEGIN
+                        SELECT RAISE(ABORT, 'forced Stage insert failure');
+                    END;
                     """;
                 command.ExecuteNonQuery();
             }
 
             using var repository = new SqliteStageRepository(databasePath);
-            await Assert.ThrowsAsync<OverflowException>(() =>
-                repository.AddOrMoveAsync(
+            await Assert.ThrowsAsync<SqliteException>(() =>
+                repository.AddBatchAsync(
                     [
-                        Target("C:\\InsertedFirst.txt", "Inserted first"),
-                        Target("c:\\existing", "Existing changed"),
+                        Target(firstSource, "First"),
+                        Target(rejectedSource, "Reject"),
                     ],
                     TestContext.Current.CancellationToken));
 
@@ -588,10 +707,10 @@ public sealed class SqliteStageRepositoryTests
                 null,
                 10,
                 TestContext.Current.CancellationToken);
-            var item = Assert.Single(page.Items);
-            Assert.Equal("Existing", item.ResolvedName);
-            Assert.Equal(long.MaxValue, item.Revision);
-            Assert.Equal(1, item.SortOrder);
+            Assert.Empty(page.Items);
+            Assert.Equal(0, page.TotalCount);
+            await firstSnapshot.AssertUnchangedAsync();
+            await rejectedSnapshot.AssertUnchangedAsync();
         }
         finally
         {
@@ -609,17 +728,17 @@ public sealed class SqliteStageRepositoryTests
                 Path.Combine(directory, "concurrent.db"),
                 new StageOptions(capacity: 1));
             var results = await Task.WhenAll(
-                repository.AddOrMoveAsync(
+                repository.AddBatchAsync(
                     [Target("C:\\A.txt", "A")],
                     TestContext.Current.CancellationToken),
-                repository.AddOrMoveAsync(
+                repository.AddBatchAsync(
                     [Target("C:\\B.txt", "B")],
                     TestContext.Current.CancellationToken));
 
             Assert.Equal(1, results.Count(static result =>
-                result.Status is StageAddOrMoveStatus.Applied));
+                result.Status is StageAddBatchStatus.Applied));
             Assert.Equal(1, results.Count(static result =>
-                result.Status is StageAddOrMoveStatus.CapacityExceeded));
+                result.Status is StageAddBatchStatus.CapacityExceeded));
             Assert.Equal(
                 1,
                 (await repository.LoadPageAsync(
@@ -1651,11 +1770,11 @@ public sealed class SqliteStageRepositoryTests
             using var repository = new SqliteStageRepository(
                 databasePath,
                 new StageOptions(capacity: 50));
-            var result = await repository.AddOrMoveAsync(
+            var result = await repository.AddBatchAsync(
                 [Target("C:\\New.txt", "New")],
                 TestContext.Current.CancellationToken);
 
-            Assert.Equal(StageAddOrMoveStatus.SortOrderExhausted, result.Status);
+            Assert.Equal(StageAddBatchStatus.SortOrderExhausted, result.Status);
             var page = await repository.LoadPageAsync(
                 null,
                 10,
@@ -1678,11 +1797,28 @@ public sealed class SqliteStageRepositoryTests
                 Path.Combine(directory, "validation.db"));
 
             await Assert.ThrowsAsync<ArgumentException>(() =>
-                repository.AddOrMoveAsync([], TestContext.Current.CancellationToken));
+                repository.AddBatchAsync([], TestContext.Current.CancellationToken));
             await Assert.ThrowsAsync<ArgumentException>(() =>
-                repository.AddOrMoveAsync(
+                repository.AddBatchAsync(
                     [Target("C:\\A", "")],
                     TestContext.Current.CancellationToken));
+            _ = await repository.AddBatchAsync(
+                [Target("C:\\Seed", "Seed")],
+                TestContext.Current.CancellationToken);
+            var beforeInvalidBatch = await repository.LoadPageAsync(
+                null,
+                10,
+                TestContext.Current.CancellationToken);
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                repository.AddBatchAsync(
+                    [Target("C:\\Valid", "Valid"), Target("C:\\Invalid", "")],
+                    TestContext.Current.CancellationToken));
+            Assert.Equal(
+                beforeInvalidBatch.Items,
+                (await repository.LoadPageAsync(
+                    null,
+                    10,
+                    TestContext.Current.CancellationToken)).Items);
             await Assert.ThrowsAsync<ArgumentException>(() =>
                 repository.LoadPageAsync(
                     new StagePageCursor(0, Guid.Empty),

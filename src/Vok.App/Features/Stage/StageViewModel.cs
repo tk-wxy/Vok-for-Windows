@@ -230,19 +230,19 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
             }
 
             var result = await _repository
-                .AddOrMoveAsync(targets, operationToken)
+                .AddBatchAsync(targets, operationToken)
                 .ConfigureAwait(true);
             switch (result.Status)
             {
-                case StageAddOrMoveStatus.CapacityExceeded:
+                case StageAddBatchStatus.CapacityExceeded:
                     StatusText = $"空间不足，{targets.Length} 个有效目标整批未放入。";
                     return;
 
-                case StageAddOrMoveStatus.SortOrderExhausted:
+                case StageAddBatchStatus.SortOrderExhausted:
                     StatusText = "中转站顺序空间异常，未写入任何项目。";
                     return;
 
-                case StageAddOrMoveStatus.Applied:
+                case StageAddBatchStatus.Applied:
                     break;
 
                 default:
@@ -798,10 +798,6 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
                             "项目已发生变化，未执行重新关联；列表已刷新。",
                             _lifetime.Token)
                         .ConfigureAwait(true);
-                    break;
-
-                case StageRelinkStatus.CanonicalConflict:
-                    StatusText = $"“{target.ResolvedName}”已在中转站中，未更改“{original.ResolvedName}”。";
                     break;
 
                 case StageRelinkStatus.KindMismatch:
@@ -1530,18 +1526,13 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
     }
 
     private static string CreateAppliedStatus(
-        StageAddOrMoveResult result,
+        StageAddBatchResult result,
         int invalidCount)
     {
         var parts = new List<string>();
         if (result.AddedCount != 0)
         {
             parts.Add($"新增 {result.AddedCount} 项");
-        }
-
-        if (result.MovedCount != 0)
-        {
-            parts.Add($"回顶 {result.MovedCount} 项");
         }
 
         if (invalidCount != 0)

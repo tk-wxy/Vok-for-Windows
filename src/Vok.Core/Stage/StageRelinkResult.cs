@@ -6,7 +6,6 @@ public enum StageRelinkStatus
     NoChange,
     NotFound,
     RevisionConflict,
-    CanonicalConflict,
     KindMismatch,
 }
 

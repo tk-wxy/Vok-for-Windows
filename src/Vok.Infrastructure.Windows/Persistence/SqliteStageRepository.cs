@@ -58,7 +58,7 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
             cancellationToken);
     }
 
-    public Task<StageAddOrMoveResult> AddOrMoveAsync(
+    public Task<StageAddBatchResult> AddBatchAsync(
         IReadOnlyList<StageTargetDescriptor> targets,
         CancellationToken cancellationToken = default)
     {
@@ -77,7 +77,7 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
         }
 
         return _executor.ExecuteAsync(
-            connection => AddOrMove(connection, snapshot, _options.Capacity),
+            connection => AddBatch(connection, snapshot, _options.Capacity),
             cancellationToken);
     }
 
@@ -234,34 +234,20 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
     private static StageOrderAnchor ToOrderAnchor(StageItem item) =>
         new(item.Id, item.Revision, item.SortOrder);
 
-    private static StageAddOrMoveResult AddOrMove(
+    private static StageAddBatchResult AddBatch(
         SqliteConnection connection,
         IReadOnlyList<StageTargetDescriptor> targets,
         long capacity)
     {
-        var uniqueTargets = new List<StageTargetDescriptor>(targets.Count);
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var target in targets)
-        {
-            if (seen.Add(target.CanonicalKey))
-            {
-                uniqueTargets.Add(target);
-            }
-        }
-
         using var transaction = connection.BeginTransaction();
         var countBefore = ReadCount(connection, transaction);
-        var existing = FindExisting(connection, transaction, uniqueTargets);
-        var addedCount = uniqueTargets.Count - existing.Count;
-        if (addedCount > 0 &&
-            (countBefore >= capacity || addedCount > capacity - countBefore))
+        if (countBefore >= capacity || targets.Count > capacity - countBefore)
         {
             transaction.Rollback();
-            return new StageAddOrMoveResult(
-                StageAddOrMoveStatus.CapacityExceeded,
+            return new StageAddBatchResult(
+                StageAddBatchStatus.CapacityExceeded,
                 countBefore,
                 countBefore,
-                0,
                 0,
                 capacity);
         }
@@ -271,53 +257,38 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
         try
         {
             highestSortOrder = checked(
-                maximumSortOrder + checked(uniqueTargets.Count * SortOrderStep));
+                maximumSortOrder + checked(targets.Count * SortOrderStep));
         }
         catch (OverflowException)
         {
             transaction.Rollback();
-            return new StageAddOrMoveResult(
-                StageAddOrMoveStatus.SortOrderExhausted,
+            return new StageAddBatchResult(
+                StageAddBatchStatus.SortOrderExhausted,
                 countBefore,
                 countBefore,
-                0,
                 0,
                 capacity);
         }
 
         var now = DateTimeOffset.UtcNow;
-        for (var index = 0; index < uniqueTargets.Count; index++)
+        for (var index = 0; index < targets.Count; index++)
         {
-            var target = uniqueTargets[index];
+            var target = targets[index];
             var sortOrder = highestSortOrder - (index * SortOrderStep);
-            if (existing.TryGetValue(target.CanonicalKey, out var item))
-            {
-                UpdateExisting(
-                    connection,
-                    transaction,
-                    item,
-                    target,
-                    sortOrder,
-                    now);
-            }
-            else
-            {
-                Insert(
-                    connection,
-                    transaction,
-                    target,
-                    sortOrder,
-                    now);
-            }
+            Insert(
+                connection,
+                transaction,
+                target,
+                sortOrder,
+                now);
         }
 
         transaction.Commit();
-        return new StageAddOrMoveResult(
-            StageAddOrMoveStatus.Applied,
+        return new StageAddBatchResult(
+            StageAddBatchStatus.Applied,
             countBefore,
-            checked(countBefore + addedCount),
-            addedCount,
-            existing.Count,
+            checked(countBefore + targets.Count),
+            targets.Count,
             capacity);
     }
 
@@ -469,27 +440,6 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
         {
             transaction.Rollback();
             return new StageRelinkResult(StageRelinkStatus.NoChange, current);
-        }
-
-        using (var conflict = connection.CreateCommand())
-        {
-            conflict.Transaction = transaction;
-            conflict.CommandText = """
-                SELECT 1
-                FROM stage_items
-                WHERE canonical_key = $key COLLATE NOCASE
-                  AND id <> $id
-                LIMIT 1;
-                """;
-            conflict.Parameters.AddWithValue("$key", target.CanonicalKey);
-            conflict.Parameters.AddWithValue("$id", itemId.ToString("D"));
-            if (conflict.ExecuteScalar() is not null)
-            {
-                transaction.Rollback();
-                return new StageRelinkResult(
-                    StageRelinkStatus.CanonicalConflict,
-                    null);
-            }
         }
 
         var nextRevision = checked(current.Revision + 1);
@@ -1026,36 +976,6 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
             : Convert.ToInt64(value, CultureInfo.InvariantCulture);
     }
 
-    private static Dictionary<string, StageItem> FindExisting(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        IReadOnlyList<StageTargetDescriptor> targets)
-    {
-        var result = new Dictionary<string, StageItem>(StringComparer.OrdinalIgnoreCase);
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            SELECT id, target_kind, target_value, canonical_key,
-                   resolved_name, sort_order, is_pinned, revision,
-                   created_utc, updated_utc
-            FROM stage_items
-            WHERE canonical_key = $key COLLATE NOCASE
-            LIMIT 1;
-            """;
-        var key = command.Parameters.Add("$key", SqliteType.Text);
-        foreach (var target in targets)
-        {
-            key.Value = target.CanonicalKey;
-            using var reader = command.ExecuteReader();
-            if (reader.Read())
-            {
-                result.Add(target.CanonicalKey, ReadItem(reader));
-            }
-        }
-
-        return result;
-    }
-
     private static void Insert(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -1084,43 +1004,6 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
         command.Parameters.AddWithValue("$createdUtc", FormatUtc(now));
         command.Parameters.AddWithValue("$updatedUtc", FormatUtc(now));
         command.ExecuteNonQuery();
-    }
-
-    private static void UpdateExisting(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        StageItem item,
-        StageTargetDescriptor target,
-        long sortOrder,
-        DateTimeOffset now)
-    {
-        var nextRevision = checked(item.Revision + 1);
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            UPDATE stage_items
-            SET target_kind = $kind,
-                target_value = $target,
-                canonical_key = $key,
-                resolved_name = $name,
-                sort_order = $sortOrder,
-                revision = $revision,
-                updated_utc = $updatedUtc
-            WHERE id = $id;
-            """;
-        command.Parameters.AddWithValue("$kind", (int)target.Kind);
-        command.Parameters.AddWithValue("$target", target.TargetValue);
-        command.Parameters.AddWithValue("$key", target.CanonicalKey);
-        command.Parameters.AddWithValue("$name", target.ResolvedName);
-        command.Parameters.AddWithValue("$sortOrder", sortOrder);
-        command.Parameters.AddWithValue("$revision", nextRevision);
-        command.Parameters.AddWithValue("$updatedUtc", FormatUtc(now));
-        command.Parameters.AddWithValue("$id", item.Id.ToString("D"));
-        if (command.ExecuteNonQuery() != 1)
-        {
-            throw new InvalidOperationException(
-                $"Stage item {item.Id:D} disappeared during AddOrMove.");
-        }
     }
 
     private static StageItem ReadItem(SqliteDataReader reader) => new(

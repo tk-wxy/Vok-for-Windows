@@ -172,7 +172,7 @@ public sealed class StageActionControllerTests
             CancellationToken cancellationToken = default) =>
             Task.FromResult(new StagePage([item], null, 1));
 
-        public Task<StageAddOrMoveResult> AddOrMoveAsync(
+        public Task<StageAddBatchResult> AddBatchAsync(
             IReadOnlyList<StageTargetDescriptor> targets,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
