@@ -1158,7 +1158,8 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
         }
 
         public Task<StagePage> LoadPageAsync(
-            StagePageCursor? after,
+            StagePageCursor? anchor,
+            StagePageDirection direction,
             int pageSize,
             CancellationToken cancellationToken = default)
         {
@@ -1166,10 +1167,11 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
             var page = _items.Take(pageSize).ToArray();
             return Task.FromResult(new StagePage(
                 page,
-                page.Length == 0
+                NewerCursor: null,
+                OlderCursor: page.Length == 0 || page.Length == _items.Count
                     ? null
                     : new StagePageCursor(page[^1].SortOrder, page[^1].Id),
-                _items.Count));
+                TotalCount: _items.Count));
         }
 
         public Task<StageAddBatchResult> AddBatchAsync(

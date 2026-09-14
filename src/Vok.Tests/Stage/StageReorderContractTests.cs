@@ -116,12 +116,14 @@ public sealed class StageReorderContractTests
     }
 
     [Fact]
-    public void ExistingStagePageConstructionKeepsOptionalBoundariesEmpty()
+    public void EmptyStagePageKeepsBothDirectionsAndBoundariesUnavailable()
     {
-        var page = new StagePage([], null, 0);
+        var page = new StagePage([], null, null, 0);
 
         Assert.Null(page.NewerBoundary);
         Assert.Null(page.OlderBoundary);
+        Assert.False(page.HasNewer);
+        Assert.False(page.HasOlder);
     }
 
     private static StageItem CreateItem() => new(

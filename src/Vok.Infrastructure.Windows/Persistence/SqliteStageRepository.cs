@@ -40,23 +40,46 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
     }
 
     public Task<StagePage> LoadPageAsync(
-        StagePageCursor? after,
+        StagePageCursor? anchor,
+        StagePageDirection direction,
         int pageSize,
         CancellationToken cancellationToken = default)
     {
-        if (after is { Id: var id } && id == Guid.Empty)
+        if (anchor is { Id: var id } && id == Guid.Empty)
         {
             throw new ArgumentException(
                 "A Stage page cursor must contain a non-empty item id.",
-                nameof(after));
+                nameof(anchor));
+        }
+
+        if (!Enum.IsDefined(direction))
+        {
+            throw new ArgumentOutOfRangeException(nameof(direction));
+        }
+
+        if (anchor is null && direction == StagePageDirection.TowardNewer)
+        {
+            throw new ArgumentException(
+                "Loading newer Stage items requires an anchor.",
+                nameof(anchor));
         }
 
         ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, MaximumPageSize);
         return _executor.ExecuteAsync(
-            connection => LoadPage(connection, after, pageSize),
+            connection => LoadPage(connection, anchor, direction, pageSize),
             cancellationToken);
     }
+
+    public Task<StagePage> LoadPageAsync(
+        StagePageCursor? after,
+        int pageSize,
+        CancellationToken cancellationToken = default) =>
+        LoadPageAsync(
+            after,
+            StagePageDirection.TowardOlder,
+            pageSize,
+            cancellationToken);
 
     public Task<StageAddBatchResult> AddBatchAsync(
         IReadOnlyList<StageTargetDescriptor> targets,
@@ -140,7 +163,8 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
 
     private static StagePage LoadPage(
         SqliteConnection connection,
-        StagePageCursor? after,
+        StagePageCursor? anchor,
+        StagePageDirection direction,
         int pageSize)
     {
         using var transaction = connection.BeginTransaction(deferred: true);
@@ -153,26 +177,41 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
 
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = """
-            SELECT id, target_kind, target_value, canonical_key,
-                   resolved_name, sort_order, is_pinned, revision,
-                   created_utc, updated_utc
-            FROM stage_items
-            WHERE $afterOrder IS NULL
-               OR sort_order < $afterOrder
-               OR (sort_order = $afterOrder AND id < $afterId)
-            ORDER BY sort_order DESC, id DESC
-            LIMIT $limit;
-            """;
+        command.CommandText = direction switch
+        {
+            StagePageDirection.TowardOlder => """
+                SELECT id, target_kind, target_value, canonical_key,
+                       resolved_name, sort_order, is_pinned, revision,
+                       created_utc, updated_utc
+                FROM stage_items
+                WHERE $anchorOrder IS NULL
+                   OR sort_order < $anchorOrder
+                   OR (sort_order = $anchorOrder AND id < $anchorId)
+                ORDER BY sort_order DESC, id DESC
+                LIMIT $limit;
+                """,
+            StagePageDirection.TowardNewer => """
+                SELECT id, target_kind, target_value, canonical_key,
+                       resolved_name, sort_order, is_pinned, revision,
+                       created_utc, updated_utc
+                FROM stage_items
+                WHERE sort_order > $anchorOrder
+                   OR (sort_order = $anchorOrder AND id > $anchorId)
+                ORDER BY sort_order ASC, id ASC
+                LIMIT $limit;
+                """,
+            _ => throw new InvalidOperationException(
+                $"Unsupported Stage page direction: {direction}."),
+        };
         command.Parameters.AddWithValue(
-            "$afterOrder",
-            after is null ? DBNull.Value : after.Value.SortOrder);
+            "$anchorOrder",
+            anchor is null ? DBNull.Value : anchor.Value.SortOrder);
         command.Parameters.AddWithValue(
-            "$afterId",
-            after is null ? DBNull.Value : after.Value.Id.ToString("D"));
+            "$anchorId",
+            anchor is null ? DBNull.Value : anchor.Value.Id.ToString("D"));
         command.Parameters.AddWithValue("$limit", pageSize + 1);
 
-        var items = new List<StageItem>(Math.Min(pageSize + 1, 257));
+        var items = new List<StageItem>(Math.Min(pageSize + 1, MaximumPageSize + 1));
         using (var reader = command.ExecuteReader())
         {
             while (reader.Read())
@@ -181,25 +220,44 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
             }
         }
 
-        var hasMore = items.Count > pageSize;
-        StageOrderAnchor? olderBoundary = hasMore
+        var hasLookahead = items.Count > pageSize;
+        StageOrderAnchor? lookaheadBoundary = hasLookahead
             ? ToOrderAnchor(items[pageSize])
             : null;
-        if (hasMore)
+        if (hasLookahead)
         {
             items.RemoveAt(items.Count - 1);
         }
 
-        StageOrderAnchor? newerBoundary = items.Count == 0
+        StageOrderAnchor? newerBoundary;
+        StageOrderAnchor? olderBoundary;
+        if (direction == StagePageDirection.TowardNewer)
+        {
+            items.Reverse();
+            newerBoundary = lookaheadBoundary;
+            olderBoundary = items.Count == 0
+                ? null
+                : ReadImmediateOlderBoundary(connection, transaction, items[^1]);
+        }
+        else
+        {
+            newerBoundary = items.Count == 0
+                ? null
+                : ReadImmediateNewerBoundary(connection, transaction, items[0]);
+            olderBoundary = lookaheadBoundary;
+        }
+
+        StagePageCursor? newerCursor = newerBoundary is null
             ? null
-            : ReadImmediateNewerBoundary(connection, transaction, items[0]);
-        StagePageCursor? next = hasMore
-            ? new StagePageCursor(items[^1].SortOrder, items[^1].Id)
-            : null;
+            : new StagePageCursor(items[0].SortOrder, items[0].Id);
+        StagePageCursor? olderCursor = olderBoundary is null
+            ? null
+            : new StagePageCursor(items[^1].SortOrder, items[^1].Id);
         transaction.Commit();
         return new StagePage(
             items.AsReadOnly(),
-            next,
+            newerCursor,
+            olderCursor,
             totalCount,
             newerBoundary,
             olderBoundary);
@@ -222,6 +280,32 @@ public sealed class SqliteStageRepository : IStageRepository, IDisposable
             """;
         command.Parameters.AddWithValue("$sortOrder", firstItem.SortOrder);
         command.Parameters.AddWithValue("$id", firstItem.Id.ToString("D"));
+        using var reader = command.ExecuteReader();
+        return reader.Read()
+            ? new StageOrderAnchor(
+                Guid.Parse(reader.GetString(0)),
+                reader.GetInt64(1),
+                reader.GetInt64(2))
+            : null;
+    }
+
+    private static StageOrderAnchor? ReadImmediateOlderBoundary(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        StageItem lastItem)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT id, revision, sort_order
+            FROM stage_items
+            WHERE sort_order < $sortOrder
+               OR (sort_order = $sortOrder AND id < $id)
+            ORDER BY sort_order DESC, id DESC
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$sortOrder", lastItem.SortOrder);
+        command.Parameters.AddWithValue("$id", lastItem.Id.ToString("D"));
         using var reader = command.ExecuteReader();
         return reader.Read()
             ? new StageOrderAnchor(

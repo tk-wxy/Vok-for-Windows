@@ -3,9 +3,20 @@ namespace Vok.Core.Stage;
 public interface IStageRepository
 {
     Task<StagePage> LoadPageAsync(
-        StagePageCursor? after,
+        StagePageCursor? anchor,
+        StagePageDirection direction,
         int pageSize,
         CancellationToken cancellationToken = default);
+
+    Task<StagePage> LoadPageAsync(
+        StagePageCursor? after,
+        int pageSize,
+        CancellationToken cancellationToken = default) =>
+        LoadPageAsync(
+            after,
+            StagePageDirection.TowardOlder,
+            pageSize,
+            cancellationToken);
 
     Task<StageAddBatchResult> AddBatchAsync(
         IReadOnlyList<StageTargetDescriptor> targets,

@@ -434,7 +434,7 @@ public sealed class StageViewModelTests
         var lastItem = Assert.Single(CreateItems(1, "最旧"));
         var firstPage = CreatePage(firstItems) with
         {
-            NextCursor = new StagePageCursor(
+            OlderCursor = new StagePageCursor(
                 firstItems[^1].SortOrder,
                 firstItems[^1].Id),
             TotalCount = StageViewModel.PageSize + 1,
@@ -443,7 +443,7 @@ public sealed class StageViewModelTests
             pages:
             [
                 firstPage,
-                new StagePage([lastItem], null, StageViewModel.PageSize + 1),
+                new StagePage([lastItem], null, null, StageViewModel.PageSize + 1),
                 CreatePage(firstItems),
             ],
             removeResult: new StageRemoveResult(StageRemoveStatus.Removed));
@@ -1123,7 +1123,8 @@ public sealed class StageViewModelTests
             sortOrder: -10);
         var firstPage = new StagePage(
             original,
-            new StagePageCursor(original[^1].SortOrder, original[^1].Id),
+            NewerCursor: null,
+            OlderCursor: new StagePageCursor(original[^1].SortOrder, original[^1].Id),
             TotalCount: 4,
             OlderBoundary: olderBoundary);
         var authoritativeSource = original[0] with
@@ -1137,7 +1138,7 @@ public sealed class StageViewModelTests
             SortOrder = -10,
         };
         var repository = new ScriptedStageRepository(
-            pages: [firstPage, new StagePage([olderItem], null, 4)],
+            pages: [firstPage, new StagePage([olderItem], null, null, 4)],
             reorderResult: new StageReorderResult(
                 StageReorderStatus.Applied,
                 [authoritativeSource]));
@@ -1153,7 +1154,10 @@ public sealed class StageViewModelTests
         Assert.Equal(2, repository.LoadCalls.Count);
         Assert.Equal(
             new StagePageCursor(authoritativeSource.SortOrder, authoritativeSource.Id),
-            repository.LoadCalls[1].After);
+            repository.LoadCalls[1].Anchor);
+        Assert.All(
+            repository.LoadCalls,
+            call => Assert.Equal(StagePageDirection.TowardOlder, call.Direction));
         Assert.Equal(olderItem.Id, Assert.Single(viewModel.Items).Id);
     }
 
@@ -1250,7 +1254,8 @@ public sealed class StageViewModelTests
     private static StagePage CreatePage(IReadOnlyList<StageItem> items) =>
         new(
             items,
-            NextCursor: null,
+            NewerCursor: null,
+            OlderCursor: null,
             TotalCount: items.Count);
 
     private sealed class InMemoryStageRepository(IReadOnlyList<StageItem> items)
@@ -1261,18 +1266,20 @@ public sealed class StageViewModelTests
         public int FirstPageLoadCount { get; private set; }
 
         public Task<StagePage> LoadPageAsync(
-            StagePageCursor? after,
+            StagePageCursor? anchor,
+            StagePageDirection direction,
             int pageSize,
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (after is null)
+            Assert.Equal(StagePageDirection.TowardOlder, direction);
+            if (anchor is null)
             {
                 FirstPageLoadCount++;
             }
 
             var start = 0;
-            if (after is { } cursor)
+            if (anchor is { } cursor)
             {
                 start = Items
                     .TakeWhile(item => !(item.SortOrder < cursor.SortOrder ||
@@ -1285,7 +1292,13 @@ public sealed class StageViewModelTests
             StagePageCursor? next = hasMore
                 ? new StagePageCursor(page[^1].SortOrder, page[^1].Id)
                 : null;
-            return Task.FromResult(new StagePage(page, next, Items.Count));
+            return Task.FromResult(new StagePage(
+                page,
+                NewerCursor: start == 0 || page.Length == 0
+                    ? null
+                    : new StagePageCursor(page[0].SortOrder, page[0].Id),
+                OlderCursor: next,
+                TotalCount: Items.Count));
         }
 
         public Task<StageAddBatchResult> AddBatchAsync(
@@ -1395,15 +1408,17 @@ public sealed class StageViewModelTests
 
         public List<StageReorderRequest> ReorderCalls { get; } = [];
 
-        public List<(StagePageCursor? After, int PageSize)> LoadCalls { get; } = [];
+        public List<(StagePageCursor? Anchor, StagePageDirection Direction, int PageSize)>
+            LoadCalls { get; } = [];
 
         public Task<StagePage> LoadPageAsync(
-            StagePageCursor? after,
+            StagePageCursor? anchor,
+            StagePageDirection direction,
             int pageSize,
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            LoadCalls.Add((after, pageSize));
+            LoadCalls.Add((anchor, direction, pageSize));
             if (_failPageLoadAfter is { } threshold && _pageLoadCount >= threshold)
             {
                 throw new IOException("refresh unavailable");
@@ -1489,7 +1504,8 @@ public sealed class StageViewModelTests
         public int AddCallCount { get; private set; }
 
         public async Task<StagePage> LoadPageAsync(
-            StagePageCursor? after,
+            StagePageCursor? anchor,
+            StagePageDirection direction,
             int pageSize,
             CancellationToken cancellationToken = default)
         {
@@ -1498,7 +1514,7 @@ public sealed class StageViewModelTests
             {
                 return first with
                 {
-                    NextCursor = new StagePageCursor(
+                    OlderCursor = new StagePageCursor(
                         first.Items[^1].SortOrder,
                         first.Items[^1].Id),
                 };

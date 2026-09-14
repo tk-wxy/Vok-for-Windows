@@ -50,9 +50,10 @@ public sealed class StageCompositionRootTests
 
             var repository = provider.GetRequiredService<IStageRepository>();
             _ = await repository.LoadPageAsync(
-                after: null,
+                anchor: null,
+                StagePageDirection.TowardOlder,
                 pageSize: 1,
-                TestContext.Current.CancellationToken);
+                cancellationToken: TestContext.Current.CancellationToken);
             Assert.True(File.Exists(databasePath));
             Assert.NotNull(provider.GetRequiredService<IStageFileService>());
             Assert.Same(

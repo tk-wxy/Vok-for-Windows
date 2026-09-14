@@ -167,10 +167,11 @@ public sealed class StageActionControllerTests
     private sealed class StaticRepository(StageItem item) : IStageRepository
     {
         public Task<StagePage> LoadPageAsync(
-            StagePageCursor? after,
+            StagePageCursor? anchor,
+            StagePageDirection direction,
             int pageSize,
             CancellationToken cancellationToken = default) =>
-            Task.FromResult(new StagePage([item], null, 1));
+            Task.FromResult(new StagePage([item], null, null, 1));
 
         public Task<StageAddBatchResult> AddBatchAsync(
             IReadOnlyList<StageTargetDescriptor> targets,

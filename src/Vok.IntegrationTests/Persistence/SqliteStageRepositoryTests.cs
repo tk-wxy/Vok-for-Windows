@@ -148,7 +148,7 @@ public sealed class SqliteStageRepositoryTests
                 10,
                 TestContext.Current.CancellationToken);
             Assert.Equal(before.TotalCount, after.TotalCount);
-            Assert.Equal(before.NextCursor, after.NextCursor);
+            Assert.Equal(before.OlderCursor, after.OlderCursor);
             Assert.Equal(2, after.Items.Select(static item => item.Id).Distinct().Count());
             Assert.Equal(
                 2,
@@ -1363,11 +1363,11 @@ public sealed class SqliteStageRepositoryTests
                 2,
                 TestContext.Current.CancellationToken);
             var second = await repository.LoadPageAsync(
-                first.NextCursor,
+                first.OlderCursor,
                 2,
                 TestContext.Current.CancellationToken);
             var last = await repository.LoadPageAsync(
-                second.NextCursor,
+                second.OlderCursor,
                 2,
                 TestContext.Current.CancellationToken);
             var staleCursorPage = await repository.LoadPageAsync(
@@ -1380,7 +1380,7 @@ public sealed class SqliteStageRepositoryTests
             Assert.Equal(new StageOrderAnchor(ids[2], 1, 30), first.OlderBoundary);
             Assert.Equal(
                 new StagePageCursor(40, ids[1]),
-                Assert.IsType<StagePageCursor>(first.NextCursor));
+                Assert.IsType<StagePageCursor>(first.OlderCursor));
 
             Assert.Equal(ids[2..4], second.Items.Select(static item => item.Id));
             Assert.Equal(new StageOrderAnchor(ids[1], 1, 40), second.NewerBoundary);
@@ -1389,7 +1389,7 @@ public sealed class SqliteStageRepositoryTests
             Assert.Equal(ids[4], Assert.Single(last.Items).Id);
             Assert.Equal(new StageOrderAnchor(ids[3], 1, 20), last.NewerBoundary);
             Assert.Null(last.OlderBoundary);
-            Assert.Null(last.NextCursor);
+            Assert.Null(last.OlderCursor);
 
             Assert.Empty(staleCursorPage.Items);
             Assert.Equal(5, staleCursorPage.TotalCount);
@@ -1428,7 +1428,7 @@ public sealed class SqliteStageRepositoryTests
             Assert.Single(page.Items);
             Assert.Null(page.NewerBoundary);
             Assert.Null(page.OlderBoundary);
-            Assert.Null(page.NextCursor);
+            Assert.Null(page.OlderCursor);
         }
         finally
         {
@@ -1504,7 +1504,7 @@ public sealed class SqliteStageRepositoryTests
                 1,
                 TestContext.Current.CancellationToken);
             var second = await repository.LoadPageAsync(
-                first.NextCursor,
+                first.OlderCursor,
                 1,
                 TestContext.Current.CancellationToken);
 
@@ -1516,7 +1516,99 @@ public sealed class SqliteStageRepositoryTests
             Assert.Equal(new StageOrderAnchor(higherId, 1, 10), second.NewerBoundary);
             Assert.True(first.Items[0].Id.ToString("D").CompareTo(
                 firstOlderBoundary.Id.ToString("D")) > 0);
-            Assert.Null(second.NextCursor);
+            Assert.Null(second.OlderCursor);
+        }
+        finally
+        {
+            DeleteTestDirectory(directory);
+        }
+    }
+
+    [Fact]
+    public async Task BidirectionalPagesRoundTripAcrossEqualSortOrdersWithExactBoundaries()
+    {
+        var directory = CreateTestDirectory();
+        var databasePath = Path.Combine(directory, "bidirectional-cursor.db");
+        try
+        {
+            await InitializeStageSchemaAsync(databasePath);
+            var ids = Enumerable.Range(1, 7)
+                .Select(index => Guid.Parse(
+                    $"00000000-0000-0000-0000-{index:D12}"))
+                .ToArray();
+            InsertStageItems(
+                databasePath,
+                new StageSeed(ids[0], StageItemKind.File, "C:\\1", "1", 0),
+                new StageSeed(ids[1], StageItemKind.File, "C:\\2", "2", 10),
+                new StageSeed(ids[2], StageItemKind.File, "C:\\3", "3", 10),
+                new StageSeed(ids[3], StageItemKind.File, "C:\\4", "4", 20),
+                new StageSeed(ids[4], StageItemKind.File, "C:\\5", "5", 20),
+                new StageSeed(ids[5], StageItemKind.File, "C:\\6", "6", 20),
+                new StageSeed(ids[6], StageItemKind.File, "C:\\7", "7", 30));
+
+            using var repository = new SqliteStageRepository(databasePath);
+            var newest = await repository.LoadPageAsync(
+                null,
+                StagePageDirection.TowardOlder,
+                2,
+                TestContext.Current.CancellationToken);
+            var middle = await repository.LoadPageAsync(
+                Assert.IsType<StagePageCursor>(newest.OlderCursor),
+                StagePageDirection.TowardOlder,
+                2,
+                TestContext.Current.CancellationToken);
+            var roundTrip = await repository.LoadPageAsync(
+                Assert.IsType<StagePageCursor>(middle.NewerCursor),
+                StagePageDirection.TowardNewer,
+                2,
+                TestContext.Current.CancellationToken);
+            var older = await repository.LoadPageAsync(
+                Assert.IsType<StagePageCursor>(middle.OlderCursor),
+                StagePageDirection.TowardOlder,
+                2,
+                TestContext.Current.CancellationToken);
+            var middleRoundTrip = await repository.LoadPageAsync(
+                Assert.IsType<StagePageCursor>(older.NewerCursor),
+                StagePageDirection.TowardNewer,
+                2,
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal([ids[6], ids[5]], newest.Items.Select(static item => item.Id));
+            Assert.False(newest.HasNewer);
+            Assert.True(newest.HasOlder);
+            Assert.Null(newest.NewerCursor);
+            Assert.Equal(
+                new StagePageCursor(20, ids[5]),
+                newest.OlderCursor);
+            Assert.Null(newest.NewerBoundary);
+            Assert.Equal(
+                new StageOrderAnchor(ids[4], 1, 20),
+                newest.OlderBoundary);
+
+            Assert.Equal([ids[4], ids[3]], middle.Items.Select(static item => item.Id));
+            Assert.True(middle.HasNewer);
+            Assert.True(middle.HasOlder);
+            Assert.Equal(
+                new StagePageCursor(20, ids[4]),
+                middle.NewerCursor);
+            Assert.Equal(
+                new StagePageCursor(20, ids[3]),
+                middle.OlderCursor);
+            Assert.Equal(
+                new StageOrderAnchor(ids[5], 1, 20),
+                middle.NewerBoundary);
+            Assert.Equal(
+                new StageOrderAnchor(ids[2], 1, 10),
+                middle.OlderBoundary);
+
+            Assert.Equal(newest.Items, roundTrip.Items);
+            Assert.Equal(newest.NewerCursor, roundTrip.NewerCursor);
+            Assert.Equal(newest.OlderCursor, roundTrip.OlderCursor);
+            Assert.Equal(newest.NewerBoundary, roundTrip.NewerBoundary);
+            Assert.Equal(newest.OlderBoundary, roundTrip.OlderBoundary);
+            Assert.Equal(middle.Items, middleRoundTrip.Items);
+            Assert.Equal(middle.NewerBoundary, middleRoundTrip.NewerBoundary);
+            Assert.Equal(middle.OlderBoundary, middleRoundTrip.OlderBoundary);
         }
         finally
         {
@@ -1588,12 +1680,29 @@ public sealed class SqliteStageRepositoryTests
                         TestContext.Current.CancellationToken);
                     totalCount = page.TotalCount;
                     Assert.All(page.Items, item => Assert.True(ids.Add(item.Id)));
-                    cursor = page.NextCursor;
+                    cursor = page.OlderCursor;
                 }
                 while (cursor is not null);
 
                 Assert.Equal(itemCount, totalCount);
                 Assert.Equal(itemCount, ids.Count);
+
+                var newestWindow = await repository.LoadPageAsync(
+                    null,
+                    StagePageDirection.TowardOlder,
+                    127,
+                    TestContext.Current.CancellationToken);
+                var middleWindow = await repository.LoadPageAsync(
+                    Assert.IsType<StagePageCursor>(newestWindow.OlderCursor),
+                    StagePageDirection.TowardOlder,
+                    127,
+                    TestContext.Current.CancellationToken);
+                var roundTripWindow = await repository.LoadPageAsync(
+                    Assert.IsType<StagePageCursor>(middleWindow.NewerCursor),
+                    StagePageDirection.TowardNewer,
+                    127,
+                    TestContext.Current.CancellationToken);
+                Assert.Equal(newestWindow.Items, roundTripWindow.Items);
 
                 var topPage = await repository.LoadPageAsync(
                     null,
@@ -1658,7 +1767,7 @@ public sealed class SqliteStageRepositoryTests
                 WHERE sort_order > 9000000000
                    OR (sort_order = 9000000000 AND id > '00000000-0000-0000-0000-000000000000')
                 ORDER BY sort_order ASC, id ASC
-                LIMIT 1;
+                LIMIT 127;
                 """;
             details.Clear();
             using (var reader = planCommand.ExecuteReader())
@@ -1822,11 +1931,25 @@ public sealed class SqliteStageRepositoryTests
             await Assert.ThrowsAsync<ArgumentException>(() =>
                 repository.LoadPageAsync(
                     new StagePageCursor(0, Guid.Empty),
+                    StagePageDirection.TowardOlder,
+                    10,
+                    TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                repository.LoadPageAsync(
+                    null,
+                    StagePageDirection.TowardNewer,
                     10,
                     TestContext.Current.CancellationToken));
             await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
                 repository.LoadPageAsync(
                     null,
+                    (StagePageDirection)int.MaxValue,
+                    10,
+                    TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+                repository.LoadPageAsync(
+                    null,
+                    StagePageDirection.TowardOlder,
                     257,
                     TestContext.Current.CancellationToken));
             await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>

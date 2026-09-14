@@ -1404,7 +1404,8 @@ public sealed partial class StageViewIntegrationTests(WpfApplicationFixture wpf)
         }
 
         public Task<StagePage> LoadPageAsync(
-            StagePageCursor? after,
+            StagePageCursor? anchor,
+            StagePageDirection direction,
             int pageSize,
             CancellationToken cancellationToken = default)
         {
@@ -1412,8 +1413,11 @@ public sealed partial class StageViewIntegrationTests(WpfApplicationFixture wpf)
             var page = _items.Take(pageSize).ToArray();
             return Task.FromResult(new StagePage(
                 page,
-                page.Length == 0 ? null : new StagePageCursor(page[^1].SortOrder, page[^1].Id),
-                _items.Length));
+                NewerCursor: null,
+                OlderCursor: page.Length == 0 || page.Length == _items.Length
+                    ? null
+                    : new StagePageCursor(page[^1].SortOrder, page[^1].Id),
+                TotalCount: _items.Length));
         }
 
         public Task<StageAddBatchResult> AddBatchAsync(

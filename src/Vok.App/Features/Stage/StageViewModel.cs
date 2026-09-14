@@ -253,7 +253,11 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
             try
             {
                 var page = await _repository
-                    .LoadPageAsync(after: null, PageSize, operationToken)
+                    .LoadPageAsync(
+                        anchor: null,
+                        StagePageDirection.TowardOlder,
+                        PageSize,
+                        operationToken)
                     .ConfigureAwait(true);
                 ApplyPage(page, pageIndex: 0, start: null, resetHistory: true);
                 StatusText = CreateAppliedStatus(result, invalid.Length);
@@ -1235,7 +1239,11 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         try
         {
             var page = await _repository
-                .LoadPageAsync(after, PageSize, cancellationToken)
+                .LoadPageAsync(
+                    after,
+                    StagePageDirection.TowardOlder,
+                    PageSize,
+                    cancellationToken)
                 .ConfigureAwait(true);
             ApplyPage(page, pageIndex, after, resetHistory);
             StatusText = page.TotalCount == 0
@@ -1450,7 +1458,7 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         }
 
         _pageIndex = pageIndex;
-        _nextCursor = page.NextCursor;
+        _nextCursor = page.OlderCursor;
         _newerBoundary = page.NewerBoundary;
         _olderBoundary = page.OlderBoundary;
         TotalCount = page.TotalCount;
