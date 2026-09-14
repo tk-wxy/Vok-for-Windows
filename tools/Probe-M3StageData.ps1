@@ -1,7 +1,13 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('Audit', 'Backup', 'ReplaySchema7', 'ReplaySchema6', 'ReplaySchema5')]
+    [ValidateSet(
+        'Audit',
+        'Backup',
+        'ReplaySchema8',
+        'ReplaySchema7',
+        'ReplaySchema6',
+        'ReplaySchema5')]
     [string] $Mode,
 
     [Parameter(Mandatory)] [string] $DatabasePath,
@@ -132,7 +138,11 @@ public static class VokM3NativeLibraryPath
     [SQLitePCL.Batteries_V2]::Init()
     [void][Reflection.Assembly]::LoadFrom((Join-Path $assemblyRoot 'Microsoft.Data.Sqlite.dll'))
 
-    if ($Mode -in @('ReplaySchema7', 'ReplaySchema6', 'ReplaySchema5')) {
+    if ($Mode -in @(
+            'ReplaySchema8',
+            'ReplaySchema7',
+            'ReplaySchema6',
+            'ReplaySchema5')) {
         foreach ($name in @('Vok.Core.dll', 'Vok.Infrastructure.Windows.dll')) {
             $path = Join-Path $assemblyRoot $name
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -279,13 +289,17 @@ function Get-StageIndexes {
     $indexRows = @()
     $command = $Connection.CreateCommand()
     try {
-        $command.CommandText = "SELECT name, [unique] FROM pragma_index_list('stage_items') ORDER BY name;"
+        $command.CommandText = (
+            "SELECT name, [unique], origin, partial " +
+            "FROM pragma_index_list('stage_items') ORDER BY name;")
         $reader = $command.ExecuteReader()
         try {
             while ($reader.Read()) {
                 $indexRows += [pscustomobject]@{
                     Name = $reader.GetString(0)
                     Unique = $reader.GetInt64(1) -ne 0
+                    Origin = $reader.GetString(2)
+                    Partial = $reader.GetInt64(3) -ne 0
                 }
             }
         }
@@ -322,10 +336,95 @@ function Get-StageIndexes {
         $indexes += [ordered]@{
             Name = $indexRow.Name
             Unique = $indexRow.Unique
+            Origin = $indexRow.Origin
+            Partial = $indexRow.Partial
             KeyColumns = $keyColumns
         }
     }
     $indexes
+}
+
+function Test-StageIndexDefinition {
+    param(
+        [Parameter(Mandatory)] $Audit,
+        [Parameter(Mandatory)] [string] $Name,
+        [Parameter(Mandatory)] [bool] $Unique,
+        [Parameter(Mandatory)] [string[]] $Columns,
+        [Parameter(Mandatory)] [string[]] $Collations
+    )
+
+    $matches = @($Audit.StageIndexes | Where-Object {
+        [StringComparer]::OrdinalIgnoreCase.Equals($_.Name, $Name)
+    })
+    if ($matches.Count -ne 1 -or
+        $matches[0].Unique -ne $Unique -or
+        $matches[0].Partial) {
+        return $false
+    }
+
+    $keys = @($matches[0].KeyColumns)
+    if ($keys.Count -ne $Columns.Count -or $keys.Count -ne $Collations.Count) {
+        return $false
+    }
+
+    for ($index = 0; $index -lt $keys.Count; $index++) {
+        if (-not [StringComparer]::OrdinalIgnoreCase.Equals(
+                [string]$keys[$index].Name,
+                $Columns[$index]) -or
+            -not [StringComparer]::OrdinalIgnoreCase.Equals(
+                [string]$keys[$index].Collation,
+                $Collations[$index])) {
+            return $false
+        }
+    }
+
+    $true
+}
+
+function Test-StageSchemaSevenIndexes {
+    param([Parameter(Mandatory)] $Audit)
+
+    (Test-StageIndexDefinition `
+        -Audit $Audit `
+        -Name 'ux_stage_items_canonical' `
+        -Unique $true `
+        -Columns @('canonical_key') `
+        -Collations @('NOCASE')) -and
+    (Test-StageIndexDefinition `
+        -Audit $Audit `
+        -Name 'ix_stage_items_order' `
+        -Unique $false `
+        -Columns @('sort_order', 'id') `
+        -Collations @('BINARY', 'BINARY'))
+}
+
+function Test-StageSchemaEightIndexes {
+    param([Parameter(Mandatory)] $Audit)
+
+    $unexpectedUniqueIndexes = @($Audit.StageIndexes | Where-Object {
+        $_.Unique -and
+        -not [StringComparer]::OrdinalIgnoreCase.Equals($_.Origin, 'pk')
+    })
+    $oldIndexes = @($Audit.StageIndexes | Where-Object {
+        [StringComparer]::OrdinalIgnoreCase.Equals(
+            $_.Name,
+            'ux_stage_items_canonical')
+    })
+
+    $unexpectedUniqueIndexes.Count -eq 0 -and
+    $oldIndexes.Count -eq 0 -and
+    (Test-StageIndexDefinition `
+        -Audit $Audit `
+        -Name 'ix_stage_items_canonical' `
+        -Unique $false `
+        -Columns @('canonical_key') `
+        -Collations @('NOCASE')) -and
+    (Test-StageIndexDefinition `
+        -Audit $Audit `
+        -Name 'ix_stage_items_order' `
+        -Unique $false `
+        -Columns @('sort_order', 'id') `
+        -Collations @('BINARY', 'BINARY'))
 }
 
 function Get-AssetAudit {
@@ -505,7 +604,7 @@ function Get-PreservedState {
     param(
         [Parameter(Mandatory)] [string] $Path,
         [Parameter(Mandatory)] [ValidateSet(5, 6)] [int] $ProjectionSchemaVersion,
-        [Parameter(Mandatory)] [ValidateSet(5, 6, 7)] [int] $ExpectedDatabaseVersion
+        [Parameter(Mandatory)] [ValidateSet(5, 6, 7, 8)] [int] $ExpectedDatabaseVersion
     )
 
     $connection = New-SqliteConnection $Path $true
@@ -699,10 +798,11 @@ function Compare-PreservedState {
 
 function Invoke-ReplaySchema6Mode {
     $path = Assert-ReplayPath
-    Set-ReportStage 'AuditSchema7SourceCopy'
+    Set-ReportStage 'AuditCurrentSourceCopy'
     $sourceAudit = Get-DatabaseAudit $path $AssetRoot
-    if ($sourceAudit.UserVersion -ne 7 -or -not $sourceAudit.Tables.stage_items.Exists) {
-        throw 'ReplaySchema6 requires a schema 7 database copy with stage_items.'
+    if ($sourceAudit.UserVersion -notin @(7, 8) -or
+        -not $sourceAudit.Tables.stage_items.Exists) {
+        throw 'ReplaySchema6 requires a schema 7 or 8 database copy with stage_items.'
     }
 
     Set-ReportStage 'DeriveSchema6Copy'
@@ -746,19 +846,20 @@ function Invoke-ReplaySchema6Mode {
     Invoke-ProductInitialization $path
     Set-ReportStage 'AuditSchema6ReplayResult'
     $resultAudit = Get-DatabaseAudit $path $AssetRoot
-    $preservedAfter = Get-PreservedState $path 6 7
+    $preservedAfter = Get-PreservedState $path 6 8
     $changed = @(Compare-PreservedState $preservedBefore $preservedAfter)
 
     $script:Report.Replay = [ordered]@{
-        SourceSchema7 = $sourceAudit
+        SourceSchema = $sourceAudit
         DerivedSchema6 = $derivedAudit
-        ResultSchema7 = $resultAudit
+        ResultSchema8 = $resultAudit
         OriginalStageCountRemovedFromDerivedCopy = $sourceAudit.Tables.stage_items.Count
         ChangedPreservedTables = $changed
     }
-    if ($resultAudit.UserVersion -ne 7 -or
+    if ($resultAudit.UserVersion -ne 8 -or
         -not $resultAudit.Tables.stage_items.Exists -or
         $resultAudit.Tables.stage_items.Count -ne 0 -or
+        -not (Test-StageSchemaEightIndexes $resultAudit) -or
         $resultAudit.QuickCheck.Count -ne 1 -or
         $resultAudit.QuickCheck[0] -ne 'ok' -or
         $resultAudit.ForeignKeyViolations -ne 0 -or
@@ -771,15 +872,69 @@ function Invoke-ReplaySchema7Mode {
     $path = Assert-ReplayPath
     Set-ReportStage 'AuditSchema7CopyBefore'
     $before = Get-DatabaseAudit $path $AssetRoot
-    if ($before.UserVersion -ne 7 -or -not $before.Tables.stage_items.Exists) {
-        throw 'ReplaySchema7 requires a current schema 7 database copy.'
+    if ($before.UserVersion -ne 7 -or
+        -not $before.Tables.stage_items.Exists -or
+        -not (Test-StageSchemaSevenIndexes $before)) {
+        throw 'ReplaySchema7 requires a valid schema 7 database copy.'
     }
 
     Set-ReportStage 'InitializeSchema7CopyFirstPass'
     Invoke-ProductInitialization $path
+    Set-ReportStage 'AuditSchema7MigrationFirstPass'
+    $afterFirst = Get-DatabaseAudit $path $AssetRoot
     Set-ReportStage 'InitializeSchema7CopySecondPass'
     Invoke-ProductInitialization $path
-    Set-ReportStage 'AuditSchema7CopyAfter'
+    Set-ReportStage 'AuditSchema7MigrationSecondPass'
+    $after = Get-DatabaseAudit $path $AssetRoot
+
+    $changed = @()
+    foreach ($key in $before.Tables.Keys) {
+        if ($before.Tables[$key].Digest -ne $after.Tables[$key].Digest) {
+            $changed += $key
+        }
+    }
+    $script:Report.Replay = [ordered]@{
+        BeforeSchema7 = $before
+        AfterFirstSchema8 = $afterFirst
+        AfterSecondSchema8 = $after
+        ChangedTables = $changed
+        StageRowsPreserved = (
+            $before.Tables.stage_items.Digest -eq $after.Tables.stage_items.Digest)
+        SecondPassSchemaDigestUnchanged = (
+            $afterFirst.SchemaDigest -eq $after.SchemaDigest)
+    }
+    if ($afterFirst.UserVersion -ne 8 -or
+        $after.UserVersion -ne 8 -or
+        -not (Test-StageSchemaEightIndexes $afterFirst) -or
+        -not (Test-StageSchemaEightIndexes $after) -or
+        $afterFirst.QuickCheck.Count -ne 1 -or
+        $afterFirst.QuickCheck[0] -ne 'ok' -or
+        $afterFirst.ForeignKeyViolations -ne 0 -or
+        $after.QuickCheck.Count -ne 1 -or
+        $after.QuickCheck[0] -ne 'ok' -or
+        $after.ForeignKeyViolations -ne 0 -or
+        $changed.Count -ne 0 -or
+        $before.Tables.stage_items.Digest -ne $after.Tables.stage_items.Digest -or
+        $afterFirst.SchemaDigest -ne $after.SchemaDigest) {
+        throw 'The schema 7 to 8 migration did not preserve data or remain idempotent.'
+    }
+}
+
+function Invoke-ReplaySchema8Mode {
+    $path = Assert-ReplayPath
+    Set-ReportStage 'AuditSchema8CopyBefore'
+    $before = Get-DatabaseAudit $path $AssetRoot
+    if ($before.UserVersion -ne 8 -or
+        -not $before.Tables.stage_items.Exists -or
+        -not (Test-StageSchemaEightIndexes $before)) {
+        throw 'ReplaySchema8 requires a valid schema 8 database copy.'
+    }
+
+    Set-ReportStage 'InitializeSchema8CopyFirstPass'
+    Invoke-ProductInitialization $path
+    Set-ReportStage 'InitializeSchema8CopySecondPass'
+    Invoke-ProductInitialization $path
+    Set-ReportStage 'AuditSchema8CopyAfter'
     $after = Get-DatabaseAudit $path $AssetRoot
 
     $changed = @()
@@ -794,13 +949,14 @@ function Invoke-ReplaySchema7Mode {
         ChangedTables = $changed
         SchemaDigestUnchanged = $before.SchemaDigest -eq $after.SchemaDigest
     }
-    if ($after.UserVersion -ne 7 -or
+    if ($after.UserVersion -ne 8 -or
+        -not (Test-StageSchemaEightIndexes $after) -or
         $after.QuickCheck.Count -ne 1 -or
         $after.QuickCheck[0] -ne 'ok' -or
         $after.ForeignKeyViolations -ne 0 -or
         $changed.Count -ne 0 -or
         $before.SchemaDigest -ne $after.SchemaDigest) {
-        throw 'The schema 7 replay was not idempotent.'
+        throw 'The schema 8 replay was not idempotent.'
     }
 }
 
@@ -819,17 +975,18 @@ function Invoke-ReplaySchema5Mode {
     Invoke-ProductInitialization $path
     Set-ReportStage 'AuditSchema5ReplayResult'
     $resultAudit = Get-DatabaseAudit $path $AssetRoot
-    $preservedAfter = Get-PreservedState $path 5 7
+    $preservedAfter = Get-PreservedState $path 5 8
     $changed = @(Compare-PreservedState $preservedBefore $preservedAfter)
 
     $script:Report.Replay = [ordered]@{
         SourceSchema5 = $sourceAudit
-        ResultSchema7 = $resultAudit
+        ResultSchema8 = $resultAudit
         ChangedPreservedTables = $changed
     }
-    if ($resultAudit.UserVersion -ne 7 -or
+    if ($resultAudit.UserVersion -ne 8 -or
         -not $resultAudit.Tables.stage_items.Exists -or
         $resultAudit.Tables.stage_items.Count -ne 0 -or
+        -not (Test-StageSchemaEightIndexes $resultAudit) -or
         $resultAudit.QuickCheck.Count -ne 1 -or
         $resultAudit.QuickCheck[0] -ne 'ok' -or
         $resultAudit.ForeignKeyViolations -ne 0 -or
@@ -845,6 +1002,7 @@ try {
     switch ($Mode) {
         'Audit' { Invoke-AuditMode }
         'Backup' { Invoke-BackupMode }
+        'ReplaySchema8' { Invoke-ReplaySchema8Mode }
         'ReplaySchema7' { Invoke-ReplaySchema7Mode }
         'ReplaySchema6' { Invoke-ReplaySchema6Mode }
         'ReplaySchema5' { Invoke-ReplaySchema5Mode }

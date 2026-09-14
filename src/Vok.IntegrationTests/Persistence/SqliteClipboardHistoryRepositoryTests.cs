@@ -29,7 +29,7 @@ public sealed class SqliteClipboardHistoryRepositoryTests
             }
 
             using var connection = OpenDatabase(databasePath);
-            Assert.Equal(7L, ExecuteInt64(connection, "PRAGMA user_version;"));
+            Assert.Equal(8L, ExecuteInt64(connection, "PRAGMA user_version;"));
             Assert.Equal(
                 "keep-launcher",
                 ExecuteString(
@@ -73,7 +73,7 @@ public sealed class SqliteClipboardHistoryRepositoryTests
             }
 
             using var connection = OpenDatabase(databasePath);
-            Assert.Equal(7L, ExecuteInt64(connection, "PRAGMA user_version;"));
+            Assert.Equal(8L, ExecuteInt64(connection, "PRAGMA user_version;"));
             Assert.Equal(1L, TableExists(connection, "clipboard_files"));
             Assert.Equal(
                 0L,
@@ -189,7 +189,7 @@ public sealed class SqliteClipboardHistoryRepositoryTests
             }
 
             using var connection = OpenDatabase(databasePath);
-            Assert.Equal(7L, ExecuteInt64(connection, "PRAGMA user_version;"));
+            Assert.Equal(8L, ExecuteInt64(connection, "PRAGMA user_version;"));
             Assert.Equal(1L, TableExists(connection, "content_assets"));
             Assert.Equal(1L, TableExists(connection, "clipboard_asset_refs"));
             Assert.Equal(

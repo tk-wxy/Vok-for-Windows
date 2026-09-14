@@ -107,7 +107,7 @@ public partial class App : Application
     {
         var services = new ServiceCollection();
 
-        RegisterServices(services);
+        RegisterServices(services, CreateStorageExecutor);
 
         return services.BuildServiceProvider(new ServiceProviderOptions
         {
@@ -116,9 +116,12 @@ public partial class App : Application
         });
     }
 
-    internal static void RegisterServices(IServiceCollection services)
+    internal static void RegisterServices(
+        IServiceCollection services,
+        Func<SqliteStorageExecutor> storageExecutorFactory)
     {
         ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(storageExecutorFactory);
 
         services.AddSingleton(GlobalHotkeyGesture.Default);
         services.AddSingleton(WorkspaceHostOptions.FromEnvironment());
@@ -144,7 +147,7 @@ public partial class App : Application
         services.AddSingleton<IPerformanceSampler, ProcessPerformanceSampler>();
         services.AddSingleton<IWorkspaceDiagnosticPublisher, Win32WorkspaceDiagnosticPublisher>();
         services.AddSingleton<IWorkspacePresentationService, DwmWorkspacePresentationService>();
-        services.AddSingleton(_ => CreateStorageExecutor());
+        services.AddSingleton(_ => storageExecutorFactory());
         services.AddSingleton<IAppSettingsStore>(provider =>
             new SqliteAppSettingsStore(provider.GetRequiredService<SqliteStorageExecutor>()));
         services.AddSingleton<ILauncherRepository>(provider =>

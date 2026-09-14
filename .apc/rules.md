@@ -35,6 +35,7 @@
 | R25 | 图片目录导出必须双重正向确认目标并在文件副作用前认领工作区代次 | 剪贴板图片写回 | 是 |
 | R26 | 历史回收必须先提交元数据 tombstone，再由 revision 与内容哈希证明物理删除资格 | 剪贴板保留与资产 | 是 |
 | R27 | 托盘对象存活不能冒充 Shell 图标仍已注册 | 生命周期与并发 | 是 |
+| R28 | 组合根测试必须显式注入隔离存储，不能解析产品默认数据库 | 测试基础设施 | 是 |
 
 ## 规则
 
@@ -204,11 +205,11 @@
 
 ### 存储与规模
 
-- [ ] R5：不得在 UI Dispatcher 上执行 Microsoft.Data.Sqlite；数据库写入由显式执行器串行化并使用 WAL。数据库升级必须同时核验版本号与真实表结构，在单事务内迁移并让未知结构原样回滚；`CREATE TABLE IF NOT EXISTS` 只能建新表，不能冒充已有表迁移。大集合必须同时实施 SQL 分页和 WPF 容器虚拟化，不能把 UI 虚拟化当作数据虚拟化。虚拟化页面用展示投影替换集合时，投影发布不等于滚动 extent 已提交；滚动归顶/锚点恢复必须等待真实布局阶段，不能在 `Reset` 或集合发布回调中假定容器几何已完成。
+- [ ] R5：不得在 UI Dispatcher 上执行 Microsoft.Data.Sqlite；数据库写入由显式执行器串行化并使用 WAL。数据库升级必须同时核验版本号、功能首次引入版本与真实表结构，在单事务内迁移并让未知结构原样回滚；版本提升后不得用“当前版本减一”推断某表理应缺失，`CREATE TABLE IF NOT EXISTS` 也只能建新表，不能冒充已有表迁移。大集合必须同时实施 SQL 分页和 WPF 容器虚拟化，不能把 UI 虚拟化当作数据虚拟化。虚拟化页面用展示投影替换集合时，投影发布不等于滚动 extent 已提交；滚动归顶/锚点恢复必须等待真实布局阶段，不能在 `Reset` 或集合发布回调中假定容器几何已完成。
   - 范围：SQLite、启动台、剪贴板历史、Stage、图片与后续大列表。
-  - 证据：https://learn.microsoft.com/dotnet/standard/data/sqlite/async 说明 Async 方法实际同步；https://learn.microsoft.com/dotnet/desktop/wpf/advanced/optimizing-performance-controls 说明 WPF 没有内建数据虚拟化。2026-08-28 真机旧库因已有 `launcher_items` 使 `CREATE TABLE IF NOT EXISTS` 静默跳过，但代码仍写入版本并查询新列，复现 `no such column: target_kind`；schema 2 改为列集合识别和单事务迁移。M2.1–2 形成 schema 3/4，M2.3.4 形成 schema 5，M2.4 形成 schema 6。2026-09-04 Stage schema 7 只为旧版本创建新表；当前版本缺表、错误列、错误唯一性/排序索引和未来版本均拒绝，建表后的索引冲突与所有前置 schema 写入一起回滚。忠实临时 schema 6 夹具升级后保留 Launcher、Clipboard 和资产引用元数据，`quick_check=ok`、0 外键违规；10,000 条 Stage 复合 keyset 无遗漏并使用顺序索引。2026-09-08 Stage 卡片页面把行投影发布后的归顶排在 Loaded 时，稳定复现旧 offset 被新 extent 校正为 20 DIP；把归顶移动到虚拟面板完成布局的 `ContextIdle` 阶段后，页面整批替换精确回到 0，DataContext 换绑、100 轮换列/滚动/显隐和关闭清理均通过。
-  - 最后验证：2026-09-08。
-  - 状态：active；设置、启动台、剪贴板与 Stage 共享串行所有权，schema 1→2→3→4→5→6→7、失败回滚、SQL 分页、去重/排序、容量/保留与取消一致性均有自动测试；M3.MVP3 数据门禁与 M3.1 Card Gate 1 自动门禁已通过完整 Release 567/567，Stage 当前以 64 项扁平分页、generation 行投影和外层 Recycling 虚拟化并行工作。实时备份与启动后真实库均为 `quick_check=ok`、0 外键违规且 48/48 Ready 资产文件完整。首次真实 6→7 现场未被预先记录，派生回放不能冒充历史现场；schema 5 备份没有资产目录快照，故其 19 条旧资产只证明元数据迁移，不作为历史文件完整性证据。
+  - 证据：https://learn.microsoft.com/dotnet/standard/data/sqlite/async 说明 Async 方法实际同步；https://learn.microsoft.com/dotnet/desktop/wpf/advanced/optimizing-performance-controls 说明 WPF 没有内建数据虚拟化。2026-08-28 真机旧库因已有 `launcher_items` 使 `CREATE TABLE IF NOT EXISTS` 静默跳过，但代码仍写入版本并查询新列，复现 `no such column: target_kind`；schema 2 改为列集合识别和单事务迁移。M2.1–2 形成 schema 3/4，M2.3.4 形成 schema 5，M2.4 形成 schema 6。2026-09-04 Stage schema 7 只为旧版本创建新表；当前版本缺表、错误列、错误唯一性/排序索引和未来版本均拒绝，建表后的索引冲突与所有前置 schema 写入一起回滚。忠实临时 schema 6 夹具升级后保留 Launcher、Clipboard 和资产引用元数据，`quick_check=ok`、0 外键违规；10,000 条 Stage 复合 keyset 无遗漏并使用顺序索引。2026-09-08 Stage 卡片页面把行投影发布后的归顶排在 Loaded 时，稳定复现旧 offset 被新 extent 校正为 20 DIP；把归顶移动到虚拟面板完成布局的 `ContextIdle` 阶段后，页面整批替换精确回到 0，DataContext 换绑、100 轮换列/滚动/显隐和关闭清理均通过。2026-09-14 schema 8 首版若把“缺 Stage 表”的拒绝条件写成 `schemaVersion >= CurrentSchemaVersion`，版本 7 缺表会在升级时被静默自愈；改用固定的 Stage 首次引入版本 7 后，版本 7/8 缺表与版本 6 提前出现 Stage 均原样拒绝。真实 schema 7 在线备份副本完成 7→8→8 与 schema 8 幂等重放，八张业务表摘要零变化、46 条 Stage 全保留、`quick_check=ok`、0 外键违规。
+  - 最后验证：2026-09-14。
+  - 状态：active；设置、启动台、剪贴板与 Stage 共享串行所有权，源码迁移链已覆盖 schema 1→2→3→4→5→6→7→8、失败回滚、SQL 分页、去重/排序、容量/保留与取消一致性；当前真实产品库因未部署 N0.1 仍保持 schema 7。Stage 仍以 64 项扁平分页、generation 行投影和外层 Recycling 虚拟化并行工作；schema 8 只完成 canonical 非唯一结构，仓储 occurrence 语义和连续数据虚拟化尚未完成。
 
 ### 发布与互操作
 
@@ -225,6 +226,12 @@
   - 证据：M0 首次只引用 `xunit.v3` 时命令退出 0 但未发现测试；加入适配器和零测试失败门禁后，13 个单测与 3 个集成测试被发现并通过。
   - 最后验证：2026-08-23。
   - 状态：active。
+
+- [x] R28：组合根或 DI 注册测试必须显式注入每测试唯一的临时存储工厂；只检查服务描述符时也不得保留可被后续解析的产品默认数据库路径。若测试解析存储消费者，必须在 provider 释放前实际执行一次初始化并断言数据库落在该临时路径；完整套件前后还应核对真实库版本、schema 与业务表摘要。
+  - 范围：产品组合根、依赖注入集成测试、数据库迁移测试。
+  - 证据：2026-09-14 `StageCompositionRootTests` 调用产品 `RegisterServices` 后解析 `IStageRepository`，默认 `CreateStorageExecutor()` 指向 `%LOCALAPPDATA%\Vok\vok.db`，完整测试因此把真实库从 schema 7 迁至 8。八张业务表摘要证明无数据变化后已事务恢复 schema 7；注册入口改为必须传入工厂，Stage/Clipboard 组合测试使用各自 GUID 临时库。修复后 Release 668/668，测试前后真实库版本 7、schema 摘要和八表摘要完全一致。
+  - 最后验证：2026-09-14。
+  - 状态：active；产品启动仍由唯一生产组合根传入默认工厂，测试调用点编译期必须选择隔离存储。
 
 ## 死路
 
@@ -271,5 +278,6 @@
 - 内部拖动排序后顺序回弹/错乱、Esc 不回滚或单击偶发启动两次 → 检查 R18、R19；不要逐格写库，也不要让动画完成与 watchdog 各自产生副作用。
 - 移除卡片影响源文件或隐藏失败仍启动 → 检查 R18；不要用文件移动实现，也不得绕过隐藏后 Shell 事务。
 - 启动台加载或拖入报 `no such column` → 检查 R5 与 `launcher_items` 的真实列结构；不要删用户库、只改 `user_version` 或继续叠加 `CREATE TABLE IF NOT EXISTS`。
+- 运行测试后真实产品库版本或索引发生变化 → 检查 R28；不要让组合根测试解析产品默认存储，先用唯一临时路径注入并以前后摘要证明隔离。
 - 每次显隐 GDI 近似 `+1` → 检查获得过焦点的 WPF 编辑器生命周期与 `decisions.md §3`；先最小复现，不要强制 GC。
 - 长测外部值周期性接近探针超时而内部值仍正常 → 检查是否在热循环 `EnumWindows`/CIM；固定 HWND/PID 后复测，不能把观察者停顿归因于宿主。

@@ -95,7 +95,7 @@ public sealed class ClipboardImageAssetCoordinatorTests
             Assert.Equal(duplicate.Image, replay.Image);
 
             using var connection = OpenDatabase(databasePath);
-            Assert.Equal(7L, ExecuteInt64(connection, "PRAGMA user_version;"));
+            Assert.Equal(8L, ExecuteInt64(connection, "PRAGMA user_version;"));
             Assert.Equal(2L, ExecuteInt64(connection, "SELECT COUNT(*) FROM content_assets;"));
             Assert.Equal(2L, ExecuteInt64(connection, "SELECT COUNT(*) FROM clipboard_asset_refs;"));
             Assert.Equal(

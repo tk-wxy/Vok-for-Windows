@@ -7,7 +7,8 @@ namespace Vok.Infrastructure.Windows.Persistence;
 public sealed class SqliteStorageExecutor : IDisposable
 {
     private const int QueueCapacity = 64;
-    private const int CurrentSchemaVersion = 7;
+    private const int CurrentSchemaVersion = 8;
+    private const int StageIntroducedSchemaVersion = 7;
     private static readonly HashSet<string> CurrentLauncherColumns =
     [
         "id",
@@ -429,22 +430,46 @@ public sealed class SqliteStorageExecutor : IDisposable
         var columns = ReadTableColumns(connection, transaction, "stage_items");
         if (columns.Count == 0)
         {
-            if (schemaVersion >= CurrentSchemaVersion)
+            if (schemaVersion >= StageIntroducedSchemaVersion)
             {
                 throw new InvalidOperationException(
                     "The stage_items table is missing from the current database schema.");
             }
 
             CreateStageTable(connection, transaction);
-            CreateStageIndexes(connection, transaction);
+            CreateStageSchemaEightIndexes(connection, transaction);
+            ValidateStageSchemaEightIndexes(connection, transaction);
+            return;
         }
-        else if (!columns.SetEquals(CurrentStageColumns))
+
+        if (!columns.SetEquals(CurrentStageColumns))
         {
             throw new InvalidOperationException(
                 "The stage_items table has an unsupported schema. " +
                 $"Found columns: {string.Join(", ", columns.Order())}.");
         }
 
+        if (schemaVersion < StageIntroducedSchemaVersion)
+        {
+            throw new InvalidOperationException(
+                "The stage_items table exists before its introduced schema version.");
+        }
+
+        if (schemaVersion == StageIntroducedSchemaVersion)
+        {
+            ValidateStageSchemaSevenIndexes(connection, transaction);
+            MigrateStageSchemaSevenToEight(connection, transaction);
+            ValidateStageSchemaEightIndexes(connection, transaction);
+            return;
+        }
+
+        ValidateStageSchemaEightIndexes(connection, transaction);
+    }
+
+    private static void ValidateStageSchemaSevenIndexes(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
         if (!HasIndex(
                 connection,
                 transaction,
@@ -471,14 +496,68 @@ public sealed class SqliteStorageExecutor : IDisposable
         }
     }
 
-    private static void CreateStageIndexes(
+    private static void ValidateStageSchemaEightIndexes(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
+        if (!HasIndex(
+                connection,
+                transaction,
+                "stage_items",
+                "ix_stage_items_canonical",
+                isUnique: false,
+                ["canonical_key"]) ||
+            !HasIndexCollation(
+                connection,
+                transaction,
+                "ix_stage_items_canonical",
+                "canonical_key",
+                "NOCASE") ||
+            !HasIndex(
+                connection,
+                transaction,
+                "stage_items",
+                "ix_stage_items_order",
+                isUnique: false,
+                ["sort_order", "id"]) ||
+            HasIndexNamed(
+                connection,
+                transaction,
+                "stage_items",
+                "ux_stage_items_canonical") ||
+            HasUnexpectedUniqueIndex(
+                connection,
+                transaction,
+                "stage_items"))
+        {
+            throw new InvalidOperationException(
+                "The stage_items table has unsupported indexes.");
+        }
+    }
+
+    private static void MigrateStageSchemaSevenToEight(
         SqliteConnection connection,
         SqliteTransaction transaction)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            CREATE UNIQUE INDEX ux_stage_items_canonical
+            DROP INDEX ux_stage_items_canonical;
+
+            CREATE INDEX ix_stage_items_canonical
+            ON stage_items(canonical_key COLLATE NOCASE);
+            """;
+        command.ExecuteNonQuery();
+    }
+
+    private static void CreateStageSchemaEightIndexes(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            CREATE INDEX ix_stage_items_canonical
             ON stage_items(canonical_key COLLATE NOCASE);
 
             CREATE INDEX ix_stage_items_order
@@ -791,6 +870,54 @@ public sealed class SqliteStorageExecutor : IDisposable
                     reader.GetString(4),
                     collationName,
                     StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+    private static bool HasIndexNamed(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string tableName,
+        string indexName)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"PRAGMA index_list({tableName});";
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            if (string.Equals(
+                    reader.GetString(1),
+                    indexName,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasUnexpectedUniqueIndex(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string tableName)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"PRAGMA index_list({tableName});";
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            if (reader.GetInt32(2) != 0 &&
+                !string.Equals(
+                    reader.GetString(3),
+                    "pk",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
         }
 
         return false;
