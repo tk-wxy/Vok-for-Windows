@@ -12,17 +12,6 @@
     <sys:Double x:Key="StageHoverScale">1.02</sys:Double>
     <sys:Double x:Key="StageActionChromeRestOpacity">0.55</sys:Double>
     <sys:Double x:Key="StageDropWashOpacity">0.08</sys:Double>
-    <Style x:Key="StagePageButtonStyle"
-           TargetType="Button"
-           BasedOn="{StaticResource {x:Type Button}}">
-      <Setter Property="Height" Value="24" />
-      <Setter Property="MinWidth" Value="52" />
-      <Setter Property="Padding" Value="8,0" />
-      <Setter Property="FontSize" Value="10.5" />
-      <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
-      <Setter Property="Background" Value="{DynamicResource ControlFillColorDefaultBrush}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
-    </Style>
     <Style x:Key="StageItemActionButtonStyle"
            TargetType="Button"
            BasedOn="{StaticResource {x:Type Button}}">
@@ -129,15 +118,13 @@
     <Grid.RowDefinitions>
       <RowDefinition Height="24" />
       <RowDefinition Height="*" />
-      <RowDefinition Height="28" />
     </Grid.RowDefinitions>
 
     <Grid x:Name="StageInteractionSurface"
-          Grid.RowSpan="3">
+          Grid.RowSpan="2">
       <Grid.RowDefinitions>
         <RowDefinition Height="24" />
         <RowDefinition Height="*" />
-        <RowDefinition Height="28" />
       </Grid.RowDefinitions>
 
       <Border Padding="16,0"
@@ -180,7 +167,7 @@
             Grid.Row="1"
             SizeChanged="OnStageItemsViewportSizeChanged">
         <ListBox x:Name="StageItemsList"
-                 Margin="8,6,8,0"
+                 Margin="8,6,8,6"
                  Padding="0"
                  ItemsSource="{Binding CardRows, RelativeSource={RelativeSource AncestorType={x:Type stage:StageView}}}"
                  Background="Transparent"
@@ -531,32 +518,10 @@
         </ProgressBar>
       </Grid>
 
-      <Border Grid.Row="2"
-              Padding="8,2"
-              BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
-              BorderThickness="0,1,0,0">
-        <Grid>
-          <Button Style="{StaticResource StagePageButtonStyle}"
-                  HorizontalAlignment="Left"
-                  Content="较新"
-                  Command="{Binding LoadNewerCommand}"
-                  automation:AutomationProperties.Name="显示较新的中转项目" />
-          <TextBlock Text="{Binding PageSummaryText}"
-                     FontSize="10.5"
-                     Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                     HorizontalAlignment="Center"
-                     VerticalAlignment="Center" />
-          <Button Style="{StaticResource StagePageButtonStyle}"
-                  HorizontalAlignment="Right"
-                  Content="较早"
-                  Command="{Binding LoadOlderCommand}"
-                  automation:AutomationProperties.Name="显示较早的中转项目" />
-        </Grid>
-      </Border>
     </Grid>
 
     <Grid x:Name="DropOverlay"
-          Grid.RowSpan="3"
+          Grid.RowSpan="2"
           Panel.ZIndex="20"
           IsHitTestVisible="False"
           Visibility="Collapsed"
@@ -564,16 +529,15 @@
       <Grid.RowDefinitions>
         <RowDefinition Height="24" />
         <RowDefinition Height="*" />
-        <RowDefinition Height="28" />
       </Grid.RowDefinitions>
 
       <Border x:Name="StageDropWash"
-              Grid.RowSpan="3"
+              Grid.RowSpan="2"
               Background="{DynamicResource AccentFillColorDefaultBrush}"
               Opacity="{StaticResource StageDropWashOpacity}" />
 
       <Border x:Name="StageDropOutline"
-              Grid.RowSpan="3"
+              Grid.RowSpan="2"
               BorderBrush="{DynamicResource AccentFillColorDefaultBrush}"
               BorderThickness="2"
               CornerRadius="0"

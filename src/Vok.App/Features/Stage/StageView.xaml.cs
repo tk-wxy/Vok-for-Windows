@@ -18,6 +18,8 @@ public partial class StageView : UserControl
     private const double DragEdgeZone = 36;
     private const double MaximumAutoScrollSpeed = 720;
     private const int MaximumPendingAvailabilityInspections = 4;
+    private const double EdgePrefetchViewportFraction = 0.25;
+    private const int EdgePrefetchMinimumRowCount = 2;
     private static readonly Duration ReorderShiftDuration =
         new(TimeSpan.FromMilliseconds(140));
     private static readonly CubicEase ReorderShiftEasing = CreateReorderShiftEasing();
@@ -39,7 +41,9 @@ public partial class StageView : UserControl
             nameof(CardRowUnitHeight),
             typeof(double),
             typeof(StageView),
-            new PropertyMetadata(StageCardLayoutCalculator.DefaultRowUnitHeight));
+            new PropertyMetadata(
+                StageCardLayoutCalculator.DefaultRowUnitHeight,
+                OnCardRowUnitHeightChanged));
 
     public static readonly DependencyProperty CardRowSurfaceWidthProperty =
         DependencyProperty.Register(
@@ -86,6 +90,12 @@ public partial class StageView : UserControl
     private bool _rowPublicationRefreshPending;
     private bool _availabilityRefreshPending;
     private bool _availabilityRequestsAllowed = true;
+    private DispatcherOperation? _pendingEdgePrefetchEvaluation;
+    private CancellationTokenSource? _edgePrefetchCancellation;
+    private StagePageDirection? _edgePrefetchIntent;
+    private bool _edgePrefetchActive;
+    private bool _edgePrefetchReevaluateAfterCompletion;
+    private bool _suppressEdgePrefetchScrollChanged;
     private long _availabilityRefreshGeneration;
     private int _availabilityOutstandingOperations;
     private Border? _pressedCard;
@@ -196,6 +206,16 @@ public partial class StageView : UserControl
         element.SetValue(IsKeyboardContextActiveProperty, value);
     }
 
+    private static void OnCardRowUnitHeightChanged(
+        DependencyObject sender,
+        DependencyPropertyChangedEventArgs e)
+    {
+        if (sender is StageView view && view.IsInitialized)
+        {
+            view.ScheduleCardLayoutRefresh();
+        }
+    }
+
     internal StageCardLayoutProfile? CardLayoutProfile => _cardLayoutProfile;
 
     internal double CardViewportWidth => GetStageScrollViewer()?.ViewportWidth ?? 0;
@@ -212,16 +232,20 @@ public partial class StageView : UserControl
         _rowPublicationRefreshPending ||
         _availabilityRefreshPending ||
         _reorderVisualRefreshPending ||
+        _pendingEdgePrefetchEvaluation is { Status: DispatcherOperationStatus.Pending } ||
         _cardRowsProjection.HasPendingRebuild;
 
     internal bool HasActiveReorderPointer => _pressedItem is not null;
 
     internal bool HasAutoScrollSubscription => _autoScrollAttached;
 
+    internal bool HasActiveEdgePrefetch => _edgePrefetchActive;
+
     internal void SetExternalDragState(bool sessionActive, bool targeted)
     {
         if (sessionActive)
         {
+            CancelEdgePrefetch();
             CancelAllInteractions();
         }
 
@@ -252,6 +276,7 @@ public partial class StageView : UserControl
         if (!sessionActive)
         {
             ScheduleAvailabilityRefresh();
+            ScheduleEdgePrefetch();
         }
     }
 
@@ -268,6 +293,7 @@ public partial class StageView : UserControl
 
         ScheduleCardLayoutRefresh();
         ScheduleAvailabilityRefresh();
+        ScheduleEdgePrefetch();
     }
 
     private void OnViewLoaded(object sender, RoutedEventArgs e)
@@ -286,6 +312,7 @@ public partial class StageView : UserControl
 
         ScheduleCardLayoutRefresh();
         ScheduleAvailabilityRefresh();
+        ScheduleEdgePrefetch();
     }
 
     private void OnViewUnloaded(object sender, RoutedEventArgs e)
@@ -296,6 +323,7 @@ public partial class StageView : UserControl
         _availabilityRequestsAllowed = false;
         DetachRevealDiagnostics();
         CancelAllInteractions();
+        CancelEdgePrefetch();
         DetachObservedViewModel();
         CancelAllAvailabilityBindings(resetState: false);
         _availabilityCards.Clear();
@@ -315,6 +343,7 @@ public partial class StageView : UserControl
         _observedItems = viewModel.Items;
         _observedItems.CollectionChanged += OnItemsCollectionChanged;
         viewModel.ItemAuthorityChanged += OnItemAuthorityChanged;
+        viewModel.WindowProjectionChanging += OnWindowProjectionChanging;
         viewModel.PropertyChanged += OnObservedViewModelPropertyChanged;
         _scrollResetPending = true;
         _pendingScrollAnchor = null;
@@ -334,10 +363,12 @@ public partial class StageView : UserControl
         if (_observedViewModel is not null)
         {
             _observedViewModel.ItemAuthorityChanged -= OnItemAuthorityChanged;
+            _observedViewModel.WindowProjectionChanging -= OnWindowProjectionChanging;
             _observedViewModel.PropertyChanged -= OnObservedViewModelPropertyChanged;
             _observedViewModel = null;
         }
 
+        CancelEdgePrefetch();
         CancelAllAvailabilityBindings(resetState: false);
         _availabilityValidatedGenerations.Clear();
         _cardRowsProjection.Attach(null);
@@ -361,9 +392,14 @@ public partial class StageView : UserControl
                 UpdateCardInteractionState(card);
             }
 
-            if (!IsReorderInteractionActive())
+            if (IsReorderInteractionActive())
+            {
+                CancelEdgePrefetch();
+            }
+            else
             {
                 ScheduleAvailabilityRefresh();
+                ScheduleEdgePrefetch();
             }
         }
 
@@ -387,6 +423,27 @@ public partial class StageView : UserControl
         }
 
         ScheduleAvailabilityRefresh();
+    }
+
+    private void OnWindowProjectionChanging(StageRollingWindowChange change)
+    {
+        if (change.IsReset)
+        {
+            _pendingScrollAnchor = null;
+            _scrollResetPending = true;
+            return;
+        }
+
+        if (!CanPreserveEdgeScrollPosition())
+        {
+            _pendingScrollAnchor = null;
+            return;
+        }
+
+        var evictedIds = change.EvictedItems
+            .Select(static item => item.Id)
+            .ToHashSet();
+        _pendingScrollAnchor = CaptureScrollAnchor(evictedIds);
     }
 
     private void OnItemsCollectionChanged(
@@ -442,10 +499,19 @@ public partial class StageView : UserControl
             else if (_pendingScrollAnchor is { } anchor)
             {
                 _pendingScrollAnchor = null;
-                RestoreScrollAnchor(anchor, scrollViewer);
+                _suppressEdgePrefetchScrollChanged = true;
+                try
+                {
+                    RestoreScrollAnchor(anchor, scrollViewer);
+                }
+                finally
+                {
+                    _suppressEdgePrefetchScrollChanged = false;
+                }
             }
 
             ScheduleAvailabilityRefresh();
+            ScheduleEdgePrefetch();
             if (_reorderGeneration != 0)
             {
                 ScheduleReorderVisualRefresh();
@@ -604,7 +670,20 @@ public partial class StageView : UserControl
 
     private void OnPreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
-        if (_reorderGeneration == 0 || GetStageScrollViewer() is not { } scrollViewer)
+        if (_reorderGeneration == 0)
+        {
+            if (e.Delta != 0)
+            {
+                ScheduleEdgePrefetch(
+                    e.Delta < 0
+                        ? StagePageDirection.TowardOlder
+                        : StagePageDirection.TowardNewer);
+            }
+
+            return;
+        }
+
+        if (GetStageScrollViewer() is not { } scrollViewer)
         {
             return;
         }
@@ -1045,6 +1124,16 @@ public partial class StageView : UserControl
 
         ScheduleAvailabilityRefresh();
         ScheduleReorderVisualRefresh();
+        if (!_suppressEdgePrefetchScrollChanged)
+        {
+            var intent = e.VerticalChange switch
+            {
+                > 0.001 => StagePageDirection.TowardOlder,
+                < -0.001 => StagePageDirection.TowardNewer,
+                _ => (StagePageDirection?)null,
+            };
+            ScheduleEdgePrefetch(intent);
+        }
     }
 
     private void OnCleanUpVirtualizedItem(
@@ -1075,9 +1164,11 @@ public partial class StageView : UserControl
                 _availabilityRequestsAllowed = true;
             }
             ScheduleAvailabilityRefresh();
+            ScheduleEdgePrefetch();
         }
         else
         {
+            CancelEdgePrefetch();
             CancelAllInteractions();
             foreach (var card in _availabilityCards.ToArray())
             {
@@ -1109,13 +1200,15 @@ public partial class StageView : UserControl
 
     private void ApplyCardLayoutFromRealizedViewport()
     {
-        var viewportWidth = GetStageScrollViewer()?.ViewportWidth ?? 0;
+        var scrollViewer = GetStageScrollViewer();
+        var viewportWidth = scrollViewer?.ViewportWidth ?? 0;
         if (!double.IsFinite(viewportWidth) || viewportWidth <= 0)
         {
             return;
         }
 
         var profile = StageCardLayoutCalculator.Calculate(viewportWidth);
+        EnsureViewportWindowCapacity(scrollViewer, profile);
         if (profile == _cardLayoutProfile)
         {
             return;
@@ -1151,9 +1244,29 @@ public partial class StageView : UserControl
         }
 
         ScheduleAvailabilityRefresh();
+        ScheduleEdgePrefetch();
     }
 
-    private ScrollAnchor? CaptureScrollAnchor()
+    private void EnsureViewportWindowCapacity(
+        ScrollViewer? scrollViewer,
+        StageCardLayoutProfile profile)
+    {
+        if (_observedViewModel is not { } viewModel || scrollViewer is null ||
+            !double.IsFinite(scrollViewer.ViewportHeight) ||
+            scrollViewer.ViewportHeight <= 0 ||
+            !double.IsFinite(CardRowUnitHeight) || CardRowUnitHeight <= 0)
+        {
+            return;
+        }
+
+        var visibleRowCount = checked(
+            (int)Math.Ceiling(scrollViewer.ViewportHeight / CardRowUnitHeight));
+        var visibleItemCapacity = checked(visibleRowCount * profile.ColumnCount);
+        viewModel.EnsureViewportCapacity(Math.Max(1, visibleItemCapacity));
+    }
+
+    private ScrollAnchor? CaptureScrollAnchor(
+        IReadOnlySet<Guid>? excludedItemIds = null)
     {
         var scrollViewer = GetStageScrollViewer();
         if (scrollViewer is null || scrollViewer.ViewportHeight <= 0)
@@ -1165,6 +1278,8 @@ public partial class StageView : UserControl
             .Select(card => TryGetVisibleCardPosition(card, scrollViewer))
             .Where(static position => position is not null)
             .Select(static position => position!.Value)
+            .Where(position => excludedItemIds is null ||
+                !excludedItemIds.Contains(position.ItemId))
             .OrderBy(static position => position.Top)
             .ThenBy(static position => position.Left)
             .Select(static position => (ScrollAnchor?)new ScrollAnchor(
@@ -1234,6 +1349,192 @@ public partial class StageView : UserControl
         catch (InvalidOperationException)
         {
         }
+    }
+
+    private bool CanPreserveEdgeScrollPosition() =>
+        IsLoaded && IsVisible && _availabilityRequestsAllowed &&
+        !_externalDragActive && !IsReorderInteractionActive() &&
+        _observedViewModel is not null;
+
+    private void ScheduleEdgePrefetch(StagePageDirection? intent = null)
+    {
+        if (intent is not null)
+        {
+            _edgePrefetchIntent = intent;
+        }
+
+        if (_edgePrefetchActive)
+        {
+            _edgePrefetchReevaluateAfterCompletion = true;
+            return;
+        }
+
+        if (_pendingEdgePrefetchEvaluation is
+            { Status: DispatcherOperationStatus.Pending })
+        {
+            return;
+        }
+
+        _pendingEdgePrefetchEvaluation = Dispatcher.BeginInvoke(
+            DispatcherPriority.Background,
+            () =>
+            {
+                _pendingEdgePrefetchEvaluation = null;
+                EvaluateEdgePrefetch();
+            });
+    }
+
+    private void EvaluateEdgePrefetch()
+    {
+        var intent = _edgePrefetchIntent;
+        _edgePrefetchIntent = null;
+        if (!CanRequestEdgePrefetch() ||
+            GetStageScrollViewer() is not { } scrollViewer ||
+            _observedViewModel is not { } viewModel)
+        {
+            return;
+        }
+
+        var threshold = Math.Max(
+            EdgePrefetchMinimumRowCount * CardRowUnitHeight,
+            scrollViewer.ViewportHeight * EdgePrefetchViewportFraction);
+        var nearNewerEdge = scrollViewer.VerticalOffset <= threshold;
+        var nearOlderEdge = scrollViewer.ScrollableHeight -
+            scrollViewer.VerticalOffset <= threshold;
+        var canLoadNewer = nearNewerEdge && viewModel.CanLoadNewer;
+        var canLoadOlder = nearOlderEdge && viewModel.CanLoadOlder;
+
+        StagePageDirection? direction;
+        if (intent is StagePageDirection.TowardNewer)
+        {
+            direction = canLoadNewer ? intent : null;
+        }
+        else if (intent is StagePageDirection.TowardOlder)
+        {
+            direction = canLoadOlder ? intent : null;
+        }
+        else if (canLoadNewer ^ canLoadOlder)
+        {
+            direction = canLoadNewer
+                ? StagePageDirection.TowardNewer
+                : StagePageDirection.TowardOlder;
+        }
+        else
+        {
+            // If both edges fit in the viewport, there is no stable pixel anchor for
+            // an automatic window shift. Wait for an explicit wheel direction.
+            direction = null;
+        }
+
+        if (direction is not null)
+        {
+            StartEdgePrefetch(viewModel, direction.Value);
+        }
+    }
+
+    private bool CanRequestEdgePrefetch() =>
+        CanPreserveEdgeScrollPosition() &&
+        !_scrollResetPending && _pendingScrollAnchor is null &&
+        !_rowPublicationRefreshPending &&
+        !_cardRowsProjection.HasPendingRebuild &&
+        _observedViewModel is
+        {
+            IsLoading: false,
+            IsInteractionLocked: false,
+        };
+
+    private void StartEdgePrefetch(
+        StageViewModel viewModel,
+        StagePageDirection direction)
+    {
+        if (_edgePrefetchActive)
+        {
+            return;
+        }
+
+        var cancellation = new CancellationTokenSource();
+        var contentVersion = _cardRowsProjection.ContentVersion;
+        _edgePrefetchCancellation = cancellation;
+        _edgePrefetchActive = true;
+        _edgePrefetchReevaluateAfterCompletion = false;
+        _ = RunEdgePrefetchAsync(
+            viewModel,
+            direction,
+            contentVersion,
+            cancellation);
+    }
+
+    private async Task RunEdgePrefetchAsync(
+        StageViewModel viewModel,
+        StagePageDirection direction,
+        long contentVersion,
+        CancellationTokenSource cancellation)
+    {
+        try
+        {
+            if (direction is StagePageDirection.TowardNewer)
+            {
+                await viewModel
+                    .LoadNewerPageAsync(cancellation.Token)
+                    .ConfigureAwait(true);
+            }
+            else
+            {
+                await viewModel
+                    .LoadOlderPageAsync(cancellation.Token)
+                    .ConfigureAwait(true);
+            }
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            // The view transition that paused prefetch owns cancellation.
+        }
+        catch (ObjectDisposedException) when (
+            cancellation.IsCancellationRequested ||
+            !ReferenceEquals(_observedViewModel, viewModel))
+        {
+            // The old data context owns its lifetime and can disappear mid-request.
+        }
+        catch (Exception exception)
+        {
+            viewModel.RecordDispatchFailure(exception);
+        }
+        finally
+        {
+            var contentChanged =
+                _cardRowsProjection.ContentVersion != contentVersion;
+            var reevaluate = _edgePrefetchReevaluateAfterCompletion;
+            if (ReferenceEquals(_edgePrefetchCancellation, cancellation))
+            {
+                _edgePrefetchCancellation = null;
+                _edgePrefetchActive = false;
+                _edgePrefetchReevaluateAfterCompletion = false;
+            }
+
+            cancellation.Dispose();
+            var currentViewModel = _observedViewModel;
+            var shouldReevaluateCurrent = reevaluate && currentViewModel is not null &&
+                (!ReferenceEquals(currentViewModel, viewModel) ||
+                 (!contentChanged && !viewModel.HasError));
+            if (shouldReevaluateCurrent)
+            {
+                ScheduleEdgePrefetch();
+            }
+        }
+    }
+
+    private void CancelEdgePrefetch()
+    {
+        if (_pendingEdgePrefetchEvaluation is
+            { Status: DispatcherOperationStatus.Pending } pending)
+        {
+            _ = pending.Abort();
+        }
+
+        _pendingEdgePrefetchEvaluation = null;
+        _edgePrefetchIntent = null;
+        _edgePrefetchReevaluateAfterCompletion = false;
+        _edgePrefetchCancellation?.Cancel();
     }
 
     private void ScheduleAvailabilityRefresh()

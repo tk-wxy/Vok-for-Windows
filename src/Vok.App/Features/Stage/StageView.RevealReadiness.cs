@@ -16,6 +16,7 @@ public partial class StageView
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(generation);
 
         CancelRevealCore();
+        CancelEdgePrefetch();
         _activeRevealGeneration = generation;
         _completedRevealGeneration = 0;
         _availabilityRefreshGeneration = generation;
@@ -55,6 +56,7 @@ public partial class StageView
         _availabilityRequestsAllowed = true;
         TraceStage("StageRevealCompleted");
         ScheduleAvailabilityRefresh();
+        ScheduleEdgePrefetch();
     }
 
     internal void CancelReveal(long generation)
@@ -67,6 +69,7 @@ public partial class StageView
         }
 
         CancelRevealCore();
+        CancelEdgePrefetch();
         _completedRevealGeneration = 0;
         _availabilityRequestsAllowed = false;
         CancelAllAvailabilityBindings(resetState: false);

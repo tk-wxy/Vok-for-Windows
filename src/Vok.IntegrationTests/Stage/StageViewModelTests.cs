@@ -9,11 +9,59 @@ namespace Vok.IntegrationTests.Stage;
 public sealed class StageViewModelTests
 {
     [Fact]
+    public async Task ViewportCapacityGrowsTheWindowAndProjectionChangesAreAnnouncedBeforeMutation()
+    {
+        var repository = new InMemoryStageRepository(CreateItems(512));
+        using var viewModel = new StageViewModel(
+            repository,
+            new StaticStageFileService([]));
+        var observations = new List<(StageRollingWindowChange Change, Guid[] ItemIds)>();
+        viewModel.WindowProjectionChanging += change => observations.Add(
+            (change, viewModel.Items.Select(static item => item.Id).ToArray()));
+
+        viewModel.EnsureViewportCapacity(129);
+        viewModel.EnsureViewportCapacity(64);
+        await viewModel.InitializeAsync(TestContext.Current.CancellationToken);
+        var initialIds = viewModel.Items.Select(static item => item.Id).ToArray();
+        await viewModel.LoadOlderPageAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(256, viewModel.WindowMaximumItemCount);
+        Assert.Collection(
+            observations,
+            reset =>
+            {
+                Assert.True(reset.Change.IsReset);
+                Assert.Empty(reset.ItemIds);
+            },
+            edge =>
+            {
+                Assert.False(edge.Change.IsReset);
+                Assert.Equal(initialIds, edge.ItemIds);
+                Assert.Equal(StageRollingWindowEdge.Older, edge.Change.AddedAt);
+            });
+        Assert.Equal(128, viewModel.Items.Count);
+    }
+
+    [Fact]
+    public void LateViewportCapacityNotificationIsIgnoredAfterDisposal()
+    {
+        var viewModel = new StageViewModel(
+            new InMemoryStageRepository(CreateItems(512)),
+            new StaticStageFileService([]));
+        viewModel.Dispose();
+
+        viewModel.EnsureViewportCapacity(210);
+
+        Assert.Equal(192, viewModel.WindowMaximumItemCount);
+    }
+
+    [Fact]
     public async Task NavigationTraversesTenThousandItemsWithOneBoundedRollingWindow()
     {
         var cancellationToken = TestContext.Current.CancellationToken;
         var repository = new InMemoryStageRepository(CreateItems(10_000));
         using var viewModel = new StageViewModel(repository, new StaticStageFileService([]));
+        viewModel.EnsureViewportCapacity(210);
 
         await viewModel.InitializeAsync(cancellationToken);
         await viewModel.InitializeAsync(cancellationToken);
@@ -30,8 +78,7 @@ public sealed class StageViewModelTests
             Assert.InRange(
                 viewModel.Items.Count,
                 1,
-                StageRollingWindow.DefaultSegmentSize *
-                    StageRollingWindow.DefaultMaximumSegmentCount);
+                viewModel.WindowMaximumItemCount);
             visited.UnionWith(viewModel.Items.Select(static item => item.Id));
             if (!viewModel.CanLoadOlder)
             {
@@ -42,17 +89,18 @@ public sealed class StageViewModelTests
         }
 
         Assert.Equal(10_000, visited.Count);
-        Assert.InRange(viewModel.Items.Count, 1, 192);
+        Assert.InRange(viewModel.Items.Count, 1, viewModel.WindowMaximumItemCount);
         Assert.True(viewModel.CanLoadNewer);
 
         while (viewModel.CanLoadNewer)
         {
             await viewModel.LoadNewerPageAsync(cancellationToken);
-            Assert.InRange(viewModel.Items.Count, 1, 192);
+            Assert.InRange(viewModel.Items.Count, 1, viewModel.WindowMaximumItemCount);
         }
 
         Assert.Equal(repository.Items[0].Id, viewModel.Items[0].Id);
-        Assert.Equal("已加载 192 / 10000", viewModel.PageSummaryText);
+        Assert.Equal(320, viewModel.WindowMaximumItemCount);
+        Assert.Equal("已加载 320 / 10000", viewModel.PageSummaryText);
     }
 
     [Fact]

@@ -11,10 +11,10 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片、排序 S0–S3 和呼出 P0 已通过。N0 occurrence/schema 8、N1.1 双向复合 keyset 与 N1.2 纯 rolling-window 状态均已完成并提交；N1.3A ViewModel 窗口权威接管已完成验证并随本次提交归档，但尚未部署。当前独立候选仍为 PID 6984/提交 `1dcd599`，真实库 schema 8，候选最小人工 Gate 已通过。
-- **最近进展**：`StageViewModel` 已删除 `_pageStarts/_pageIndex/_nextCursor` 等第二套分页状态，以唯一 `StageRollingWindow` 承担初始/reset/双向 edge 权威，并按 added/evicted delta 保留 retained VM 与 Availability；固定、重新关联、排序在 Core 原子 reconcile 后更新投影，新增/移除及冲突先使 generation 失效再单次重载，失败不重放写入。自审补上“响应必须从已记录紧邻 occurrence 开始”和显式 invalidation。新增 4 项 Core、2 项 Integration 后 Release Core 112/112 + Integration 585/585，共 697/697；独立 solution 构建 0 warning / 0 error，Stage WPF 21/21。事后真实库只读审计仍为 schema 8、50 条 Stage、66 个 Ready 资产、`quick_check=ok`、0 外键/资产异常，PID 6984 未变化。
-- **下一步**：进入 N1.3B，单独在 `StageView` 接视口阈值双向预取、数据变更前捕获/行发布后恢复像素锚点、隐藏/外部拖动/排序期间暂停，并移除页脚与可见分页文案。
-- **已知问题**：N1.3B–N1.4 WPF 连续滚动/窗口间排序、N2/N3 单项/批量拖出与交付后清理尚未实现，因此当前已部署产品仍是 64 项整页分页且不是完整 Stage 产品候选。KI-001 仍后置；KI-002 为长静置首次呼出略慢于连续热呼出，KI-003 为 Clipboard 图片缩略图短暂空白。纯 30 分钟、明确 Modern Standby/Unlock 分档及正式 Present 证据未逐项完成；测试产生的 `.lnk` 副本未经授权不得删除。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片、排序 S0–S3 和呼出 P0 已通过。N0 occurrence/schema 8、N1.1 双向复合 keyset、N1.2 rolling-window 状态、N1.3A ViewModel 权威接管和 N1.3B WPF 连续滚动均已提交；N1.3B 尚未部署。当前独立候选仍为 PID 6984/提交 `1dcd599`，真实库 schema 8，候选最小人工 Gate 已通过。
+- **最近进展**：N1.3B 删除 Stage 页脚和较新/较早入口；滚动阈值以至少两行/四分之一视口命名策略双向预取，同轮只允许一个可取消请求。窗口仍默认 3×64，但按实际可见项加一整段缓冲只增扩展，修复 4K/10 列下 192 项约等于 20 行而无 scroll extent 的机制。ViewModel 在投影变更前发布 delta，View 从未淘汰 occurrence 捕获锚点并在行发布后的 `ContextIdle` 恢复像素位置；隐藏、揭示未完成、外部拖动、排序/提交、卸载和换绑均暂停/取消。失败不自动重试，旧 DataContext 迟到收尾会重新唤醒当前实例。Release Core 114/114 + Integration 592/592，共 706/706；Stage WPF 26/26，四条关键时序链连续 5 轮通过，独立构建 0 warning / 0 error。
+- **下一步**：进入 N1.4，以隔离 10k/100k 数据和真实 WPF 候选完成长距离连续滚动、动态窗口常驻量、内存/句柄、随机往返及高视口物理 Gate；通过后再进入 N2 单项/批量 OLE Gate。
+- **已知问题**：N1.4 大规模资源/物理门禁、连续窗口间远距离排序、N2/N3 单项/批量拖出与交付后清理尚未完成；当前已部署候选仍是带页脚的 N1.2 版本，不能代表本次源码。KI-001 仍后置；KI-002 为长静置首次呼出略慢于连续热呼出，KI-003 为 Clipboard 图片缩略图短暂空白。纯 30 分钟、明确 Modern Standby/Unlock 分档及正式 Present 证据未逐项完成；测试产生的 `.lnk` 副本未经授权不得删除。
 
 ## §0A 最近会话
 
@@ -38,6 +38,8 @@
 - 用户要求运行实例后，先创建 schema 7 在线备份并复核源连接稳定、备份逻辑精确匹配，再生成提交 `1dcd599` 的 415 文件独立 win-x64 自包含候选。精确停止 PID 18352 后启动唯一 PID 6984，加载 `Vok.dll` SHA-256 为 `985450BD04ACA1FE7914A99B106B193AABC58969E774E3393E12E521CD7FC49B`；真实库成功迁移到 schema 8，canonical 索引为非唯一，八表摘要、46 条 Stage 与 67 个 Ready 资产保持，`quick_check=ok`、0 外键/资产异常。下一步只做可达能力的最小人工 Gate；N1.2 连续窗口尚无 UI 入口。
 - 用户确认部署候选的最小人工 Gate 全部通过；事后只读审计为 schema 8、50 条 Stage、66 个 Ready 资产、`quick_check=ok`、0 外键/资产异常，表明 occurrence/容量链确已触达。候选 PID/启动时间未变化，重启持久化仅按用户人工结论记录。源码分析将下一提交收窄为 N1.3A：只让 rolling window 接管 ViewModel 权威并增量维护 retained VM，页脚移除、滚动阈值、WPF 锚点与隐藏/拖动暂停留给 N1.3B。
 - N1.3A 已完成并随本次提交归档：ViewModel 删除 page-index/cursor-history 权威，双向 edge 通过 `StageRollingWindow` added/evicted delta 增量维护最多 192 个 VM，retained VM/Availability 不变；同组权威修订/重排由 Core 原子重建 segment 接缝并使旧请求失效，计数变化与冲突只做一次 newest reset。自审又补上已记录紧邻 occurrence 校验，防止总数不变时静默跳项。最终 Release 112/112 + 585/585 共 697/697、独立 solution 构建零警告、Stage WPF 21/21；真实库审计保持 schema 8/Stage 50/Ready 66/0 异常，PID 6984 未替换，尚未部署。
+- N1.3B 审计先发现固定 192 项在 4K/100% 缩放、10 列约为 20 行，可能不高于真实视口而使连续滚动无 extent；因此 Core 窗口改为默认三段但可按“可见容量 + 一整段缓冲”只增扩展。10k 自适应 320 项往返仍完整有界，模拟 2100 DIP/10 列会先扩到至少 320 并形成滚动范围。
+- WPF 已删除页脚及可见页面导航，以投影变更前 delta 捕获未淘汰 occurrence、行发布后 `ContextIdle` 像素恢复；至少两行/四分之一视口阈值只运行一个可取消双向预取，揭示完成前、隐藏、外部拖动、排序/提交、卸载和换绑暂停。取消不响应的旧实例、失败无重试风暴、双向第四段淘汰及 5 轮关键时序均有门禁。最终 Release 114/114 + 592/592 共 706/706、独立构建零警告；真实库前后 schema/Stage 摘要一致、50 条 Stage、72 个 Ready 资产均完整，PID 6984 未替换，尚未部署或提交。
 
 ### 会话 2026-09-05 至 2026-09-12 - M3.1 中转站管理动作与卡片基础
 

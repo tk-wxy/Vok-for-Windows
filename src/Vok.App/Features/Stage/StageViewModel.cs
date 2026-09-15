@@ -51,6 +51,8 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
 
     internal event Action<StageItemViewModel>? ItemAuthorityChanged;
 
+    internal event Action<StageRollingWindowChange>? WindowProjectionChanging;
+
     internal Func<StageItemViewModel, Task>? OpenActionAsync { get; set; }
 
     internal Func<StageItemViewModel, Task>? RevealActionAsync { get; set; }
@@ -104,6 +106,25 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         _window.IsInitialized && !_window.RequiresReset && _window.HasOlder;
 
     public string PageSummaryText => $"已加载 {Items.Count} / {TotalCount}";
+
+    internal int WindowMaximumItemCount => _window.MaximumItemCount;
+
+    internal void EnsureViewportCapacity(int visibleItemCapacity)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(visibleItemCapacity, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(
+            visibleItemCapacity,
+            int.MaxValue - PageSize);
+        if (_disposed)
+        {
+            return;
+        }
+
+        var requiredItemCount = checked(visibleItemCapacity + PageSize);
+        var requiredSegmentCount = checked(
+            (requiredItemCount + PageSize - 1) / PageSize);
+        _window.EnsureMaximumSegmentCount(requiredSegmentCount);
+    }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -1393,7 +1414,8 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
 
     private void ApplyWindowReset(StagePage page)
     {
-        _window.Reset(page);
+        var change = _window.Reset(page);
+        WindowProjectionChanging?.Invoke(change);
         ReplaceProjectionFromWindow();
         ValidateProjectionMatchesWindow();
         TotalCount = _window.TotalCount;
@@ -1409,6 +1431,7 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         }
 
         ValidateProjectionBeforeWindowChange(change);
+        WindowProjectionChanging?.Invoke(change);
         try
         {
             if (change.EvictedFrom is StageRollingWindowEdge.Newer)

@@ -361,8 +361,7 @@ public sealed class MainWindowFocusIntegrationTests(WpfApplicationFixture wpf)
                 Assert.Collection(
                     stageLayout.RowDefinitions,
                     row => Assert.Equal(new GridLength(24), row.Height),
-                    row => Assert.Equal(new GridLength(1, GridUnitType.Star), row.Height),
-                    row => Assert.Equal(new GridLength(28), row.Height));
+                    row => Assert.Equal(new GridLength(1, GridUnitType.Star), row.Height));
                 var stageList = Assert.IsType<ListBox>(stagePanel.FindName("StageItemsList"));
                 Assert.True(VirtualizingPanel.GetIsVirtualizing(stageList));
                 Assert.Equal(

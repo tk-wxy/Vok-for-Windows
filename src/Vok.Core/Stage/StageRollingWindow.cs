@@ -64,6 +64,8 @@ public sealed class StageRollingWindow
     private readonly Guid _ownerToken = Guid.NewGuid();
     private readonly List<Segment> _segments = [];
     private IReadOnlyList<StageItem> _items = EmptyItems;
+    private int _maximumSegmentCount;
+    private int _maximumItemCount;
     private long _generation;
     private bool _isInitialized;
     private bool _requiresReset;
@@ -76,15 +78,15 @@ public sealed class StageRollingWindow
         ArgumentOutOfRangeException.ThrowIfLessThan(maximumSegmentCount, 1);
 
         SegmentSize = segmentSize;
-        MaximumSegmentCount = maximumSegmentCount;
-        MaximumItemCount = checked(segmentSize * maximumSegmentCount);
+        _maximumSegmentCount = maximumSegmentCount;
+        _maximumItemCount = checked(segmentSize * maximumSegmentCount);
     }
 
     public int SegmentSize { get; }
 
-    public int MaximumSegmentCount { get; }
+    public int MaximumSegmentCount => _maximumSegmentCount;
 
-    public int MaximumItemCount { get; }
+    public int MaximumItemCount => _maximumItemCount;
 
     public bool IsInitialized => _isInitialized;
 
@@ -113,6 +115,19 @@ public sealed class StageRollingWindow
     public bool HasNewer => NewerCursor is not null;
 
     public bool HasOlder => OlderCursor is not null;
+
+    public void EnsureMaximumSegmentCount(int minimumSegmentCount)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(minimumSegmentCount, 1);
+        if (minimumSegmentCount <= _maximumSegmentCount)
+        {
+            return;
+        }
+
+        var maximumItemCount = checked(SegmentSize * minimumSegmentCount);
+        _maximumSegmentCount = minimumSegmentCount;
+        _maximumItemCount = maximumItemCount;
+    }
 
     public StageRollingWindowChange Reset(StagePage page)
     {

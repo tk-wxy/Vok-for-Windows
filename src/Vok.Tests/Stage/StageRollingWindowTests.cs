@@ -40,6 +40,42 @@ public sealed class StageRollingWindowTests
     }
 
     [Fact]
+    public void MaximumSegmentCountCanOnlyGrowWithoutInvalidatingTheWindow()
+    {
+        var allItems = CreateItems(24);
+        var window = ResetWindow(allItems, segmentSize: 4, maximumSegmentCount: 3);
+        var request = Assert.IsType<StageRollingWindowLoadRequest>(
+            window.CreateLoadRequest(StagePageDirection.TowardOlder));
+        var generation = window.Generation;
+
+        window.EnsureMaximumSegmentCount(5);
+        window.EnsureMaximumSegmentCount(4);
+
+        Assert.Equal(5, window.MaximumSegmentCount);
+        Assert.Equal(20, window.MaximumItemCount);
+        Assert.Equal(generation, window.Generation);
+        var result = window.Apply(
+            request,
+            LoadPage(allItems, request.Anchor, request.Direction, 4));
+        Assert.Equal(StageRollingWindowApplyStatus.Applied, result.Status);
+        Assert.Equal(8, window.Items.Count);
+    }
+
+    [Fact]
+    public void InvalidOrOverflowingMaximumSegmentGrowthIsRejectedAtomically()
+    {
+        var window = new StageRollingWindow(segmentSize: 4, maximumSegmentCount: 3);
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => window.EnsureMaximumSegmentCount(0));
+        Assert.Throws<OverflowException>(
+            () => window.EnsureMaximumSegmentCount(int.MaxValue));
+
+        Assert.Equal(3, window.MaximumSegmentCount);
+        Assert.Equal(12, window.MaximumItemCount);
+    }
+
+    [Fact]
     public void ResetSnapshotsTheNewestSegmentAndReportsReplacementDelta()
     {
         var allItems = CreateItems(6);

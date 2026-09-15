@@ -21,7 +21,7 @@ namespace Vok.IntegrationTests.Stage;
 public sealed partial class StageViewIntegrationTests(WpfApplicationFixture wpf)
 {
     [Fact]
-    public void StageRendersARecyclingFixedPageAndUsesExclusiveDropVisuals()
+    public void StageRendersARecyclingContinuousViewportAndUsesExclusiveDropVisuals()
     {
         wpf.Invoke(() =>
         {
@@ -63,8 +63,11 @@ public sealed partial class StageViewIntegrationTests(WpfApplicationFixture wpf)
                 Assert.Collection(
                     layout.RowDefinitions,
                     row => Assert.Equal(new GridLength(24), row.Height),
-                    row => Assert.Equal(new GridLength(1, GridUnitType.Star), row.Height),
-                    row => Assert.Equal(new GridLength(28), row.Height));
+                    row => Assert.Equal(new GridLength(1, GridUnitType.Star), row.Height));
+                Assert.DoesNotContain(
+                    FindVisualDescendants<Button>(view),
+                    button => button.Content is string text &&
+                        text is "较新" or "较早");
 
                 var list = Assert.IsType<ListBox>(view.FindName("StageItemsList"));
                 Assert.Equal(StageViewModel.PageSize, viewModel.Items.Count);
@@ -1078,7 +1081,352 @@ public sealed partial class StageViewIntegrationTests(WpfApplicationFixture wpf)
     }
 
     [Fact]
-    public void DataContextAndPageReplacementPublishOnlyTheCurrentRowsThenScrollTop()
+    public void EdgePrefetchPreservesAPixelAnchorAcrossBothWindowEvictionDirections()
+    {
+        wpf.Invoke(() =>
+        {
+            var repository = new StaticStageRepository(512);
+            using var viewModel = new StageViewModel(
+                repository,
+                new NoopStageFileService());
+            viewModel.InitializeAsync().GetAwaiter().GetResult();
+            var view = new StageView
+            {
+                DataContext = viewModel,
+            };
+            var window = new Window
+            {
+                Width = 520,
+                Height = 320,
+                Content = view,
+                ShowInTaskbar = false,
+                WindowStyle = WindowStyle.None,
+                ResizeMode = ResizeMode.NoResize,
+            };
+
+            window.Show();
+            try
+            {
+                PumpLayout(window);
+                var list = Assert.IsType<ListBox>(view.FindName("StageItemsList"));
+                var scrollViewer = Assert.Single(
+                    FindVisualDescendants<ScrollViewer>(list));
+                Assert.Single(repository.LoadCalls);
+
+                for (var load = 0; load < 3; load++)
+                {
+                    scrollViewer.ScrollToEnd();
+                    window.UpdateLayout();
+                    var anchor = GetTopVisibleCard(list, scrollViewer);
+                    var priorLoadCount = repository.LoadCalls.Count;
+
+                    PumpLayout(window);
+
+                    Assert.Equal(priorLoadCount + 1, repository.LoadCalls.Count);
+                    Assert.Equal(
+                        StagePageDirection.TowardOlder,
+                        repository.LoadCalls[^1].Direction);
+                    var restored = Assert.Single(
+                        GetVisibleCards(list, scrollViewer),
+                        card => card.Item.Id == anchor.Item.Id);
+                    Assert.InRange(
+                        Math.Abs(restored.Bounds.Top - anchor.Bounds.Top),
+                        0,
+                        1.0);
+                }
+
+                Assert.Equal(192, viewModel.Items.Count);
+                scrollViewer.ScrollToTop();
+                window.UpdateLayout();
+                var newerAnchor = GetTopVisibleCard(list, scrollViewer);
+                var priorNewerLoadCount = repository.LoadCalls.Count;
+
+                PumpLayout(window);
+
+                Assert.Equal(priorNewerLoadCount + 1, repository.LoadCalls.Count);
+                Assert.Equal(
+                    StagePageDirection.TowardNewer,
+                    repository.LoadCalls[^1].Direction);
+                var newerRestored = Assert.Single(
+                    GetVisibleCards(list, scrollViewer),
+                    card => card.Item.Id == newerAnchor.Item.Id);
+                Assert.InRange(
+                    Math.Abs(newerRestored.Bounds.Top - newerAnchor.Bounds.Top),
+                    0,
+                    1.0);
+                Assert.Equal(192, viewModel.Items.Count);
+                Assert.False(view.HasActiveEdgePrefetch);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void PrefetchCancelsOnHideAndPausesForExternalDragAndReorder()
+    {
+        wpf.Invoke(() =>
+        {
+            var repository = new DelayedFirstEdgeStageRepository(512);
+            using var viewModel = new StageViewModel(
+                repository,
+                new NoopStageFileService());
+            viewModel.InitializeAsync().GetAwaiter().GetResult();
+            var view = new StageView
+            {
+                DataContext = viewModel,
+            };
+            var window = new Window
+            {
+                Width = 520,
+                Height = 320,
+                Content = view,
+                ShowInTaskbar = false,
+                WindowStyle = WindowStyle.None,
+                ResizeMode = ResizeMode.NoResize,
+            };
+
+            window.Show();
+            try
+            {
+                PumpLayout(window);
+                var list = Assert.IsType<ListBox>(view.FindName("StageItemsList"));
+                var scrollViewer = Assert.Single(
+                    FindVisualDescendants<ScrollViewer>(list));
+                scrollViewer.ScrollToEnd();
+                PumpLayout(window);
+
+                Assert.True(repository.FirstEdgeStarted.Task.IsCompleted);
+                Assert.Equal(1, repository.EdgeLoadCount);
+                Assert.True(view.HasActiveEdgePrefetch);
+                scrollViewer.ScrollToEnd();
+                PumpLayout(window);
+                Assert.Equal(1, repository.EdgeLoadCount);
+
+                view.Visibility = Visibility.Collapsed;
+                PumpLayout(window);
+                Assert.False(view.HasActiveEdgePrefetch);
+                Assert.False(viewModel.IsLoading);
+                Assert.Equal(64, viewModel.Items.Count);
+
+                view.Visibility = Visibility.Visible;
+                PumpLayout(window);
+                Assert.Equal(2, repository.EdgeLoadCount);
+                Assert.Equal(128, viewModel.Items.Count);
+
+                view.SetExternalDragState(sessionActive: true, targeted: false);
+                scrollViewer.ScrollToEnd();
+                PumpLayout(window);
+                Assert.Equal(2, repository.EdgeLoadCount);
+                view.SetExternalDragState(sessionActive: false, targeted: false);
+                PumpLayout(window);
+                Assert.Equal(3, repository.EdgeLoadCount);
+                Assert.Equal(192, viewModel.Items.Count);
+
+                var reorderGeneration = viewModel.BeginReorder(viewModel.Items[0]);
+                Assert.True(reorderGeneration > 0);
+                scrollViewer.ScrollToEnd();
+                PumpLayout(window);
+                Assert.Equal(3, repository.EdgeLoadCount);
+                Assert.True(viewModel.TryCancelReorderPreview(reorderGeneration));
+                PumpLayout(window);
+                Assert.Equal(4, repository.EdgeLoadCount);
+                Assert.Equal(192, viewModel.Items.Count);
+                Assert.False(view.HasActiveEdgePrefetch);
+            }
+            finally
+            {
+                window.Close();
+            }
+
+            window.Dispatcher.Invoke(DispatcherPriority.ApplicationIdle, static () => { });
+            Assert.False(view.HasActiveEdgePrefetch);
+            Assert.False(view.HasPendingDeferredWork);
+        });
+    }
+
+    [Fact]
+    public void EdgeLoadFailureDoesNotCreateAnAutomaticRetryStorm()
+    {
+        wpf.Invoke(() =>
+        {
+            var repository = new FailingEdgeStageRepository(512);
+            using var viewModel = new StageViewModel(
+                repository,
+                new NoopStageFileService());
+            viewModel.InitializeAsync().GetAwaiter().GetResult();
+            var view = new StageView
+            {
+                DataContext = viewModel,
+            };
+            var window = new Window
+            {
+                Width = 520,
+                Height = 320,
+                Content = view,
+                ShowInTaskbar = false,
+                WindowStyle = WindowStyle.None,
+                ResizeMode = ResizeMode.NoResize,
+            };
+
+            window.Show();
+            try
+            {
+                PumpLayout(window);
+                var list = Assert.IsType<ListBox>(view.FindName("StageItemsList"));
+                var scrollViewer = Assert.Single(
+                    FindVisualDescendants<ScrollViewer>(list));
+                scrollViewer.ScrollToEnd();
+                PumpLayout(window);
+
+                Assert.Equal(1, repository.EdgeLoadCount);
+                Assert.True(viewModel.HasError);
+                Assert.False(viewModel.IsLoading);
+                Assert.False(view.HasActiveEdgePrefetch);
+                Assert.Equal(64, viewModel.Items.Count);
+                PumpLayout(window);
+                Assert.Equal(1, repository.EdgeLoadCount);
+
+                scrollViewer.ScrollToTop();
+                PumpLayout(window);
+                scrollViewer.ScrollToEnd();
+                PumpLayout(window);
+                Assert.Equal(2, repository.EdgeLoadCount);
+                Assert.True(viewModel.HasError);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void LateOldDataContextPrefetchCannotSuppressTheCurrentContext()
+    {
+        wpf.Invoke(() =>
+        {
+            var oldRepository = new DelayedFirstEdgeStageRepository(
+                512,
+                honorCancellation: false);
+            var currentRepository = new StaticStageRepository(512);
+            using var oldViewModel = new StageViewModel(
+                oldRepository,
+                new NoopStageFileService());
+            using var currentViewModel = new StageViewModel(
+                currentRepository,
+                new NoopStageFileService());
+            oldViewModel.InitializeAsync().GetAwaiter().GetResult();
+            currentViewModel.InitializeAsync().GetAwaiter().GetResult();
+            var view = new StageView
+            {
+                DataContext = oldViewModel,
+            };
+            var window = new Window
+            {
+                Width = 520,
+                Height = 320,
+                Content = view,
+                ShowInTaskbar = false,
+                WindowStyle = WindowStyle.None,
+                ResizeMode = ResizeMode.NoResize,
+            };
+
+            window.Show();
+            try
+            {
+                PumpLayout(window);
+                var list = Assert.IsType<ListBox>(view.FindName("StageItemsList"));
+                var scrollViewer = Assert.Single(
+                    FindVisualDescendants<ScrollViewer>(list));
+                scrollViewer.ScrollToEnd();
+                PumpLayout(window);
+                Assert.True(view.HasActiveEdgePrefetch);
+                Assert.True(oldRepository.FirstEdgeStarted.Task.IsCompleted);
+
+                view.DataContext = currentViewModel;
+                PumpLayout(window);
+                Assert.True(view.HasActiveEdgePrefetch);
+                Assert.Equal(
+                    currentViewModel.Items,
+                    view.CardRows.SelectMany(static row => row.Items));
+                scrollViewer.ScrollToEnd();
+                PumpLayout(window);
+                Assert.Single(currentRepository.LoadCalls);
+
+                oldRepository.ReleaseFirstEdge.TrySetResult();
+                PumpLayout(window);
+
+                Assert.False(view.HasActiveEdgePrefetch);
+                Assert.Equal(2, currentRepository.LoadCalls.Count);
+                Assert.Equal(
+                    StagePageDirection.TowardOlder,
+                    currentRepository.LoadCalls[^1].Direction);
+                Assert.Equal(128, currentViewModel.Items.Count);
+                Assert.Equal(64, oldViewModel.Items.Count);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void TallTenColumnViewportGrowsTheWindowUntilItHasScrollableExtent()
+    {
+        wpf.Invoke(() =>
+        {
+            var repository = new StaticStageRepository(10_000);
+            using var viewModel = new StageViewModel(
+                repository,
+                new NoopStageFileService());
+            viewModel.InitializeAsync().GetAwaiter().GetResult();
+            var view = new StageView
+            {
+                DataContext = viewModel,
+                Width = 1600,
+                Height = 2100,
+                CardHeight = 94,
+                CardRowUnitHeight = 100,
+            };
+            var host = new Canvas();
+            host.Children.Add(view);
+            var window = new Window
+            {
+                Width = 800,
+                Height = 700,
+                Content = host,
+                ShowInTaskbar = false,
+                WindowStyle = WindowStyle.None,
+                ResizeMode = ResizeMode.NoResize,
+            };
+
+            window.Show();
+            try
+            {
+                PumpLayout(window);
+                var list = Assert.IsType<ListBox>(view.FindName("StageItemsList"));
+                var scrollViewer = Assert.Single(
+                    FindVisualDescendants<ScrollViewer>(list));
+
+                Assert.Equal(10, view.CardLayoutProfile?.ColumnCount);
+                Assert.True(viewModel.WindowMaximumItemCount >= 320);
+                Assert.InRange(viewModel.Items.Count, 193, viewModel.WindowMaximumItemCount);
+                Assert.True(scrollViewer.ScrollableHeight > 0);
+                Assert.True(viewModel.CanLoadOlder);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void DataContextAndAuthorityReplacementPublishOnlyTheCurrentRowsThenScrollTop()
     {
         wpf.Invoke(() =>
         {
@@ -1350,6 +1698,133 @@ public sealed partial class StageViewIntegrationTests(WpfApplicationFixture wpf)
         encoder.Save(stream);
     }
 
+    private sealed class FailingEdgeStageRepository(int count) : IStageRepository
+    {
+        private readonly StaticStageRepository _inner = new(count);
+
+        public int EdgeLoadCount { get; private set; }
+
+        public Task<StagePage> LoadPageAsync(
+            StagePageCursor? anchor,
+            StagePageDirection direction,
+            int pageSize,
+            CancellationToken cancellationToken = default)
+        {
+            if (anchor is not null)
+            {
+                EdgeLoadCount++;
+                throw new InvalidOperationException("Injected edge read failure.");
+            }
+
+            return _inner.LoadPageAsync(anchor, direction, pageSize, cancellationToken);
+        }
+
+        public Task<StageAddBatchResult> AddBatchAsync(
+            IReadOnlyList<StageTargetDescriptor> targets,
+            CancellationToken cancellationToken = default) =>
+            _inner.AddBatchAsync(targets, cancellationToken);
+
+        public Task<StageRemoveResult> RemoveAsync(
+            Guid itemId,
+            long expectedRevision,
+            CancellationToken cancellationToken = default) =>
+            _inner.RemoveAsync(itemId, expectedRevision, cancellationToken);
+
+        public Task<StageItemMutationResult> SetPinnedAsync(
+            Guid itemId,
+            long expectedRevision,
+            bool isPinned,
+            CancellationToken cancellationToken = default) =>
+            _inner.SetPinnedAsync(itemId, expectedRevision, isPinned, cancellationToken);
+
+        public Task<StageRelinkResult> RelinkAsync(
+            Guid itemId,
+            long expectedRevision,
+            StageTargetDescriptor target,
+            CancellationToken cancellationToken = default) =>
+            _inner.RelinkAsync(itemId, expectedRevision, target, cancellationToken);
+
+        public Task<StageReorderResult> ReorderAsync(
+            StageReorderRequest request,
+            CancellationToken cancellationToken = default) =>
+            _inner.ReorderAsync(request, cancellationToken);
+    }
+
+    private sealed class DelayedFirstEdgeStageRepository(
+        int count,
+        bool honorCancellation = true) : IStageRepository
+    {
+        private readonly StaticStageRepository _inner = new(count);
+
+        public TaskCompletionSource FirstEdgeStarted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ReleaseFirstEdge { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int EdgeLoadCount { get; private set; }
+
+        public async Task<StagePage> LoadPageAsync(
+            StagePageCursor? anchor,
+            StagePageDirection direction,
+            int pageSize,
+            CancellationToken cancellationToken = default)
+        {
+            if (anchor is not null)
+            {
+                EdgeLoadCount++;
+                if (EdgeLoadCount == 1)
+                {
+                    FirstEdgeStarted.TrySetResult();
+                    if (honorCancellation)
+                    {
+                        await ReleaseFirstEdge.Task
+                            .WaitAsync(cancellationToken)
+                            .ConfigureAwait(true);
+                    }
+                    else
+                    {
+                        await ReleaseFirstEdge.Task.ConfigureAwait(true);
+                    }
+                }
+            }
+
+            return await _inner
+                .LoadPageAsync(anchor, direction, pageSize, cancellationToken)
+                .ConfigureAwait(true);
+        }
+
+        public Task<StageAddBatchResult> AddBatchAsync(
+            IReadOnlyList<StageTargetDescriptor> targets,
+            CancellationToken cancellationToken = default) =>
+            _inner.AddBatchAsync(targets, cancellationToken);
+
+        public Task<StageRemoveResult> RemoveAsync(
+            Guid itemId,
+            long expectedRevision,
+            CancellationToken cancellationToken = default) =>
+            _inner.RemoveAsync(itemId, expectedRevision, cancellationToken);
+
+        public Task<StageItemMutationResult> SetPinnedAsync(
+            Guid itemId,
+            long expectedRevision,
+            bool isPinned,
+            CancellationToken cancellationToken = default) =>
+            _inner.SetPinnedAsync(itemId, expectedRevision, isPinned, cancellationToken);
+
+        public Task<StageRelinkResult> RelinkAsync(
+            Guid itemId,
+            long expectedRevision,
+            StageTargetDescriptor target,
+            CancellationToken cancellationToken = default) =>
+            _inner.RelinkAsync(itemId, expectedRevision, target, cancellationToken);
+
+        public Task<StageReorderResult> ReorderAsync(
+            StageReorderRequest request,
+            CancellationToken cancellationToken = default) =>
+            _inner.ReorderAsync(request, cancellationToken);
+    }
+
     private sealed class StaticStageRepository : IStageRepository
     {
         private static readonly string[] RepresentativeNames =
@@ -1368,6 +1843,9 @@ public sealed partial class StageViewIntegrationTests(WpfApplicationFixture wpf)
         ];
 
         private readonly StageItem[] _items;
+
+        public List<(StagePageCursor? Anchor, StagePageDirection Direction)> LoadCalls
+        { get; } = [];
 
         public StaticStageRepository(int count)
         {
@@ -1410,6 +1888,7 @@ public sealed partial class StageViewIntegrationTests(WpfApplicationFixture wpf)
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            LoadCalls.Add((anchor, direction));
             IEnumerable<StageItem> candidates = direction switch
             {
                 StagePageDirection.TowardOlder => _items.Where(item =>
