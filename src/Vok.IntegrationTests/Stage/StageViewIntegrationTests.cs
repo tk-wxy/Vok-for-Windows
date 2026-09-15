@@ -1410,15 +1410,59 @@ public sealed partial class StageViewIntegrationTests(WpfApplicationFixture wpf)
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var page = _items.Take(pageSize).ToArray();
+            IEnumerable<StageItem> candidates = direction switch
+            {
+                StagePageDirection.TowardOlder => _items.Where(item =>
+                    anchor is null || Compare(item, anchor.Value) < 0),
+                StagePageDirection.TowardNewer => _items
+                    .Where(item => anchor is not null && Compare(item, anchor.Value) > 0)
+                    .Reverse(),
+                _ => throw new ArgumentOutOfRangeException(nameof(direction)),
+            };
+            var page = candidates.Take(pageSize).ToArray();
+            if (direction is StagePageDirection.TowardNewer)
+            {
+                Array.Reverse(page);
+            }
+
+            if (page.Length == 0)
+            {
+                return Task.FromResult(new StagePage([], null, null, _items.Length));
+            }
+
+            var firstIndex = Array.FindIndex(_items, item => item.Id == page[0].Id);
+            var lastIndex = Array.FindIndex(_items, item => item.Id == page[^1].Id);
+            StageOrderAnchor? newerBoundary = firstIndex > 0
+                ? ToOrderAnchor(_items[firstIndex - 1])
+                : null;
+            StageOrderAnchor? olderBoundary = lastIndex < _items.Length - 1
+                ? ToOrderAnchor(_items[lastIndex + 1])
+                : null;
             return Task.FromResult(new StagePage(
                 page,
-                NewerCursor: null,
-                OlderCursor: page.Length == 0 || page.Length == _items.Length
+                NewerCursor: newerBoundary is null
+                    ? null
+                    : new StagePageCursor(page[0].SortOrder, page[0].Id),
+                OlderCursor: olderBoundary is null
                     ? null
                     : new StagePageCursor(page[^1].SortOrder, page[^1].Id),
-                TotalCount: _items.Length));
+                TotalCount: _items.Length,
+                newerBoundary,
+                olderBoundary));
         }
+
+        private static int Compare(StageItem item, StagePageCursor cursor)
+        {
+            var orderComparison = item.SortOrder.CompareTo(cursor.SortOrder);
+            return orderComparison != 0
+                ? orderComparison
+                : StringComparer.Ordinal.Compare(
+                    item.Id.ToString("D"),
+                    cursor.Id.ToString("D"));
+        }
+
+        private static StageOrderAnchor ToOrderAnchor(StageItem item) =>
+            new(item.Id, item.Revision, item.SortOrder);
 
         public Task<StageAddBatchResult> AddBatchAsync(
             IReadOnlyList<StageTargetDescriptor> targets,

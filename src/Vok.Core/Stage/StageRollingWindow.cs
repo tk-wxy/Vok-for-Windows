@@ -193,6 +193,20 @@ public sealed class StageRollingWindow
             ToOrderAnchor(edgeItem));
     }
 
+    public void Invalidate()
+    {
+        if (!_isInitialized)
+        {
+            throw new InvalidOperationException(
+                "The Stage rolling window must be initialized before it is invalidated.");
+        }
+
+        if (!_requiresReset)
+        {
+            InvalidateForReset();
+        }
+    }
+
     public StageRollingWindowApplyResult Apply(
         StageRollingWindowLoadRequest request,
         StagePage page)
@@ -222,6 +236,7 @@ public sealed class StageRollingWindow
         var segment = ValidatePage(page);
         if (page.TotalCount != TotalCount ||
             !JoinsCurrentWindow(request, segment) ||
+            !StartsAtExpectedAdjacentItem(request, segment) ||
             ContainsRetainedId(segment))
         {
             InvalidateForReset();
@@ -269,6 +284,58 @@ public sealed class StageRollingWindow
                 EvictedItems: evictedItems));
     }
 
+    public void ReconcileRetainedItems(
+        IReadOnlyList<StageItem> retainedItems,
+        StageOrderAnchor? newerBoundary,
+        StageOrderAnchor? olderBoundary)
+    {
+        ArgumentNullException.ThrowIfNull(retainedItems);
+        if (!_isInitialized || _requiresReset)
+        {
+            throw new InvalidOperationException(
+                "The Stage rolling window must be valid before reconciling retained items.");
+        }
+
+        var snapshot = retainedItems.ToArray();
+        if (snapshot.Length != _items.Count)
+        {
+            throw new InvalidOperationException(
+                "A retained Stage reconciliation cannot change the window item count.");
+        }
+
+        var currentIds = _items.Select(static item => item.Id).ToHashSet();
+        if (snapshot.Select(static item => item.Id).Distinct().Count() != snapshot.Length ||
+            !currentIds.SetEquals(snapshot.Select(static item => item.Id)))
+        {
+            throw new InvalidOperationException(
+                "A retained Stage reconciliation must preserve the window item identities.");
+        }
+
+        ValidateReconciledBoundary(
+            NewerBoundary,
+            newerBoundary,
+            nameof(newerBoundary));
+        ValidateReconciledBoundary(
+            OlderBoundary,
+            olderBoundary,
+            nameof(olderBoundary));
+
+        var segmentSizes = _segments
+            .Select(static segment => segment.Items.Count)
+            .ToArray();
+        var replacement = BuildReconciledSegments(
+            snapshot,
+            segmentSizes,
+            newerBoundary,
+            olderBoundary);
+        var nextGeneration = checked(_generation + 1);
+
+        _segments.Clear();
+        _segments.AddRange(replacement);
+        _items = Array.AsReadOnly(snapshot);
+        _generation = nextGeneration;
+    }
+
     private static bool IsEmptyDriftResponse(StagePage page) =>
         page.Items is { Count: 0 } &&
         page.TotalCount >= 0 &&
@@ -305,10 +372,91 @@ public sealed class StageRollingWindow
             _ => false,
         };
 
+    private bool StartsAtExpectedAdjacentItem(
+        StageRollingWindowLoadRequest request,
+        Segment segment)
+    {
+        if (segment.Items.Count == 0)
+        {
+            return false;
+        }
+
+        var expectedAdjacent = request.Direction == StagePageDirection.TowardOlder
+            ? OlderBoundary
+            : NewerBoundary;
+        var loadedAdjacent = request.Direction == StagePageDirection.TowardOlder
+            ? segment.Items[0]
+            : segment.Items[^1];
+        return expectedAdjacent == ToOrderAnchor(loadedAdjacent);
+    }
+
     private bool ContainsRetainedId(Segment segment)
     {
         var retainedIds = _items.Select(static item => item.Id).ToHashSet();
         return segment.Items.Any(item => retainedIds.Contains(item.Id));
+    }
+
+    private IReadOnlyList<Segment> BuildReconciledSegments(
+        IReadOnlyList<StageItem> items,
+        IReadOnlyList<int> segmentSizes,
+        StageOrderAnchor? newerBoundary,
+        StageOrderAnchor? olderBoundary)
+    {
+        var replacements = new List<Segment>(segmentSizes.Count);
+        var offset = 0;
+        for (var index = 0; index < segmentSizes.Count; index++)
+        {
+            var segmentSize = segmentSizes[index];
+            var segmentItems = items.Skip(offset).Take(segmentSize).ToArray();
+            if (segmentItems.Length != segmentSize)
+            {
+                throw new InvalidOperationException(
+                    "A retained Stage reconciliation did not preserve segment sizes.");
+            }
+
+            var segmentNewerBoundary = index == 0
+                ? newerBoundary
+                : ToOrderAnchor(items[offset - 1]);
+            var segmentOlderBoundary = index == segmentSizes.Count - 1
+                ? olderBoundary
+                : ToOrderAnchor(items[offset + segmentSize]);
+            StagePageCursor? segmentNewerCursor = segmentNewerBoundary is null
+                ? null
+                : ToCursor(segmentItems[0]);
+            StagePageCursor? segmentOlderCursor = segmentOlderBoundary is null
+                ? null
+                : ToCursor(segmentItems[^1]);
+            replacements.Add(ValidatePage(new StagePage(
+                segmentItems,
+                segmentNewerCursor,
+                segmentOlderCursor,
+                TotalCount,
+                segmentNewerBoundary,
+                segmentOlderBoundary)));
+            offset += segmentSize;
+        }
+
+        if (offset != items.Count)
+        {
+            throw new InvalidOperationException(
+                "A retained Stage reconciliation did not consume the full window.");
+        }
+
+        return replacements;
+    }
+
+    private static void ValidateReconciledBoundary(
+        StageOrderAnchor? current,
+        StageOrderAnchor? replacement,
+        string parameterName)
+    {
+        if ((current is null) != (replacement is null) ||
+            current?.Id != replacement?.Id)
+        {
+            throw new ArgumentException(
+                "A retained Stage reconciliation must preserve boundary identities.",
+                parameterName);
+        }
     }
 
     private void ValidateDirectionalFill(

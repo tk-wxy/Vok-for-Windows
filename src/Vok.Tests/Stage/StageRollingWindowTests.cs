@@ -318,6 +318,30 @@ public sealed class StageRollingWindowTests
     }
 
     [Fact]
+    public void SkippingTheRecordedAdjacentOccurrenceRequiresReset()
+    {
+        var allItems = CreateItems(12);
+        var window = ResetWindow(allItems, segmentSize: 4, maximumSegmentCount: 3);
+        var request = Assert.IsType<StageRollingWindowLoadRequest>(
+            window.CreateLoadRequest(StagePageDirection.TowardOlder));
+        var skippedItems = allItems.Skip(5).Take(4).ToArray();
+        var skippedPage = new StagePage(
+            skippedItems,
+            NewerCursor: ToCursor(skippedItems[0]),
+            OlderCursor: ToCursor(skippedItems[^1]),
+            TotalCount: allItems.Count,
+            NewerBoundary: ToOrderAnchor(allItems[3]),
+            OlderBoundary: ToOrderAnchor(allItems[9]));
+        var before = window.Items;
+
+        var result = window.Apply(request, skippedPage);
+
+        Assert.Equal(StageRollingWindowApplyStatus.ResetRequired, result.Status);
+        Assert.True(window.RequiresReset);
+        Assert.Same(before, window.Items);
+    }
+
+    [Fact]
     public void EmptyResponseFromAFormerEdgeRequiresResetInsteadOfLookingLikeCorruption()
     {
         var allItems = CreateItems(12);
@@ -373,6 +397,112 @@ public sealed class StageRollingWindowTests
 
         Assert.Same(before, window.Items);
         Assert.Equal(generation, window.Generation);
+    }
+
+    [Fact]
+    public void RetainedReconciliationRebuildsSegmentJoinsAndStalesOldRequests()
+    {
+        var allItems = CreateItems(20)
+            .Select(item => item with { SortOrder = item.SortOrder * 100 })
+            .ToArray();
+        var window = ResetWindow(allItems, segmentSize: 4, maximumSegmentCount: 3);
+        _ = ApplyNext(window, allItems, StagePageDirection.TowardOlder);
+        _ = ApplyNext(window, allItems, StagePageDirection.TowardOlder);
+        _ = ApplyNext(window, allItems, StagePageDirection.TowardOlder);
+        var staleRequest = Assert.IsType<StageRollingWindowLoadRequest>(
+            window.CreateLoadRequest(StagePageDirection.TowardOlder));
+        var beforeGeneration = window.Generation;
+        var projected = window.Items.ToList();
+        var source = projected[5];
+        projected.RemoveAt(5);
+        projected.Insert(1, source with
+        {
+            SortOrder = (projected[0].SortOrder + projected[1].SortOrder) / 2,
+            Revision = source.Revision + 1,
+        });
+
+        window.ReconcileRetainedItems(
+            projected,
+            window.NewerBoundary,
+            window.OlderBoundary);
+
+        Assert.Equal(beforeGeneration + 1, window.Generation);
+        Assert.Equal(projected, window.Items);
+        Assert.Equal(3, window.SegmentCount);
+        Assert.True(IsStrictlyDescending(window.Items));
+        Assert.NotNull(window.CreateLoadRequest(StagePageDirection.TowardNewer));
+        Assert.NotNull(window.CreateLoadRequest(StagePageDirection.TowardOlder));
+
+        var stalePage = LoadPage(
+            allItems,
+            staleRequest.Anchor,
+            staleRequest.Direction,
+            window.SegmentSize);
+        var staleResult = window.Apply(staleRequest, stalePage);
+        Assert.Equal(StageRollingWindowApplyStatus.Stale, staleResult.Status);
+        Assert.Equal(projected, window.Items);
+    }
+
+    [Fact]
+    public void InvalidRetainedReconciliationIsRejectedAtomically()
+    {
+        var allItems = CreateItems(12);
+        var window = ResetWindow(allItems, segmentSize: 4, maximumSegmentCount: 3);
+        _ = ApplyNext(window, allItems, StagePageDirection.TowardOlder);
+        var before = window.Items;
+        var beforeGeneration = window.Generation;
+        var wrongBoundary = window.OlderBoundary is { } older
+            ? new StageOrderAnchor(Guid.NewGuid(), older.Revision, older.SortOrder)
+            : new StageOrderAnchor(Guid.NewGuid(), 1, long.MinValue);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            window.ReconcileRetainedItems(
+                before.Take(before.Count - 1).ToArray(),
+                window.NewerBoundary,
+                window.OlderBoundary));
+        Assert.Throws<ArgumentException>(() =>
+            window.ReconcileRetainedItems(
+                before,
+                window.NewerBoundary,
+                wrongBoundary));
+        Assert.Throws<InvalidOperationException>(() =>
+            window.ReconcileRetainedItems(
+                before.Reverse().ToArray(),
+                window.NewerBoundary,
+                window.OlderBoundary));
+
+        Assert.Same(before, window.Items);
+        Assert.Equal(beforeGeneration, window.Generation);
+        Assert.False(window.RequiresReset);
+    }
+
+    [Fact]
+    public void ExplicitInvalidationIsIdempotentAndBlocksEdgeRequestsUntilReset()
+    {
+        var allItems = CreateItems(12);
+        var window = ResetWindow(allItems, segmentSize: 4, maximumSegmentCount: 3);
+        var request = Assert.IsType<StageRollingWindowLoadRequest>(
+            window.CreateLoadRequest(StagePageDirection.TowardOlder));
+        var generation = window.Generation;
+
+        window.Invalidate();
+        window.Invalidate();
+
+        Assert.True(window.RequiresReset);
+        Assert.Equal(generation + 1, window.Generation);
+        Assert.Null(window.CreateLoadRequest(StagePageDirection.TowardOlder));
+        var page = LoadPage(allItems, request.Anchor, request.Direction, 4);
+        Assert.Equal(
+            StageRollingWindowApplyStatus.Stale,
+            window.Apply(request, page).Status);
+
+        window.Reset(LoadPage(
+            allItems,
+            null,
+            StagePageDirection.TowardOlder,
+            window.SegmentSize));
+        Assert.False(window.RequiresReset);
+        Assert.NotNull(window.CreateLoadRequest(StagePageDirection.TowardOlder));
     }
 
     private static StageRollingWindow ResetWindow(

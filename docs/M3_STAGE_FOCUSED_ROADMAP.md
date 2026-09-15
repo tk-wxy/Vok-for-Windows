@@ -1,6 +1,6 @@
 # M3 中转站聚焦路线：大容量无可见分页拖放工作台
 
-> **状态（2026-09-14）**：用户已确认当前产品容量可暂设为 50，但架构必须支持超大上限并保持流畅、低内存和良好存储性能；同一路径允许重复出现；拖入、拖出及其批量操作是核心。本文取代 2026-09-11 的“固定 50 条、一次全部加载”推导。删除的是用户可见分页、页码和跳页体验，不是内部 SQL 分页与数据虚拟化。前置 P0 呼出修复已达到用户预期；N0 occurrence/schema 8 已完成并提交但未部署，下一步进入 N1 连续数据虚拟化。
+> **状态（2026-09-15）**：用户已确认当前产品容量可暂设为 50，但架构必须支持超大上限并保持流畅、低内存和良好存储性能；同一路径允许重复出现；拖入、拖出及其批量操作是核心。本文取代 2026-09-11 的“固定 50 条、一次全部加载”推导。删除的是用户可见分页、页码和跳页体验，不是内部 SQL 分页与数据虚拟化。前置 P0 呼出修复已达到用户预期；N0 occurrence/schema 8、N1.1 双向 keyset 与 N1.2 纯 rolling window 已部署且最小人工 Gate 通过。N1.3A ViewModel 窗口权威接管已完成验证并随本次提交归档，但尚未部署；下一步进入 N1.3B WPF 连续滚动接线。
 
 ## 1. 产品定义
 
@@ -41,7 +41,7 @@ StageOccurrence
 
 ### 2.2 schema 迁移
 
-当前运行实例与真实产品库仍为 schema 7；源码已完成 N0.1 schema 8 迁移和 N0.2 occurrence 批量写入，部署后的产品路径使用 `AddBatchAsync`，不再按 canonical 去重或回顶。N0 的持久化合同是：
+当前独立候选与真实产品库已运行 schema 8；产品路径使用 `AddBatchAsync`，不再按 canonical 去重或回顶。N0 的持久化合同是：
 
 - 在单事务 schema 8 迁移中删除 canonical 唯一索引，建立普通 `ix_stage_items_canonical(canonical_key COLLATE NOCASE)`；
 - 保留已有行、id、顺序、固定、revision 和时间，不合并、不复制、不删除数据；
@@ -144,11 +144,11 @@ WPF 容器虚拟化只能减少视觉容器，不能阻止全部业务对象常�
 
 | 能力 | 当前状态 | 结论 |
 |---|---|---|
-| 分层、SQLite executor/WAL、schema 核验 | N0.1 已扩展到 schema 8 严格迁移；未部署 | 合格基础 |
+| 分层、SQLite executor/WAL、schema 核验 | N0.1 schema 8 严格迁移已部署并通过真实库审计 | 合格基础 |
 | keyset 顺序索引、64 位稀疏排序、有界重平衡 | 已有且有 10k 门禁 | 合格基础 |
 | 外部单项/批量 FileDrop 入站 Router | 已有并保留来源顺序与重复项 | 入站路由与写入合同合格 |
-| 重复文件 occurrence | schema 8 非唯一索引、`AddBatchAsync` 与 ViewModel 纵切已完成 | 自动门禁合格；未部署 |
-| 无可见分页连续大数据滚动 | 当前是 64 项整页按钮切换 | 不符合 |
+| 重复文件 occurrence | schema 8 非唯一索引、`AddBatchAsync` 与 ViewModel 纵切已部署 | 自动与人工 Gate 合格 |
+| 无可见分页连续大数据滚动 | N1.3A 已接入最多 192 项 ViewModel 窗口；WPF 仍有页脚且未接触边预取 | 尚未符合 |
 | 单项直接排序及零集合预览 | S3 已通过用户 Gate | 当前 50 条下合格 |
 | 大数据窗口间连续排序 | 未实现；S4 整页切换已否决并回退 | 未达标 |
 | 单项拖出 | 未实现 | 未达标 |
@@ -170,7 +170,7 @@ P0.5 的最终候选经用户长静置确认“呼出无缓慢、中转站无白
 
 ### N0：合同与 schema 8
 
-截至 2026-09-14，N0 已完成并提交但尚未部署。N0.1 以单事务完成 schema 7→8 canonical 普通索引迁移，并通过真实副本 7→8→8、schema 8 幂等及派生 6→8/历史 5→8 回放。N0.2 用原子 `AddBatchAsync` 取代 `AddOrMoveAsync`，每个 descriptor 独立生成 occurrence，重新关联也只按 `id + revision` 而不拒绝重复 canonical；49/50/51、同批/跨批大小写重复、schema 7 升级后立即重复写、SQL 中途失败回滚、非法 descriptor、源摘要、Router/ViewModel 纵切均有自动门禁。最终 Release 669/669、构建零警告，完整测试前后真实 schema 7 库与八表摘要不变。
+截至 2026-09-15，N0 已完成、提交并随独立候选部署。N0.1 以单事务完成 schema 7→8 canonical 普通索引迁移，并通过真实副本 7→8→8、schema 8 幂等及派生 6→8/历史 5→8 回放；首次真实部署前又创建稳定且逻辑精确匹配的在线备份，候选启动后真实库升为 schema 8，canonical 普通索引生效，八张业务表摘要、46 条 Stage 与 67 个 Ready 资产全部保持，`quick_check=ok`、0 外键/资产异常。N0.2 用原子 `AddBatchAsync` 取代 `AddOrMoveAsync`，每个 descriptor 独立生成 occurrence，重新关联也只按 `id + revision` 而不拒绝重复 canonical；49/50/51、同批/跨批大小写重复、schema 7 升级后立即重复写、SQL 中途失败回滚、非法 descriptor、源摘要、Router/ViewModel 纵切均有自动门禁。
 
 - 冻结 occurrence、重复路径、批量原子性、当前 50/大容量架构和无可见分页合同；
 - 迁移 canonical 唯一索引为普通索引，接 `AddBatchAsync`，更新 Router/ViewModel；
@@ -179,10 +179,11 @@ P0.5 的最终候选经用户长静置确认“呼出无缓慢、中转站无白
 
 ### N1：连续数据虚拟化
 
-截至 2026-09-15，N1.1 仓储地基已完成验证并提交但尚未部署：Core/SQLite 已提供显式 `TowardOlder`/`TowardNewer` 复合 keyset，统一返回 DESC 顺序、双侧 cursor/存在性和紧邻排序边界；向新路径反向使用既有 `ix_stage_items_order`，无 `OFFSET`、无 schema 9。N1.2 又新增纯 Core `StageRollingWindow`：当前命名策略为 64 项一段、最多 3 段/192 项，加载凭据绑定窗口实例、generation、方向、cursor 与接缝边界；向旧追加、向新前插，第四段进入时只淘汰反方向段并返回增量 delta。总数或接缝漂移、原边缘空响应会失效当前 generation 并要求整窗 reset，迟到/重复/跨实例响应不落状态，结构损坏页在写状态前拒绝。21 项新增门禁覆盖双向合并/反向淘汰、同 sort-order GUID 结、末段不足 64、10k 双向全遍历且常驻不超过 192、generation/cursor/边界迟到和原子失败；最终 Release 108/108 + 583/583 共 691/691，独立输出构建零警告。测试前后真实 schema 7、schema/八表摘要、46 条 Stage、`quick_check=ok` 与 0 外键违规均保持。N1.2 已提交但尚未接入 ViewModel 或部署，当前页脚和整页行为不变；下一步 N1.3 接 ViewModel 与连续滚动 UI。
+截至 2026-09-15，N1.1 仓储地基与 N1.2 纯 Core `StageRollingWindow` 已完成、验证并随候选部署：双向复合 keyset 统一返回 DESC 顺序和双侧紧邻边界，不使用 `OFFSET`；窗口以 64 项一段、最多 3 段/192 项工作，并以实例/generation/方向/cursor/接缝拒绝迟到结果。N1.3A 已完成验证并随本次提交归档，但尚未部署：`StageViewModel` 删除 page-index/cursor-history 第二权威，初始/reset/双向 edge 全部通过 rolling window，added/evicted delta 保留 retained VM 与 Availability；固定、重新关联、排序的权威结果原子重建 segment 接缝，新增/移除和冲突使旧 generation 失效后只重载一次。自审另补上新段必须从此前记录的紧邻 occurrence 开始，避免总数不变的跳项。新增 4 项 Core 与 2 项 Integration 后 Release 112/112 + 585/585 共 697/697，Stage WPF 21/21，独立 solution 构建零警告；真实库仍为 schema 8、50 条 Stage、66 个 Ready 资产、`quick_check=ok`、0 外键/资产异常，PID 6984 未替换。N1.3B 将单独接滚动触边、像素锚点和页脚移除。
 
 - 移除页脚和页面导航体验，但保留/扩展内部双向 keyset；
 - 建立连续滚动虚拟集合、前后预取、窗口淘汰、锚点恢复和 selection 轻量身份；
+- N1.3A 只替换 ViewModel 分页权威并按 added/evicted delta 保留窗口内 VM 身份；N1.3B 再改变 WPF 滚动行为，避免同时修改数据权威和布局时序；
 - 先通过 50 条无回归，再完成 10k/100k 常驻量、滚动和迟到结果门禁；
 - 不重复 S4 的整页替换和边缘跳页。
 

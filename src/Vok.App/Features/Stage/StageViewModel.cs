@@ -7,19 +7,15 @@ namespace Vok.Features.Stage;
 
 public sealed partial class StageViewModel : ObservableObject, IDisposable
 {
-    internal const int PageSize = 64;
+    internal const int PageSize = StageRollingWindow.DefaultSegmentSize;
 
     private readonly IStageRepository _repository;
     private readonly IStageFileService _fileService;
     private readonly SemaphoreSlim _operationGate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
-    private readonly List<StagePageCursor?> _pageStarts = [null];
-    private StagePageCursor? _nextCursor;
-    private StageOrderAnchor? _newerBoundary;
-    private StageOrderAnchor? _olderBoundary;
+    private readonly StageRollingWindow _window = new();
     private StageReorderSession? _reorderSession;
     private long _nextReorderGeneration;
-    private int _pageIndex;
     private bool _initialized;
     private bool _disposed;
     private bool _isReordering;
@@ -100,25 +96,14 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
     public bool ShowErrorState => HasError && Items.Count == 0;
 
     public bool CanLoadNewer =>
-        !_disposed && !IsLoading && !IsInteractionLocked && _pageIndex > 0;
+        !_disposed && !IsLoading && !IsInteractionLocked &&
+        _window.IsInitialized && !_window.RequiresReset && _window.HasNewer;
 
     public bool CanLoadOlder =>
-        !_disposed && !IsLoading && !IsInteractionLocked && _nextCursor is not null;
+        !_disposed && !IsLoading && !IsInteractionLocked &&
+        _window.IsInitialized && !_window.RequiresReset && _window.HasOlder;
 
-    public string PageSummaryText
-    {
-        get
-        {
-            if (Items.Count == 0)
-            {
-                return $"0 / {TotalCount}";
-            }
-
-            var first = checked((long)_pageIndex * PageSize + 1);
-            var last = checked(first + Items.Count - 1);
-            return $"{first}–{last} / {TotalCount}";
-        }
-    }
+    public string PageSummaryText => $"已加载 {Items.Count} / {TotalCount}";
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -138,11 +123,7 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
             }
 
             _initialized = true;
-            await LoadPageLockedAsync(
-                    after: null,
-                    pageIndex: 0,
-                    resetHistory: true,
-                    operationToken)
+            await LoadNewestWindowLockedAsync(operationToken)
                 .ConfigureAwait(true);
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
@@ -250,6 +231,7 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
                         $"Unsupported Stage result: {result.Status}.");
             }
 
+            InvalidateWindowForReset();
             try
             {
                 var page = await _repository
@@ -259,7 +241,7 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
                         PageSize,
                         operationToken)
                     .ConfigureAwait(true);
-                ApplyPage(page, pageIndex: 0, start: null, resetHistory: true);
+                ApplyWindowReset(page);
                 StatusText = CreateAppliedStatus(result, invalid.Length);
             }
             catch (OperationCanceledException)
@@ -338,8 +320,8 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
             source,
             Items.ToArray(),
             sourceIndex,
-            _newerBoundary,
-            _olderBoundary);
+            _window.NewerBoundary,
+            _window.OlderBoundary);
         source.IsDragging = true;
         IsReordering = true;
         StatusText = $"正在移动“{source.DisplayName}”…";
@@ -426,7 +408,11 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
                     break;
 
                 case StageReorderStatus.NoChange:
-                    StatusText = $"“{session.Source.DisplayName}”已经位于该位置。";
+                    RestoreReorderSnapshot(session);
+                    await ReloadFirstPageAfterRejectedReorderAsync(
+                            $"“{session.Source.DisplayName}”已经位于该位置；列表已刷新。",
+                            _lifetime.Token)
+                        .ConfigureAwait(true);
                     break;
 
                 case StageReorderStatus.SortOrderExhausted:
@@ -920,13 +906,10 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         }
         catch (Exception applyException)
         {
+            InvalidateWindowForReset();
             try
             {
-                await LoadPageLockedAsync(
-                        after: null,
-                        pageIndex: 0,
-                        resetHistory: true,
-                        cancellationToken)
+                await ReloadNewestWindowCoreAsync(cancellationToken)
                     .ConfigureAwait(true);
                 StatusText =
                     $"已保存“{session.Source.DisplayName}”的新位置，列表已重新加载。";
@@ -970,10 +953,16 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         var projectedItems = Items
             .Select(item => changedById.GetValueOrDefault(item.Id) ?? item.Item)
             .ToArray();
+        var newerBoundary = UpdateAnchor(_window.NewerBoundary, changedById);
+        var olderBoundary = UpdateAnchor(_window.OlderBoundary, changedById);
         ValidateProjectedOrder(
             projectedItems,
-            UpdateAnchor(_newerBoundary, changedById),
-            UpdateAnchor(_olderBoundary, changedById));
+            newerBoundary,
+            olderBoundary);
+        _window.ReconcileRetainedItems(
+            projectedItems,
+            newerBoundary,
+            olderBoundary);
 
         foreach (var projection in Items)
         {
@@ -983,23 +972,7 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
             }
         }
 
-        for (var index = 0; index < _pageStarts.Count; index++)
-        {
-            _pageStarts[index] = UpdateCursor(_pageStarts[index], changedById);
-        }
-
-        _newerBoundary = UpdateAnchor(_newerBoundary, changedById);
-        _olderBoundary = UpdateAnchor(_olderBoundary, changedById);
-        if (_nextCursor is not null && Items.Count != 0)
-        {
-            _nextCursor = new StagePageCursor(Items[^1].SortOrder, Items[^1].Id);
-            var nextPageIndex = _pageIndex + 1;
-            if (nextPageIndex < _pageStarts.Count)
-            {
-                _pageStarts[nextPageIndex] = _nextCursor;
-            }
-        }
-
+        ValidateProjectionMatchesWindow();
         NotifyPageStateChanged();
     }
 
@@ -1031,13 +1004,10 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         string successStatus,
         CancellationToken cancellationToken)
     {
+        InvalidateWindowForReset();
         try
         {
-            await LoadPageLockedAsync(
-                    after: null,
-                    pageIndex: 0,
-                    resetHistory: true,
-                    cancellationToken)
+            await ReloadNewestWindowCoreAsync(cancellationToken)
                 .ConfigureAwait(true);
             StatusText = successStatus;
         }
@@ -1054,13 +1024,10 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
 
     private async Task ReloadFirstPageAfterUnknownReorderAsync(Exception exception)
     {
+        InvalidateWindowForReset();
         try
         {
-            await LoadPageLockedAsync(
-                    after: null,
-                    pageIndex: 0,
-                    resetHistory: true,
-                    _lifetime.Token)
+            await ReloadNewestWindowCoreAsync(_lifetime.Token)
                 .ConfigureAwait(true);
             HasError = true;
             StatusText = $"排序结果待核对，列表已重新加载：{exception.Message}";
@@ -1122,13 +1089,6 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
     private static StageOrderAnchor ToOrderAnchor(StageItem item) =>
         new(item.Id, item.Revision, item.SortOrder);
 
-    private static StagePageCursor? UpdateCursor(
-        StagePageCursor? cursor,
-        IReadOnlyDictionary<Guid, StageItem> changedById) =>
-        cursor is { } current && changedById.TryGetValue(current.Id, out var changed)
-            ? new StagePageCursor(changed.SortOrder, changed.Id)
-            : cursor;
-
     private static StageOrderAnchor? UpdateAnchor(
         StageOrderAnchor? anchor,
         IReadOnlyDictionary<Guid, StageItem> changedById) =>
@@ -1181,35 +1141,11 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
                 return;
             }
 
-            if (loadOlder)
-            {
-                if (_nextCursor is not { } next)
-                {
-                    return;
-                }
-
-                var nextIndex = checked(_pageIndex + 1);
-                var start = nextIndex < _pageStarts.Count
-                    ? _pageStarts[nextIndex]
-                    : next;
-                await LoadPageLockedAsync(start, nextIndex, resetHistory: false, operationToken)
-                    .ConfigureAwait(true);
-            }
-            else
-            {
-                if (_pageIndex == 0)
-                {
-                    return;
-                }
-
-                var previousIndex = _pageIndex - 1;
-                await LoadPageLockedAsync(
-                        _pageStarts[previousIndex],
-                        previousIndex,
-                        resetHistory: false,
-                        operationToken)
-                    .ConfigureAwait(true);
-            }
+            var direction = loadOlder
+                ? StagePageDirection.TowardOlder
+                : StagePageDirection.TowardNewer;
+            await LoadWindowEdgeLockedAsync(direction, operationToken)
+                .ConfigureAwait(true);
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
         {
@@ -1228,27 +1164,14 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         }
     }
 
-    private async Task LoadPageLockedAsync(
-        StagePageCursor? after,
-        int pageIndex,
-        bool resetHistory,
+    private async Task LoadNewestWindowLockedAsync(
         CancellationToken cancellationToken)
     {
         SetLoading(true);
         HasError = false;
         try
         {
-            var page = await _repository
-                .LoadPageAsync(
-                    after,
-                    StagePageDirection.TowardOlder,
-                    PageSize,
-                    cancellationToken)
-                .ConfigureAwait(true);
-            ApplyPage(page, pageIndex, after, resetHistory);
-            StatusText = page.TotalCount == 0
-                ? "中转站为空。"
-                : $"中转站共有 {page.TotalCount} 个项目；按住卡片可直接排序。";
+            await ReloadNewestWindowCoreAsync(cancellationToken).ConfigureAwait(true);
         }
         finally
         {
@@ -1256,32 +1179,78 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         }
     }
 
+    private async Task LoadWindowEdgeLockedAsync(
+        StagePageDirection direction,
+        CancellationToken cancellationToken)
+    {
+        var request = _window.CreateLoadRequest(direction);
+        if (request is null)
+        {
+            return;
+        }
+
+        SetLoading(true);
+        HasError = false;
+        try
+        {
+            var page = await _repository
+                .LoadPageAsync(
+                    request.Anchor,
+                    direction,
+                    PageSize,
+                    cancellationToken)
+                .ConfigureAwait(true);
+            var result = _window.Apply(request, page);
+            switch (result.Status)
+            {
+                case StageRollingWindowApplyStatus.Applied:
+                    ApplyWindowChange(result.Change ?? throw new InvalidOperationException(
+                        "An applied Stage rolling-window load did not return its delta."));
+                    SetLoadedStatus();
+                    break;
+
+                case StageRollingWindowApplyStatus.Stale:
+                    break;
+
+                case StageRollingWindowApplyStatus.ResetRequired:
+                    await ReloadNewestWindowCoreAsync(cancellationToken)
+                        .ConfigureAwait(true);
+                    break;
+
+                default:
+                    throw new InvalidOperationException(
+                        $"Unsupported Stage rolling-window result: {result.Status}.");
+            }
+        }
+        finally
+        {
+            SetLoading(false);
+        }
+    }
+
+    private async Task ReloadNewestWindowCoreAsync(
+        CancellationToken cancellationToken)
+    {
+        var page = await _repository
+            .LoadPageAsync(
+                anchor: null,
+                StagePageDirection.TowardOlder,
+                PageSize,
+                cancellationToken)
+            .ConfigureAwait(true);
+        ApplyWindowReset(page);
+        SetLoadedStatus();
+    }
+
     private async Task ApplyConfirmedRemovalAsync(
         StageItemViewModel item,
         CancellationToken cancellationToken)
     {
         var displayName = item.DisplayName;
-        _ = Items.Remove(item);
-        TotalCount = Math.Max(0, TotalCount - 1);
-        NotifyPageStateChanged();
-
-        var targetPageIndex = _pageIndex;
-        if (Items.Count == 0 && TotalCount > 0 && targetPageIndex > 0)
-        {
-            targetPageIndex--;
-        }
-
-        var start = targetPageIndex == 0
-            ? null
-            : _pageStarts[targetPageIndex];
-        TruncatePageHistoryAfter(targetPageIndex);
+        InvalidateWindowForReset();
         try
         {
-            await LoadPageLockedAsync(
-                    start,
-                    targetPageIndex,
-                    resetHistory: targetPageIndex == 0,
-                    cancellationToken)
+            await ReloadNewestWindowCoreAsync(cancellationToken)
                 .ConfigureAwait(true);
             StatusText = $"已从中转站移除“{displayName}”；原文件未受影响。";
         }
@@ -1300,15 +1269,10 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         string successStatus,
         CancellationToken cancellationToken)
     {
-        var start = _pageIndex == 0 ? null : _pageStarts[_pageIndex];
-        TruncatePageHistoryAfter(_pageIndex);
+        InvalidateWindowForReset();
         try
         {
-            await LoadPageLockedAsync(
-                    start,
-                    _pageIndex,
-                    resetHistory: _pageIndex == 0,
-                    cancellationToken)
+            await ReloadNewestWindowCoreAsync(cancellationToken)
                 .ConfigureAwait(true);
             StatusText = successStatus;
         }
@@ -1327,15 +1291,10 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         string successStatus,
         CancellationToken cancellationToken)
     {
-        var start = _pageIndex == 0 ? null : _pageStarts[_pageIndex];
-        TruncatePageHistoryAfter(_pageIndex);
+        InvalidateWindowForReset();
         try
         {
-            await LoadPageLockedAsync(
-                    start,
-                    _pageIndex,
-                    resetHistory: _pageIndex == 0,
-                    cancellationToken)
+            await ReloadNewestWindowCoreAsync(cancellationToken)
                 .ConfigureAwait(true);
             StatusText = successStatus;
         }
@@ -1355,15 +1314,10 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         Exception applyException,
         CancellationToken cancellationToken)
     {
-        var start = _pageIndex == 0 ? null : _pageStarts[_pageIndex];
-        TruncatePageHistoryAfter(_pageIndex);
+        InvalidateWindowForReset();
         try
         {
-            await LoadPageLockedAsync(
-                    start,
-                    _pageIndex,
-                    resetHistory: _pageIndex == 0,
-                    cancellationToken)
+            await ReloadNewestWindowCoreAsync(cancellationToken)
                 .ConfigureAwait(true);
             StatusText = $"{committedStatus} 列表已重新加载。";
         }
@@ -1386,15 +1340,10 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         string successStatus,
         CancellationToken cancellationToken)
     {
-        var start = _pageIndex == 0 ? null : _pageStarts[_pageIndex];
-        TruncatePageHistoryAfter(_pageIndex);
+        InvalidateWindowForReset();
         try
         {
-            await LoadPageLockedAsync(
-                    start,
-                    _pageIndex,
-                    resetHistory: _pageIndex == 0,
-                    cancellationToken)
+            await ReloadNewestWindowCoreAsync(cancellationToken)
                 .ConfigureAwait(true);
             StatusText = successStatus;
         }
@@ -1413,56 +1362,170 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
         StageItemViewModel projection,
         StageItem authoritativeItem)
     {
-        projection.Update(authoritativeItem);
-        ItemAuthorityChanged?.Invoke(projection);
-    }
-
-    private void TruncatePageHistoryAfter(int pageIndex)
-    {
-        while (_pageStarts.Count > pageIndex + 1)
-        {
-            _pageStarts.RemoveAt(_pageStarts.Count - 1);
-        }
-    }
-
-    private void ApplyPage(
-        StagePage page,
-        int pageIndex,
-        StagePageCursor? start,
-        bool resetHistory)
-    {
-        if (page.Items.Count > PageSize)
+        if (!Items.Contains(projection))
         {
             throw new InvalidOperationException(
-                $"Stage repository returned more than {PageSize} items.");
+                "An authoritative Stage item is no longer retained by the window.");
         }
 
-        if (resetHistory)
+        if (authoritativeItem.Id != projection.Id)
         {
-            _pageStarts.Clear();
-            _pageStarts.Add(null);
-        }
-        else if (pageIndex == _pageStarts.Count)
-        {
-            _pageStarts.Add(start);
-        }
-        else if (pageIndex > _pageStarts.Count)
-        {
-            throw new InvalidOperationException("Stage page cursor history is discontinuous.");
+            throw new InvalidOperationException(
+                "An authoritative Stage item update changed its occurrence identity.");
         }
 
+        var changedById = new Dictionary<Guid, StageItem>
+        {
+            [authoritativeItem.Id] = authoritativeItem,
+        };
+        var projectedItems = Items
+            .Select(item => changedById.GetValueOrDefault(item.Id) ?? item.Item)
+            .ToArray();
+        _window.ReconcileRetainedItems(
+            projectedItems,
+            UpdateAnchor(_window.NewerBoundary, changedById),
+            UpdateAnchor(_window.OlderBoundary, changedById));
+        projection.Update(authoritativeItem);
+        ValidateProjectionMatchesWindow();
+        ItemAuthorityChanged?.Invoke(projection);
+        NotifyPageStateChanged();
+    }
+
+    private void ApplyWindowReset(StagePage page)
+    {
+        _window.Reset(page);
+        ReplaceProjectionFromWindow();
+        ValidateProjectionMatchesWindow();
+        TotalCount = _window.TotalCount;
+        NotifyPageStateChanged();
+    }
+
+    private void ApplyWindowChange(StageRollingWindowChange change)
+    {
+        if (change.IsReset || change.AddedAt is null)
+        {
+            throw new InvalidOperationException(
+                "An edge Stage rolling-window change must describe its added edge.");
+        }
+
+        ValidateProjectionBeforeWindowChange(change);
+        try
+        {
+            if (change.EvictedFrom is StageRollingWindowEdge.Newer)
+            {
+                for (var index = 0; index < change.EvictedItems.Count; index++)
+                {
+                    Items.RemoveAt(0);
+                }
+            }
+            else if (change.EvictedFrom is StageRollingWindowEdge.Older)
+            {
+                for (var index = 0; index < change.EvictedItems.Count; index++)
+                {
+                    Items.RemoveAt(Items.Count - 1);
+                }
+            }
+
+            if (change.AddedAt is StageRollingWindowEdge.Newer)
+            {
+                for (var index = change.AddedItems.Count - 1; index >= 0; index--)
+                {
+                    Items.Insert(0, new StageItemViewModel(change.AddedItems[index]));
+                }
+            }
+            else
+            {
+                foreach (var item in change.AddedItems)
+                {
+                    Items.Add(new StageItemViewModel(item));
+                }
+            }
+
+            ValidateProjectionMatchesWindow();
+        }
+        catch (Exception applyException)
+        {
+            try
+            {
+                ReplaceProjectionFromWindow();
+            }
+            catch (Exception recoveryException)
+            {
+                throw new AggregateException(
+                    "A Stage rolling-window delta and its projection recovery both failed.",
+                    applyException,
+                    recoveryException);
+            }
+
+            throw new InvalidOperationException(
+                "A Stage rolling-window delta could not be applied to its projection.",
+                applyException);
+        }
+
+        TotalCount = _window.TotalCount;
+        NotifyPageStateChanged();
+    }
+
+    private void ValidateProjectionBeforeWindowChange(
+        StageRollingWindowChange change)
+    {
+        var expectedOldIds = new List<Guid>(
+            checked(_window.Items.Count - change.AddedItems.Count +
+                change.EvictedItems.Count));
+        if (change.AddedAt is StageRollingWindowEdge.Newer)
+        {
+            expectedOldIds.AddRange(_window.Items
+                .Skip(change.AddedItems.Count)
+                .Select(static item => item.Id));
+            expectedOldIds.AddRange(change.EvictedItems.Select(static item => item.Id));
+        }
+        else
+        {
+            expectedOldIds.AddRange(change.EvictedItems.Select(static item => item.Id));
+            expectedOldIds.AddRange(_window.Items
+                .Take(_window.Items.Count - change.AddedItems.Count)
+                .Select(static item => item.Id));
+        }
+
+        if (!expectedOldIds.SequenceEqual(Items.Select(static item => item.Id)))
+        {
+            throw new InvalidOperationException(
+                "The Stage item projection no longer matches the rolling-window delta base.");
+        }
+    }
+
+    private void ValidateProjectionMatchesWindow()
+    {
+        if (!Items.Select(static item => item.Item).SequenceEqual(_window.Items))
+        {
+            throw new InvalidOperationException(
+                "The Stage item projection does not match the rolling window.");
+        }
+    }
+
+    private void ReplaceProjectionFromWindow()
+    {
         Items.Clear();
-        foreach (var item in page.Items)
+        foreach (var item in _window.Items)
         {
             Items.Add(new StageItemViewModel(item));
         }
+    }
 
-        _pageIndex = pageIndex;
-        _nextCursor = page.OlderCursor;
-        _newerBoundary = page.NewerBoundary;
-        _olderBoundary = page.OlderBoundary;
-        TotalCount = page.TotalCount;
-        NotifyPageStateChanged();
+    private void InvalidateWindowForReset()
+    {
+        if (_window.IsInitialized)
+        {
+            _window.Invalidate();
+            NotifyPageStateChanged();
+        }
+    }
+
+    private void SetLoadedStatus()
+    {
+        StatusText = _window.TotalCount == 0
+            ? "中转站为空。"
+            : $"中转站共有 {_window.TotalCount} 个项目；按住卡片可直接排序。";
     }
 
     private void RecordLoadFailure(string operation, Exception exception)
