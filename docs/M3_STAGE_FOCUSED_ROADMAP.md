@@ -179,7 +179,7 @@ P0.5 的最终候选经用户长静置确认“呼出无缓慢、中转站无白
 
 ### N1：连续数据虚拟化
 
-截至 2026-09-14，N1.1 仓储地基已完成验证并提交但尚未部署：Core/SQLite 已提供显式 `TowardOlder`/`TowardNewer` 复合 keyset，统一返回 DESC 顺序、双侧 cursor/存在性和紧邻排序边界；向新路径反向使用既有 `ix_stage_items_order`，无 `OFFSET`、无 schema 9。当前 ViewModel 只显式消费初始/向旧路径，故页脚和整页行为仍保持。门禁覆盖同 sort-order GUID 结、双向中页往返、精确边界、10k 实际往返/双向查询计划和非法方向/游标；最终 Release 670/670、零警告构建，真实 schema 7 产品库前后无变化。下一步 N1.2 只建立有界 rolling-window 状态及迟到结果合同，再由 N1.3 接连续滚动 UI。
+截至 2026-09-15，N1.1 仓储地基已完成验证并提交但尚未部署：Core/SQLite 已提供显式 `TowardOlder`/`TowardNewer` 复合 keyset，统一返回 DESC 顺序、双侧 cursor/存在性和紧邻排序边界；向新路径反向使用既有 `ix_stage_items_order`，无 `OFFSET`、无 schema 9。N1.2 又新增纯 Core `StageRollingWindow`：当前命名策略为 64 项一段、最多 3 段/192 项，加载凭据绑定窗口实例、generation、方向、cursor 与接缝边界；向旧追加、向新前插，第四段进入时只淘汰反方向段并返回增量 delta。总数或接缝漂移、原边缘空响应会失效当前 generation 并要求整窗 reset，迟到/重复/跨实例响应不落状态，结构损坏页在写状态前拒绝。21 项新增门禁覆盖双向合并/反向淘汰、同 sort-order GUID 结、末段不足 64、10k 双向全遍历且常驻不超过 192、generation/cursor/边界迟到和原子失败；最终 Release 108/108 + 583/583 共 691/691，独立输出构建零警告。测试前后真实 schema 7、schema/八表摘要、46 条 Stage、`quick_check=ok` 与 0 外键违规均保持。N1.2 已提交但尚未接入 ViewModel 或部署，当前页脚和整页行为不变；下一步 N1.3 接 ViewModel 与连续滚动 UI。
 
 - 移除页脚和页面导航体验，但保留/扩展内部双向 keyset；
 - 建立连续滚动虚拟集合、前后预取、窗口淘汰、锚点恢复和 selection 轻量身份；

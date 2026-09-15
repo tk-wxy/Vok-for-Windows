@@ -11,14 +11,14 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片、排序 S0–S3 和呼出 P0 已通过。N0 occurrence/schema 8 与 N1.1 双向复合 keyset 仓储合同均已完成、提交但未部署。运行中的 PID 18352 与真实产品库仍保持既有 schema 7，本轮未替换候选。
-- **最近进展**：`StagePageDirection`、双侧 cursor/`HasNewer`/`HasOlder` 和紧邻排序边界已接入 Core/SQLite；窗口无论读取方向都按 `(sort_order DESC, id DESC)` 返回，向新查询以现有顺序索引反向扫描且不用 `OFFSET`。当前 ViewModel 显式使用初始/向旧方向，用户可见分页行为暂不改变。同 sort-order GUID 结、双向中页往返、精确边界、10k 实际往返/双向索引计划和非法方向/游标有门禁；最终 Release Core 87/87 + Integration 583/583 共 670/670、构建零警告。完整测试前后真实库版本 7、schema 与八表摘要一致，46 条 Stage、`quick_check=ok`、0 外键违规。
-- **下一步**：进入 N1.2：提取纯 rolling-window 状态，以命名的 64 项 segment 和最多 3 segment/192 VM 暂定上限实现双向合并、反向淘汰、generation/游标/边界迟到门禁；先不改 WPF 页脚和 ScrollChanged 接线，也不发布或迁移真实库。
-- **已知问题**：N1.2–N1.4 连续滚动 UI、N2/N3 单项/批量拖出与交付后清理尚未实现，因此当前源码仍保留 64 项整页分页且不是完整 Stage 产品候选。KI-001 仍后置；KI-002 为长静置首次呼出略慢于连续热呼出，KI-003 为 Clipboard 图片缩略图短暂空白。纯 30 分钟、明确 Modern Standby/Unlock 分档及正式 Present 证据未逐项完成；测试产生的 `.lnk` 副本未经授权不得删除。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片、排序 S0–S3 和呼出 P0 已通过。N0 occurrence/schema 8、N1.1 双向复合 keyset 与 N1.2 纯 rolling-window 状态均已完成并提交但未部署；N1.2 尚未接入产品 UI。运行中的 PID 18352 与真实产品库仍保持既有 schema 7，本轮未替换候选。
+- **最近进展**：新增纯 Core `StageRollingWindow`，以命名的 64 项 segment、最多 3 segment/192 项实现双向合并与反向淘汰；请求凭据绑定窗口实例、generation、方向、cursor 和接缝边界，迟到/重复/跨实例响应不落状态，总数/边界漂移及原边缘空响应要求 reset，结构损坏页原子拒绝。21 项新增门禁覆盖同 sort-order GUID、末段不足 64、10k 双向全遍历且常驻不超过 192；最终 Release Core 108/108 + Integration 583/583 共 691/691、独立构建零警告。测试前后真实库版本 7、schema 与八表摘要一致，46 条 Stage、`quick_check=ok`、0 外键违规。
+- **下一步**：进入 N1.3：将 rolling window 作为 Stage ViewModel 唯一数据窗口，替换 `_pageStarts/_pageIndex/Items.Clear` 整页权威并增量应用 added/evicted delta，再接近边缘的双向预取与像素锚点；先分析 mutation/reorder/Availability 与现有 `ScrollChanged` 的交接，不恢复可见分页。
+- **已知问题**：N1.3–N1.4 ViewModel/WPF 连续滚动、N2/N3 单项/批量拖出与交付后清理尚未实现，因此当前产品 UI 仍保留 64 项整页分页且不是完整 Stage 产品候选。KI-001 仍后置；KI-002 为长静置首次呼出略慢于连续热呼出，KI-003 为 Clipboard 图片缩略图短暂空白。纯 30 分钟、明确 Modern Standby/Unlock 分档及正式 Present 证据未逐项完成；测试产生的 `.lnk` 副本未经授权不得删除。
 
 ## §0A 最近会话
 
-### 会话 2026-09-13 至 2026-09-14 - Stage P0、N0 与 N1 连续数据虚拟化
+### 会话 2026-09-13 至 2026-09-15 - Stage P0、N0 与 N1 连续数据虚拟化
 
 - P0.1 增加默认关闭的有界 reveal/Shell/资源/恢复轨迹、报告工具和固定候选截图探针；真实 46 条基线证明普通 Hide 不重建行，但旧路径每次揭示前重查 46 项，且通用 Rendering 可早于行发布和滚动完成。
 - P0.2–4 将隐藏期静态投影准备、generation/content/layout/state readiness token、render-return + attempt DWM fence、Availability 状态保留及物理在途上限 4 接入生产路径；Availability 只在完成呈现后复查，内部/外部拖动期间暂停。
@@ -33,6 +33,8 @@
 - 最终 Release Core 87/87 + Integration 582/582 共 669/669、零警告构建；完整测试首次暴露 Clipboard 丢弃诊断早于 `finally` 清理的既有测试竞态，改为等待真实 job/lease 回落后单测 20/20、全套通过。真实库前后保持 schema 7、schema/八表摘要不变、46 条 Stage、`quick_check=ok`、0 外键违规；N0.2 已提交但未部署，PID 18352 未替换。
 - N1.1 将 Stage 读取合同扩展为显式向旧/向新复合 keyset，返回双侧 cursor、是否还有数据及窗口外紧邻排序边界；向新读取使用同一 `ix_stage_items_order` 的 ASC 反向扫描，结果再恢复统一 DESC 顺序，单侧 lookahead 保持每页只额外读取一次另一侧边界。当前 ViewModel 只显式消费初始/向旧路径，分页 UI 尚未改变。
 - 同 sort-order GUID 结、双向中页往返、精确边界、10k 实际往返/双向索引计划和非法方向/游标均通过；最终 Release 87/87 + 583/583 共 670/670、0 warning / 0 error。真实库前后仍为 schema 7、schema/八表摘要一致、46 条 Stage、`quick_check=ok`、0 外键违规；改动已提交但未部署，PID 18352 未替换。
+- N1.2 新增纯 Core rolling-window 状态：64 项 segment、最多 3 segment/192 项；加载凭据绑定实例、generation、方向、cursor 与接缝边界，支持向旧追加/向新前插、第四段反向淘汰和 added/evicted delta。总数/接缝漂移与旧边缘空响应要求 reset，迟到/重复/跨实例响应不落状态，结构错误页原子拒绝。
+- 21 项新增门禁覆盖双向合并、反向淘汰、末段不足 64、同 sort-order GUID、10k 双向全遍历且常驻不超过 192、generation/cursor/边界迟到与无部分应用。默认目录全量命令因保留运行中的 PID 18352 锁定 DLL 而失败，未停止实例；改用唯一 `%TEMP%` ArtifactsPath 后 Release 108/108 + 583/583 共 691/691、构建 0 warning / 0 error。测试前后真实 schema 7、schema/八表摘要、46 条 Stage、`quick_check=ok`、0 外键违规均一致；N1.2 已提交但尚未接线或部署。
 
 ### 会话 2026-09-05 至 2026-09-12 - M3.1 中转站管理动作与卡片基础
 
