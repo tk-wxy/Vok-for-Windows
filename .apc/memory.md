@@ -11,9 +11,9 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片、排序 S0–S3 和呼出 P0 已通过。N0 occurrence/schema 8、N1.1–N1.3 连续数据虚拟化均已提交；N1.3 尚未部署。N1.4A 隔离自动规模基线已完成并随本次提交归档但尚未部署；2026-09-21 核对时没有 `Vok.exe` 运行实例，真实库为 schema 8、50 条 Stage、62 个 Ready 资产且健康。
-- **最近进展**：新增 create-only Stage 规模探针，以真实 SQLite 仓储、ViewModel、StageView 和 WPF 视觉树独立运行 50/10k/100k。诊断确认 edge 慢段是同列数时 `Rows.Clear()` 重建全部行容器而非 SQLite/VM；改为复用行对象与可观察 item slots，并让 Availability 在 edge 期间取消、锚点稳定后恢复。正式 10k 完整往返 309 次、100k 固定种子压力 512 次，最大 VM 192、已实现卡片 110、821/821 个锚点最大误差 0 DIP，数据库/源摘要和隐藏收口均通过。Release 114/114 + 594/594 共 708/708，高风险 30/30，探针 0 warning / 0 error；真实库前后摘要一致。
-- **下一步**：完成 N1.4B：在可用的精确 4K/100% 环境运行物理滚动/往返观感 Gate，结合首份资源曲线由用户确认性能阈值；通过后进入 N2 单项/批量 OLE Gate。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片、排序 S0–S3 和呼出 P0 已通过。N0 occurrence/schema 8、N1.1–N1.3 连续数据虚拟化均已提交；N1.3 尚未部署。N1.4A 隔离自动规模基线与 N1.4B 最大化交互检查器均已完成源码验证但尚未部署；2026-09-21 核对时没有 `Vok.exe` 运行实例，真实库为 schema 8、50 条 Stage、62 个 Ready 资产且健康。
+- **最近进展**：新增独立 `inspect` verb 与 create-only `Start-M3StageScaleInspection.ps1`，以最大化真实 Stage 窗口供用户双向滚动，并被动记录预取、投影/Items/Rows/视口、像素锚点、窗口/已实现数量和资源曲线；关闭后等待预取、Dispatcher 与 Availability 全部归零。报告将客观检查、精确 3840×2160/96 DPI 环境资格和 `UserVerdict=NotCaptured` 分开，当前机器不会冒充物理 Gate。关闭起点/视口信号后的迟到测量、双向窗口淘汰、旧自动模式和只读审计句柄均有门禁；最终 Release 114/114 + 599/599 共 713/713，探针 5/5、高风险 50/50，256 条旧自动全往返回归通过。
+- **下一步**：用已完成的 N1.4B 检查器在当前硬件先做 10k/100k 人工滚动排练，再在精确 4K/100% 环境完成用户物理往返观感 Gate，并结合首份资源曲线确认性能阈值；通过后进入 N2 单项/批量 OLE Gate。
 - **已知问题**：当前机器仅为 3200×2000、200% DPI，精确 4K/100% 和用户物理手感尚未验证，N1.4 不能整体记为通过；100k 首份曲线 Private/Working Set 末段较早期约高 6.9/3.6 MiB但 Managed Heap 平台、GDI 恒定且 Handle/Thread/USER 回落，尚无用户确认的数值 SLA。连续窗口间远距离排序、N2/N3 拖出闭环仍未完成；KI-001/002/003 继续有效，测试产生的 `.lnk` 副本未经授权不得删除。
 
 ## §0A 最近会话
@@ -43,6 +43,8 @@
 - N1.4A 新增只允许显式输出根、create-only fixture/report 的独立规模工具；prepare/run 分进程，使用真实 SQLite Stage 仓储、ViewModel、StageView、WPF 虚拟容器和文件服务，但不接产品 mutex、热键、剪贴板、托盘或真实库。报告固定 executable SHA、显示/DPI、DB/source 摘要、每次边缘里程碑、像素锚点、窗口/已实现卡片和 250 ms 资源样本；越界目标与覆盖已有输出均已拒绝且零创建。
 - 首轮 10k 全往返虽正确但 edge P50 约 782 ms；里程碑把慢段定位到行发布后恢复锚点。`StageCardRowsProjection` 原先每次 edge 都 `Rows.Clear()`，64 项淘汰又会在 10 列布局下改变所有分组，导致 WPF 重建全部复杂卡片容器并同步布局。改为同列数复用行对象及可观察 item slots，Availability 在 edge 期间取消并于锚点稳定后重启；256 项 P50 从约 871 降至 439 ms，1k 的 27 次全往返 P50 约 492 ms、锚点误差 0。
 - 正式基线在 3200×2000/200% DPI、1500×900 DIP 窗口完成：50 条正常呈现；10k 以 309 次 edge 完整走到最旧并返回最新；100k 以固定种子完成 512 次随机压力。10k/100k 最大 VM 192、最大已实现卡片 110，821/821 锚点最大误差 0 DIP，顺序/窗口/隐藏收口、隔离 DB/source 摘要均通过。100k Managed Heap 约 27–28 MiB、GDI 恒 7、Handle/Thread/USER 回落；Private/Working Set 64-step 均值末段约 197.8/261.0 MiB，只作为首份基线。完整 Release 708/708、高风险 30/30、探针零警告；真实 schema/Stage/资产摘要前后一致。精确 4K/100% 与用户物理手感仍待 N1.4B。
+- N1.4B 在同一隔离工具中新增 `inspect` 模式与 create-only 编排器：真实 Stage 最大化/激活后由用户连续双向滚动，观察器只订阅内部预取生命周期并在视口事件所属 `ContextIdle` 回调返回后测量；generation 与可取消 Dispatcher 操作保证关闭起点、视口信号后关闭和跨轮次均只收口一次。报告固定客观检查、精确 4K/100% 环境资格和 `UserVerdict=NotCaptured`，不会把自动动作写成人工通过。
+- 实施中复现两个所有权问题：同步在 `ViewportMutationSettled` 内测量会读到锚点恢复前 6.5 DIP，延后一优先级后为 0；只读 SQLite 审计使用默认连接池会在同进程测试结束后继续锁住夹具，改为 `Pooling=false` 后删除与反复运行稳定。自动关闭烟雾在 3200×2000/200% DPI 只证明生命周期/报告链，双向人工阶段的程序化门禁证明客观检查可通过但仍保持 `UserVerdict=NotCaptured`。最终 Release 713/713、探针 5/5、高风险 50/50、旧自动 256 条全往返回归通过；探针已纳入 solution 的 Release 配置。精确 4K/100% 与用户物理 Gate 仍未执行。
 
 ### 会话 2026-09-05 至 2026-09-12 - M3.1 中转站管理动作与卡片基础
 

@@ -151,6 +151,7 @@ internal static class StageScaleData
             DataSource = databasePath,
             Mode = SqliteOpenMode.ReadOnly,
             Cache = SqliteCacheMode.Private,
+            Pooling = false,
         };
         using var connection = new SqliteConnection(builder.ToString());
         connection.Open();

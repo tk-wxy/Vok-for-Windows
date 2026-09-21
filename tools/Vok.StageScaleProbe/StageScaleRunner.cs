@@ -469,7 +469,7 @@ internal sealed class StageScaleRunner(
             EdgeMaximumMilliseconds: elapsed.Length == 0 ? 0 : elapsed[^1]);
     }
 
-    private static async Task MoveToEdgeAsync(
+    internal static async Task MoveToEdgeAsync(
         ScrollViewer scrollViewer,
         double rowUnitHeight,
         StagePageDirection direction)
@@ -507,7 +507,7 @@ internal sealed class StageScaleRunner(
             DispatcherPriority.Background);
     }
 
-    private static async Task WaitForViewportReadyAsync(
+    internal static async Task WaitForViewportReadyAsync(
         StageView view,
         StageViewModel viewModel,
         CancellationToken cancellationToken)
@@ -530,7 +530,7 @@ internal sealed class StageScaleRunner(
             "Stage did not settle its rolling-window viewport mutation.");
     }
 
-    private static async Task WaitForConditionAsync(
+    internal static async Task WaitForConditionAsync(
         Func<bool> condition,
         string failureMessage,
         CancellationToken cancellationToken)
@@ -551,7 +551,7 @@ internal sealed class StageScaleRunner(
         throw new TimeoutException(failureMessage);
     }
 
-    private static bool IsStrictlyDescending(
+    internal static bool IsStrictlyDescending(
         IReadOnlyList<StageItemViewModel> items)
     {
         for (var index = 1; index < items.Count; index++)
@@ -571,11 +571,11 @@ internal sealed class StageScaleRunner(
         return true;
     }
 
-    private static int CountRealizedCards(StageView view) =>
+    internal static int CountRealizedCards(StageView view) =>
         FindVisualDescendants<Border>(view).Count(static border =>
             border.Name == "StageItemCard" && border.IsLoaded);
 
-    private static T? FindVisualDescendant<T>(DependencyObject root)
+    internal static T? FindVisualDescendant<T>(DependencyObject root)
         where T : DependencyObject
     {
         foreach (var candidate in FindVisualDescendants<T>(root))
@@ -586,7 +586,7 @@ internal sealed class StageScaleRunner(
         return null;
     }
 
-    private static IEnumerable<T> FindVisualDescendants<T>(DependencyObject root)
+    internal static IEnumerable<T> FindVisualDescendants<T>(DependencyObject root)
         where T : DependencyObject
     {
         var count = VisualTreeHelper.GetChildrenCount(root);
@@ -605,7 +605,7 @@ internal sealed class StageScaleRunner(
         }
     }
 
-    private static double Percentile(IReadOnlyList<double> sorted, double percentile)
+    internal static double Percentile(IReadOnlyList<double> sorted, double percentile)
     {
         if (sorted.Count == 0)
         {
@@ -844,7 +844,7 @@ internal sealed class StageScaleRunner(
             double ViewportSettledMilliseconds);
     }
 
-    private sealed class FrameIntervalSampler
+    internal sealed class FrameIntervalSampler
     {
         private readonly List<long> _timestamps = [];
         private bool _started;

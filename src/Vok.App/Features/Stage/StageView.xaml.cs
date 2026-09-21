@@ -220,6 +220,10 @@ public partial class StageView : UserControl
 
     internal event Action? RowsProjectionPublished;
 
+    internal event Action<StagePageDirection>? EdgePrefetchStarted;
+
+    internal event Action<StagePageDirection, bool>? EdgePrefetchCompleted;
+
     internal StageCardLayoutProfile? CardLayoutProfile => _cardLayoutProfile;
 
     internal double CardViewportWidth => GetStageScrollViewer()?.ViewportWidth ?? 0;
@@ -1471,6 +1475,7 @@ public partial class StageView : UserControl
         _edgePrefetchActive = true;
         _edgePrefetchReevaluateAfterCompletion = false;
         CancelAllAvailabilityBindings(resetState: false);
+        EdgePrefetchStarted?.Invoke(direction);
         _ = RunEdgePrefetchAsync(
             viewModel,
             direction,
@@ -1539,6 +1544,8 @@ public partial class StageView : UserControl
             {
                 ScheduleAvailabilityRefresh();
             }
+
+            EdgePrefetchCompleted?.Invoke(direction, contentChanged);
         }
     }
 

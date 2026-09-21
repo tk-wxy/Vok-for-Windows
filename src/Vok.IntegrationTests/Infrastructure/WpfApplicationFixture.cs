@@ -45,6 +45,13 @@ public sealed class WpfApplicationFixture : IDisposable
         Application.Dispatcher.Invoke(action);
     }
 
+    public Task<T> InvokeAsync<T>(Func<Task<T>> action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        return Application.Dispatcher.InvokeAsync(action).Task.Unwrap();
+    }
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)

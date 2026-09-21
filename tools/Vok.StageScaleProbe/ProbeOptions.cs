@@ -6,6 +6,7 @@ internal enum ProbeVerb
 {
     Prepare,
     Run,
+    Inspect,
 }
 
 internal sealed record ProbeOptions(
@@ -16,6 +17,8 @@ internal sealed record ProbeOptions(
     string SourceRevision,
     int ItemCount,
     int EdgeSteps,
+    int WarmupEdgeSteps,
+    bool CloseAfterWarmup,
     double WindowWidth,
     double WindowHeight)
 {
@@ -34,7 +37,7 @@ internal sealed record ProbeOptions(
         if (arguments.Length == 0)
         {
             throw new ArgumentException(
-                "Expected: prepare|run --allowed-root PATH --root PATH " +
+                "Expected: prepare|run|inspect --allowed-root PATH --root PATH " +
                 "--report PATH --source-revision VALUE --count VALUE.");
         }
 
@@ -42,6 +45,7 @@ internal sealed record ProbeOptions(
         {
             "prepare" => ProbeVerb.Prepare,
             "run" => ProbeVerb.Run,
+            "inspect" => ProbeVerb.Inspect,
             _ => throw new ArgumentException($"Unknown probe verb: {arguments[0]}"),
         };
         var values = ParseNamedArguments(arguments.AsSpan(1));
@@ -61,6 +65,14 @@ internal sealed record ProbeOptions(
             "--edge-steps",
             0,
             MaximumEdgeSteps);
+        var warmupEdgeSteps = ParseInt32(
+            GetOptional(values, "--warmup-edge-steps", "0"),
+            "--warmup-edge-steps",
+            0,
+            MaximumEdgeSteps);
+        var closeAfterWarmup = ParseBoolean(
+            GetOptional(values, "--close-after-warmup", "false"),
+            "--close-after-warmup");
         var windowWidth = ParseDouble(
             GetOptional(values, "--window-width", "1500"),
             "--window-width",
@@ -71,6 +83,18 @@ internal sealed record ProbeOptions(
             "--window-height",
             480,
             2160);
+        if (verb is not ProbeVerb.Inspect &&
+            (warmupEdgeSteps != 0 || closeAfterWarmup))
+        {
+            throw new ArgumentException(
+                "Inspection warmup options are valid only for the inspect verb.");
+        }
+
+        if (verb is ProbeVerb.Inspect && edgeSteps != 0)
+        {
+            throw new ArgumentException(
+                "--edge-steps is valid only for the automated run verb.");
+        }
 
         var options = new ProbeOptions(
             verb,
@@ -80,6 +104,8 @@ internal sealed record ProbeOptions(
             sourceRevision,
             itemCount,
             edgeSteps,
+            warmupEdgeSteps,
+            closeAfterWarmup,
             windowWidth,
             windowHeight);
         ProbePaths.Validate(options);
@@ -118,6 +144,8 @@ internal sealed record ProbeOptions(
             "--source-revision",
             "--count",
             "--edge-steps",
+            "--warmup-edge-steps",
+            "--close-after-warmup",
             "--window-width",
             "--window-height",
         };
@@ -187,6 +215,19 @@ internal sealed record ProbeOptions(
                 name,
                 value,
                 $"Expected a finite value from {minimum} through {maximum}.");
+        }
+
+        return result;
+    }
+
+    private static bool ParseBoolean(string value, string name)
+    {
+        if (!bool.TryParse(value, out var result))
+        {
+            throw new ArgumentOutOfRangeException(
+                name,
+                value,
+                "Expected true or false.");
         }
 
         return result;

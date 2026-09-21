@@ -82,6 +82,7 @@ tools/
 ├── Probe-M0.ps1                # 结构化同代五门禁烟雾探针
 ├── Measure-HostInteraction.ps1 # 固定 PID/HWND 时延与长期资源探针
 ├── Measure-M3StageScale.ps1    # Stage 50/10k/100k 隔离规模编排与报告
+├── Start-M3StageScaleInspection.ps1 # Stage 最大化交互物理检查与独立报告
 ├── Probe-M2Clipboard.ps1        # 独立 Window Station 剪贴板与图片资源探针
 ├── Probe-M3StageData.ps1        # Stage 实时只读审计、在线备份与副本回放探针
 ├── Record-M3StageInbound.ps1    # 固定候选 PID/HWND 的物理验收记录器
@@ -89,7 +90,7 @@ tools/
 .apc/                           # 项目知识与开发协议
 ```
 
-中转站 M3.MVP3 入站与 M3.1 管理/当前窗口排序均已完成；普通卡面直接拖动、零集合变化 transform 预览已通过用户观感 Gate。2026-09-12 用户进一步明确：当前默认容量可暂设 50，但架构必须支持超大上限；同一路径可重复成为独立 occurrence；单项/批量拖入和拖出是核心。产品删除的是页码、较新/较早和整页跳转，不是内部 keyset 与数据虚拟化。N0 已将源码和真实产品库迁移到 schema 8 occurrence 身份与原子批量写入；N1.1 双向复合 keyset、N1.2 默认 3×64 项 rolling window、N1.3A ViewModel 权威接管及 N1.3B WPF 连续滚动均已完成源码验证。N1.3B 删除页脚，以视口容量加一段缓冲只增扩展窗口，接入双向触边预取、淘汰前 occurrence 像素锚点及隐藏/揭示/外部拖动/排序暂停；N1.3A/B 尚未部署，当前运行候选仍停留在 N1.2。Stage 仍没有拖出，因此尚不符合完整新标准。长时间后台后呼出迟钝与 Stage 空白的前置 P0 已通过同代静态门禁、按需根重绘和一次性 cloak 内真实视图 materialization 修复；Release 662/662、用户长静置确认呼出无缓慢且 Stage 无白屏。冷/热细微差异和 Clipboard 图片短暂空白仅登记 KI-002/KI-003。下一步进入 N1.4 大规模资源/物理门禁，再按 N2 单项/批量 OLE Gate 推进。KI-001 仍延期；再次修改活动外部拖动显隐时必须重新打开并验证。
+中转站 M3.MVP3 入站与 M3.1 管理/当前窗口排序均已完成；普通卡面直接拖动、零集合变化 transform 预览已通过用户观感 Gate。2026-09-12 用户进一步明确：当前默认容量可暂设 50，但架构必须支持超大上限；同一路径可重复成为独立 occurrence；单项/批量拖入和拖出是核心。产品删除的是页码、较新/较早和整页跳转，不是内部 keyset 与数据虚拟化。N0 已将源码和真实产品库迁移到 schema 8 occurrence 身份与原子批量写入；N1.1 双向复合 keyset、N1.2 默认 3×64 项 rolling window、N1.3A ViewModel 权威接管及 N1.3B WPF 连续滚动均已完成源码验证。N1.4A 已取得 50/10k/100k 隔离自动规模基线；N1.4B 最大化交互检查器、被动迁移遥测和关闭竞态门禁也已完成源码验证，但精确 4K/100% 用户物理 Gate 与阈值确认仍待执行。N1.3A/B 与 N1.4 均尚未部署，当前运行候选仍停留在 N1.2。Stage 仍没有拖出，因此尚不符合完整新标准。长时间后台后呼出迟钝与 Stage 空白的前置 P0 已通过同代静态门禁、按需根重绘和一次性 cloak 内真实视图 materialization 修复；Release 662/662、用户长静置确认呼出无缓慢且 Stage 无白屏。冷/热细微差异和 Clipboard 图片短暂空白仅登记 KI-002/KI-003。下一步执行 N1.4B 物理 Gate，再按 N2 单项/批量 OLE Gate 推进。KI-001 仍延期；再次修改活动外部拖动显隐时必须重新打开并验证。
 
 ## 常用命令
 

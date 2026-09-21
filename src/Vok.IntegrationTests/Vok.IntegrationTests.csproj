@@ -12,6 +12,7 @@
     <ProjectReference Include="..\Vok.Core\Vok.Core.csproj" />
     <ProjectReference Include="..\Vok.Infrastructure.Windows\Vok.Infrastructure.Windows.csproj" />
     <ProjectReference Include="..\Vok.App\Vok.App.csproj" />
+    <ProjectReference Include="..\..\tools\Vok.StageScaleProbe\Vok.StageScaleProbe.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />

@@ -21,7 +21,8 @@ internal static class Program
             return options.Verb switch
             {
                 ProbeVerb.Prepare => RunPrepare(options, cancellation.Token),
-                ProbeVerb.Run => RunWpf(options, cancellation.Token),
+                ProbeVerb.Run or ProbeVerb.Inspect =>
+                    RunWpf(options, cancellation.Token),
                 _ => throw new InvalidOperationException(
                     $"Unsupported probe verb: {options.Verb}"),
             };
@@ -63,16 +64,37 @@ internal static class Program
         {
             try
             {
-                var runner = new StageScaleRunner(application, options, marker);
-                var report = await runner
-                    .RunAsync(cancellationToken)
-                    .ConfigureAwait(true);
-                ProbeReportWriter.WriteNew(options.ReportPath, report);
-                Console.WriteLine(
-                    $"run {report.RequestedItemCount}: " +
-                    $"edges={report.Traversal.CompletedEdgeSteps}; " +
-                    $"visited={report.Traversal.VisitedOccurrenceCount}; " +
-                    $"anchorMax={report.Traversal.MaximumAnchorErrorDip:F3} DIP");
+                if (options.Verb is ProbeVerb.Run)
+                {
+                    var runner = new StageScaleRunner(application, options, marker);
+                    var report = await runner
+                        .RunAsync(cancellationToken)
+                        .ConfigureAwait(true);
+                    ProbeReportWriter.WriteNew(options.ReportPath, report);
+                    Console.WriteLine(
+                        $"run {report.RequestedItemCount}: " +
+                        $"edges={report.Traversal.CompletedEdgeSteps}; " +
+                        $"visited={report.Traversal.VisitedOccurrenceCount}; " +
+                        $"anchorMax={report.Traversal.MaximumAnchorErrorDip:F3} DIP");
+                }
+                else
+                {
+                    var runner = new StageScaleInspectionRunner(
+                        application,
+                        options,
+                        marker);
+                    var report = await runner
+                        .RunAsync(cancellationToken)
+                        .ConfigureAwait(true);
+                    ProbeReportWriter.WriteNew(options.ReportPath, report);
+                    Console.WriteLine(
+                        $"inspect {report.RequestedItemCount}: " +
+                        $"manualEdges={report.Inspection.ManualTransitions}; " +
+                        $"objective={report.Inspection.ObjectiveChecksPassed}; " +
+                        $"exact4K100={report.Inspection.Exact4K100Environment}; " +
+                        $"userVerdict={report.Inspection.UserVerdict}");
+                }
+
                 exitCode = 0;
             }
             catch (Exception exception)

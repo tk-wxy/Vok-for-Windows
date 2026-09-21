@@ -109,6 +109,49 @@ internal sealed record EdgeStepSample(
     bool CanLoadNewer,
     bool CanLoadOlder);
 
+internal sealed record InspectionTransitionSample(
+    int Step,
+    string InteractionPhase,
+    string Direction,
+    double ElapsedMilliseconds,
+    double? ProjectionChangingMilliseconds,
+    double? ItemsChangedMilliseconds,
+    double? RowsChangedMilliseconds,
+    double? ViewportSettledMilliseconds,
+    bool MilestonesComplete,
+    int WindowItemCount,
+    int WindowMaximumItemCount,
+    int CardRowCount,
+    int RealizedCardCount,
+    double VerticalOffset,
+    double ScrollableHeight,
+    double? AnchorErrorDip,
+    Guid FirstItemId,
+    Guid LastItemId,
+    bool CanLoadNewer,
+    bool CanLoadOlder);
+
+internal sealed record InspectionSummary(
+    int WarmupRequested,
+    int WarmupCompleted,
+    int ManualTransitions,
+    int ManualOlderTransitions,
+    int ManualNewerTransitions,
+    int VisitedOccurrenceCount,
+    bool OrderingValid,
+    bool WindowBoundValid,
+    bool DeferredWorkDrained,
+    bool OverlappingPrefetchObserved,
+    int IncompletePrefetchCount,
+    int AnchorMeasurements,
+    double MaximumAnchorErrorDip,
+    int MaximumWindowItemCount,
+    int MaximumRealizedCardCount,
+    bool ObjectiveChecksPassed,
+    bool Exact4K100Environment,
+    bool PhysicalGateEligible,
+    string UserVerdict);
+
 internal sealed record TraversalSummary(
     string Workload,
     int RequestedEdgeSteps,
@@ -151,6 +194,31 @@ internal sealed record RunProbeReport(
     FrameIntervalSummary Frames,
     ResourceSummary Resources,
     IReadOnlyList<EdgeStepSample> EdgeSamples,
+    IReadOnlyList<ResourceSample> ResourceSamples);
+
+internal sealed record InspectionProbeReport(
+    int ReportVersion,
+    string Status,
+    string Mode,
+    string StartedUtc,
+    string CompletedUtc,
+    string SourceRevision,
+    string ExecutablePath,
+    string ExecutableSha256,
+    string Root,
+    int RequestedItemCount,
+    string ExitReason,
+    double ViewModelInitializeMilliseconds,
+    double FirstSettledViewportMilliseconds,
+    DisplaySnapshot Display,
+    DatabaseAudit DatabaseBefore,
+    DatabaseAudit DatabaseAfter,
+    string SourceSha256Before,
+    string SourceSha256After,
+    InspectionSummary Inspection,
+    FrameIntervalSummary Frames,
+    ResourceSummary Resources,
+    IReadOnlyList<InspectionTransitionSample> Transitions,
     IReadOnlyList<ResourceSample> ResourceSamples);
 
 internal sealed record FailureProbeReport(
