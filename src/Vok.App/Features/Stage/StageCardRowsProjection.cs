@@ -145,19 +145,32 @@ internal sealed class StageCardRowsProjection : IDisposable
         }
 
         var items = _source.ToArray();
-        var rows = new List<StageCardRowViewModel>(
-            (items.Length + _columnCount - 1) / _columnCount);
-        for (var index = 0; index < items.Length; index += _columnCount)
+        var requiredRowCount = (items.Length + _columnCount - 1) / _columnCount;
+        if (Rows.Any(row => row.ColumnCount != _columnCount))
         {
-            rows.Add(new StageCardRowViewModel(
-                items.Skip(index).Take(_columnCount).ToArray(),
-                _columnCount));
+            Rows.Clear();
         }
 
-        Rows.Clear();
-        foreach (var row in rows)
+        for (var rowIndex = 0; rowIndex < requiredRowCount; rowIndex++)
         {
-            Rows.Add(row);
+            var offset = rowIndex * _columnCount;
+            var rowItems = items
+                .Skip(offset)
+                .Take(_columnCount)
+                .ToArray();
+            if (rowIndex < Rows.Count)
+            {
+                Rows[rowIndex].UpdateItems(rowItems);
+            }
+            else
+            {
+                Rows.Add(new StageCardRowViewModel(rowItems, _columnCount));
+            }
+        }
+
+        while (Rows.Count > requiredRowCount)
+        {
+            Rows.RemoveAt(Rows.Count - 1);
         }
 
         _publishedContentVersion = _contentVersion;

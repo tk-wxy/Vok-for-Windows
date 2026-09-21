@@ -1165,6 +1165,60 @@ public sealed partial class StageViewIntegrationTests(WpfApplicationFixture wpf)
     }
 
     [Fact]
+    public void EdgeProjectionSettlesItsAnchorBeforeRestartingAvailabilityWork()
+    {
+        wpf.Invoke(() =>
+        {
+            var repository = new StaticStageRepository(512);
+            var fileService = new CancellableDeferredStageFileService();
+            using var viewModel = new StageViewModel(repository, fileService);
+            viewModel.InitializeAsync().GetAwaiter().GetResult();
+            var view = new StageView
+            {
+                DataContext = viewModel,
+            };
+            var window = new Window
+            {
+                Width = 520,
+                Height = 320,
+                Content = view,
+                ShowInTaskbar = false,
+                WindowStyle = WindowStyle.None,
+                ResizeMode = ResizeMode.NoResize,
+            };
+
+            window.Show();
+            try
+            {
+                PumpLayout(window);
+                Assert.NotEmpty(fileService.Timeline);
+                fileService.Timeline.Clear();
+                view.ViewportMutationSettled += () =>
+                    fileService.Timeline.Add("viewport-settled");
+                var list = Assert.IsType<ListBox>(view.FindName("StageItemsList"));
+                var scrollViewer = Assert.Single(
+                    FindVisualDescendants<ScrollViewer>(list));
+
+                scrollViewer.ScrollToEnd();
+                PumpLayout(window);
+
+                Assert.NotEmpty(fileService.Timeline);
+                Assert.Equal("viewport-settled", fileService.Timeline[0]);
+                Assert.Contains("availability", fileService.Timeline.Skip(1));
+            }
+            finally
+            {
+                window.Close();
+            }
+
+            window.Dispatcher.Invoke(
+                DispatcherPriority.ApplicationIdle,
+                static () => { });
+            Assert.Equal(0, view.OutstandingAvailabilityOperationCount);
+        });
+    }
+
+    [Fact]
     public void PrefetchCancelsOnHideAndPausesForExternalDragAndReorder()
     {
         wpf.Invoke(() =>
@@ -2062,6 +2116,35 @@ public sealed partial class StageViewIntegrationTests(WpfApplicationFixture wpf)
             var request = new InspectionRequest(item, cancellationToken);
             Requests.Add(request);
             return request.Completion.Task;
+        }
+
+        public Task OpenAsync(
+            StageItem item,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task RevealInExplorerAsync(
+            StageItem item,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class CancellableDeferredStageFileService : IStageFileService
+    {
+        public List<string> Timeline { get; } = [];
+
+        public Task<IReadOnlyList<StageTargetResolution>> ResolveAsync(
+            IReadOnlyList<string> inputs,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<StageTargetResolution>>([]);
+
+        public async Task<StageFileAvailability> InspectAsync(
+            StageItem item,
+            CancellationToken cancellationToken = default)
+        {
+            Timeline.Add("availability");
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return StageFileAvailability.Available;
         }
 
         public Task OpenAsync(

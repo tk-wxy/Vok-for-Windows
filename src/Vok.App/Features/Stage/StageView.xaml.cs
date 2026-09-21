@@ -216,6 +216,10 @@ public partial class StageView : UserControl
         }
     }
 
+    internal event Action? ViewportMutationSettled;
+
+    internal event Action? RowsProjectionPublished;
+
     internal StageCardLayoutProfile? CardLayoutProfile => _cardLayoutProfile;
 
     internal double CardViewportWidth => GetStageScrollViewer()?.ViewportWidth ?? 0;
@@ -231,6 +235,13 @@ public partial class StageView : UserControl
         _cardLayoutRefreshPending ||
         _rowPublicationRefreshPending ||
         _availabilityRefreshPending ||
+        _reorderVisualRefreshPending ||
+        _pendingEdgePrefetchEvaluation is { Status: DispatcherOperationStatus.Pending } ||
+        _cardRowsProjection.HasPendingRebuild;
+
+    internal bool HasPendingViewportMutationWork =>
+        _cardLayoutRefreshPending ||
+        _rowPublicationRefreshPending ||
         _reorderVisualRefreshPending ||
         _pendingEdgePrefetchEvaluation is { Status: DispatcherOperationStatus.Pending } ||
         _cardRowsProjection.HasPendingRebuild;
@@ -474,6 +485,7 @@ public partial class StageView : UserControl
     private void OnCardRowsPublished()
     {
         TraceStage("StageRowsPublished");
+        RowsProjectionPublished?.Invoke();
         if (_rowPublicationRefreshPending)
         {
             return;
@@ -510,6 +522,7 @@ public partial class StageView : UserControl
                 }
             }
 
+            ViewportMutationSettled?.Invoke();
             ScheduleAvailabilityRefresh();
             ScheduleEdgePrefetch();
             if (_reorderGeneration != 0)
@@ -1457,6 +1470,7 @@ public partial class StageView : UserControl
         _edgePrefetchCancellation = cancellation;
         _edgePrefetchActive = true;
         _edgePrefetchReevaluateAfterCompletion = false;
+        CancelAllAvailabilityBindings(resetState: false);
         _ = RunEdgePrefetchAsync(
             viewModel,
             direction,
@@ -1520,6 +1534,11 @@ public partial class StageView : UserControl
             {
                 ScheduleEdgePrefetch();
             }
+
+            if (!_edgePrefetchActive && _availabilityRequestsAllowed && IsVisible)
+            {
+                ScheduleAvailabilityRefresh();
+            }
         }
     }
 
@@ -1546,7 +1565,7 @@ public partial class StageView : UserControl
 
         _availabilityRefreshPending = true;
         TraceStage("StageAvailabilityScheduled");
-        _ = Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, () =>
         {
             _availabilityRefreshPending = false;
             RefreshAvailabilityBindings();
@@ -1556,7 +1575,8 @@ public partial class StageView : UserControl
     private void RefreshAvailabilityBindings()
     {
         if (!_availabilityRequestsAllowed || _externalDragActive ||
-            IsReorderInteractionActive())
+            IsReorderInteractionActive() || _edgePrefetchActive ||
+            _rowPublicationRefreshPending)
         {
             return;
         }

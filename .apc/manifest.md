@@ -81,9 +81,11 @@ docs/
 tools/
 ├── Probe-M0.ps1                # 结构化同代五门禁烟雾探针
 ├── Measure-HostInteraction.ps1 # 固定 PID/HWND 时延与长期资源探针
+├── Measure-M3StageScale.ps1    # Stage 50/10k/100k 隔离规模编排与报告
 ├── Probe-M2Clipboard.ps1        # 独立 Window Station 剪贴板与图片资源探针
 ├── Probe-M3StageData.ps1        # Stage 实时只读审计、在线备份与副本回放探针
-└── Record-M3StageInbound.ps1    # 固定候选 PID/HWND 的物理验收记录器
+├── Record-M3StageInbound.ps1    # 固定候选 PID/HWND 的物理验收记录器
+└── Vok.StageScaleProbe/         # 真实 WPF + SQLite 连续窗口规模探针
 .apc/                           # 项目知识与开发协议
 ```
 

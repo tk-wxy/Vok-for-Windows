@@ -11,14 +11,14 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片、排序 S0–S3 和呼出 P0 已通过。N0 occurrence/schema 8、N1.1 双向复合 keyset、N1.2 rolling-window 状态、N1.3A ViewModel 权威接管和 N1.3B WPF 连续滚动均已提交；N1.3B 尚未部署。当前独立候选仍为 PID 6984/提交 `1dcd599`，真实库 schema 8，候选最小人工 Gate 已通过。
-- **最近进展**：N1.3B 删除 Stage 页脚和较新/较早入口；滚动阈值以至少两行/四分之一视口命名策略双向预取，同轮只允许一个可取消请求。窗口仍默认 3×64，但按实际可见项加一整段缓冲只增扩展，修复 4K/10 列下 192 项约等于 20 行而无 scroll extent 的机制。ViewModel 在投影变更前发布 delta，View 从未淘汰 occurrence 捕获锚点并在行发布后的 `ContextIdle` 恢复像素位置；隐藏、揭示未完成、外部拖动、排序/提交、卸载和换绑均暂停/取消。失败不自动重试，旧 DataContext 迟到收尾会重新唤醒当前实例。Release Core 114/114 + Integration 592/592，共 706/706；Stage WPF 26/26，四条关键时序链连续 5 轮通过，独立构建 0 warning / 0 error。
-- **下一步**：进入 N1.4，以隔离 10k/100k 数据和真实 WPF 候选完成长距离连续滚动、动态窗口常驻量、内存/句柄、随机往返及高视口物理 Gate；通过后再进入 N2 单项/批量 OLE Gate。
-- **已知问题**：N1.4 大规模资源/物理门禁、连续窗口间远距离排序、N2/N3 单项/批量拖出与交付后清理尚未完成；当前已部署候选仍是带页脚的 N1.2 版本，不能代表本次源码。KI-001 仍后置；KI-002 为长静置首次呼出略慢于连续热呼出，KI-003 为 Clipboard 图片缩略图短暂空白。纯 30 分钟、明确 Modern Standby/Unlock 分档及正式 Present 证据未逐项完成；测试产生的 `.lnk` 副本未经授权不得删除。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片、排序 S0–S3 和呼出 P0 已通过。N0 occurrence/schema 8、N1.1–N1.3 连续数据虚拟化均已提交；N1.3 尚未部署。N1.4A 隔离自动规模基线已完成并随本次提交归档但尚未部署；2026-09-21 核对时没有 `Vok.exe` 运行实例，真实库为 schema 8、50 条 Stage、62 个 Ready 资产且健康。
+- **最近进展**：新增 create-only Stage 规模探针，以真实 SQLite 仓储、ViewModel、StageView 和 WPF 视觉树独立运行 50/10k/100k。诊断确认 edge 慢段是同列数时 `Rows.Clear()` 重建全部行容器而非 SQLite/VM；改为复用行对象与可观察 item slots，并让 Availability 在 edge 期间取消、锚点稳定后恢复。正式 10k 完整往返 309 次、100k 固定种子压力 512 次，最大 VM 192、已实现卡片 110、821/821 个锚点最大误差 0 DIP，数据库/源摘要和隐藏收口均通过。Release 114/114 + 594/594 共 708/708，高风险 30/30，探针 0 warning / 0 error；真实库前后摘要一致。
+- **下一步**：完成 N1.4B：在可用的精确 4K/100% 环境运行物理滚动/往返观感 Gate，结合首份资源曲线由用户确认性能阈值；通过后进入 N2 单项/批量 OLE Gate。
+- **已知问题**：当前机器仅为 3200×2000、200% DPI，精确 4K/100% 和用户物理手感尚未验证，N1.4 不能整体记为通过；100k 首份曲线 Private/Working Set 末段较早期约高 6.9/3.6 MiB但 Managed Heap 平台、GDI 恒定且 Handle/Thread/USER 回落，尚无用户确认的数值 SLA。连续窗口间远距离排序、N2/N3 拖出闭环仍未完成；KI-001/002/003 继续有效，测试产生的 `.lnk` 副本未经授权不得删除。
 
 ## §0A 最近会话
 
-### 会话 2026-09-13 至 2026-09-15 - Stage P0、N0 与 N1 连续数据虚拟化
+### 会话 2026-09-13 至 2026-09-21 - Stage P0、N0 与 N1 连续数据虚拟化
 
 - P0.1 增加默认关闭的有界 reveal/Shell/资源/恢复轨迹、报告工具和固定候选截图探针；真实 46 条基线证明普通 Hide 不重建行，但旧路径每次揭示前重查 46 项，且通用 Rendering 可早于行发布和滚动完成。
 - P0.2–4 将隐藏期静态投影准备、generation/content/layout/state readiness token、render-return + attempt DWM fence、Availability 状态保留及物理在途上限 4 接入生产路径；Availability 只在完成呈现后复查，内部/外部拖动期间暂停。
@@ -40,6 +40,9 @@
 - N1.3A 已完成并随本次提交归档：ViewModel 删除 page-index/cursor-history 权威，双向 edge 通过 `StageRollingWindow` added/evicted delta 增量维护最多 192 个 VM，retained VM/Availability 不变；同组权威修订/重排由 Core 原子重建 segment 接缝并使旧请求失效，计数变化与冲突只做一次 newest reset。自审又补上已记录紧邻 occurrence 校验，防止总数不变时静默跳项。最终 Release 112/112 + 585/585 共 697/697、独立 solution 构建零警告、Stage WPF 21/21；真实库审计保持 schema 8/Stage 50/Ready 66/0 异常，PID 6984 未替换，尚未部署。
 - N1.3B 审计先发现固定 192 项在 4K/100% 缩放、10 列约为 20 行，可能不高于真实视口而使连续滚动无 extent；因此 Core 窗口改为默认三段但可按“可见容量 + 一整段缓冲”只增扩展。10k 自适应 320 项往返仍完整有界，模拟 2100 DIP/10 列会先扩到至少 320 并形成滚动范围。
 - WPF 已删除页脚及可见页面导航，以投影变更前 delta 捕获未淘汰 occurrence、行发布后 `ContextIdle` 像素恢复；至少两行/四分之一视口阈值只运行一个可取消双向预取，揭示完成前、隐藏、外部拖动、排序/提交、卸载和换绑暂停。取消不响应的旧实例、失败无重试风暴、双向第四段淘汰及 5 轮关键时序均有门禁。最终 Release 114/114 + 592/592 共 706/706、独立构建零警告；真实库前后 schema/Stage 摘要一致、50 条 Stage、72 个 Ready 资产均完整，PID 6984 未替换，尚未部署或提交。
+- N1.4A 新增只允许显式输出根、create-only fixture/report 的独立规模工具；prepare/run 分进程，使用真实 SQLite Stage 仓储、ViewModel、StageView、WPF 虚拟容器和文件服务，但不接产品 mutex、热键、剪贴板、托盘或真实库。报告固定 executable SHA、显示/DPI、DB/source 摘要、每次边缘里程碑、像素锚点、窗口/已实现卡片和 250 ms 资源样本；越界目标与覆盖已有输出均已拒绝且零创建。
+- 首轮 10k 全往返虽正确但 edge P50 约 782 ms；里程碑把慢段定位到行发布后恢复锚点。`StageCardRowsProjection` 原先每次 edge 都 `Rows.Clear()`，64 项淘汰又会在 10 列布局下改变所有分组，导致 WPF 重建全部复杂卡片容器并同步布局。改为同列数复用行对象及可观察 item slots，Availability 在 edge 期间取消并于锚点稳定后重启；256 项 P50 从约 871 降至 439 ms，1k 的 27 次全往返 P50 约 492 ms、锚点误差 0。
+- 正式基线在 3200×2000/200% DPI、1500×900 DIP 窗口完成：50 条正常呈现；10k 以 309 次 edge 完整走到最旧并返回最新；100k 以固定种子完成 512 次随机压力。10k/100k 最大 VM 192、最大已实现卡片 110，821/821 锚点最大误差 0 DIP，顺序/窗口/隐藏收口、隔离 DB/source 摘要均通过。100k Managed Heap 约 27–28 MiB、GDI 恒 7、Handle/Thread/USER 回落；Private/Working Set 64-step 均值末段约 197.8/261.0 MiB，只作为首份基线。完整 Release 708/708、高风险 30/30、探针零警告；真实 schema/Stage/资产摘要前后一致。精确 4K/100% 与用户物理手感仍待 N1.4B。
 
 ### 会话 2026-09-05 至 2026-09-12 - M3.1 中转站管理动作与卡片基础
 

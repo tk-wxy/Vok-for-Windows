@@ -100,6 +100,37 @@ public sealed class StageCardRowsProjectionTests(WpfApplicationFixture wpf)
     }
 
     [Fact]
+    public void EdgeLikeShiftKeepsExistingRowsAndTheirObservableItemSlots()
+    {
+        wpf.Invoke(() =>
+        {
+            var source = CreateItems(192);
+            using var projection = new StageCardRowsProjection(wpf.Application.Dispatcher);
+            projection.SetColumnCount(10);
+            projection.Attach(source);
+            PumpProjection(wpf.Application.Dispatcher);
+            var rows = projection.Rows.ToArray();
+            var itemSlots = rows.Select(static row => row.Items).ToArray();
+
+            for (var index = 0; index < 64; index++)
+            {
+                source.RemoveAt(0);
+            }
+
+            foreach (var item in CreateItems(64, start: 1000))
+            {
+                source.Add(item);
+            }
+
+            PumpProjection(wpf.Application.Dispatcher);
+
+            Assert.Equal(rows, projection.Rows);
+            Assert.Equal(itemSlots, projection.Rows.Select(static row => row.Items));
+            Assert.Equal(source, projection.Rows.SelectMany(static row => row.Items));
+        });
+    }
+
+    [Fact]
     public void ColumnChangesReplaceAPendingLayoutAndPublishOnlyTheLatestShape()
     {
         wpf.Invoke(() =>
