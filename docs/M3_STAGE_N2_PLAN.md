@@ -1,6 +1,6 @@
 # Stage N2：单项/批量出站 OLE Gate 实施计划
 
-> 日期：2026-09-21。状态：**N2.0 进入基线已通过，下一步实施 N2.1**。精确 4K/100% Gate 已按用户决定冷藏，不阻塞 N2。N2 只裁决出站 OLE 技术路线、隐藏源 HWND、宿主所有权、自吞拒绝和资源闭环；不接正式 Stage 选择、消费或真实产品库。权威产品合同仍为 `M3_STAGE_FOCUSED_ROADMAP.md` 与 `decisions.md §32`。
+> 日期：2026-09-21。状态：**N2.0 基线与 N2.1-A 已通过，下一步实施 N2.1-B**。精确 4K/100% Gate 已按用户决定冷藏，不阻塞 N2。N2 只裁决出站 OLE 技术路线、隐藏源 HWND、宿主所有权、自吞拒绝和资源闭环；不接正式 Stage 选择、消费或真实产品库。权威产品合同仍为 `M3_STAGE_FOCUSED_ROADMAP.md` 与 `decisions.md §32`。
 
 ## 1. 阶段目标与完成边界
 
@@ -296,7 +296,7 @@ Gate：进入事实、工作树归属和真实数据摘要明确；测试失败�
 5. 实现独立 `receive` 模式，作为另一个进程的 Copy/None/异常受控目标，记录收到的格式、路径顺序和 effect；
 6. 实现报告 create-only、版本核验、部分失败报告和外部 watchdog 的失败保存。
 
-自动门禁：路径逃逸、已有目录覆盖、产品目录/仓库根/用户主目录拒绝，非法 count/profile 零创建，夹具摘要可重复读取，receiver 异常不破坏 source。
+自动门禁：路径逃逸、已有目录覆盖、产品目录/仓库根/用户主目录拒绝，非法/未知参数或 profile 零创建，夹具摘要可重复读取，receiver 异常不破坏 source。
 
 Checkpoint 完成条件：尚不调用 OLE；只证明安全夹具、接收端和报告骨架可靠。
 
@@ -312,6 +312,94 @@ Checkpoint 完成条件：尚不调用 OLE；只证明安全夹具、接收端�
 8. N2.1 Gate 至少覆盖相对路径、逃逸、junction、已有目标、产品/仓库/用户根、未知/重复参数、非法 profile 零创建；五种 profile 的项目数、类型、Unicode、有效 `.lnk`、重复 ordinal、manifest 篡改拒绝和可重复摘要；receiver 的 Copy/None/Throw 记录、关闭/watchdog 失败留证、source 摘要不变；solution Debug/Release 配置和完整 Release 回归。
 
 首个提交边界保持 `test(stage): add outbound drag probe fixtures`：只增加 probe、solution/test 引用和 N2.1 门禁，不修改 `src/Vok.App`、`src/Vok.Core`、`src/Vok.Infrastructure.Windows`、真实库、运行实例、Stage UI、Router 或 KI-001。
+
+#### N2.1 文件与协议定案
+
+源码诊断：
+
+- `Vok.StageScaleProbe` 已证明 `net10.0-windows` WPF console project、`InternalsVisibleTo`、solution Release 配置、create-only JSON 和 `Vok.IntegrationTests` 引用方式可行；N2.1 只复用这些基础形态，不引用其 Stage/SQLite/App 业务对象；
+- 产品 `WorkspaceFileDropRouter` 的可靠边界是 Enter/Over 只探测 `FileDrop`、Drop 才读取一次 `string[]`，并捕获外国 COM 源的 `COMException`/`InvalidOperationException`。受控 receiver 继续保持“Drop 前不读取 FileDrop、Drop 最多读取一次”，额外记录 native/all formats 但不把记录逻辑移入产品；
+- 现有 Launcher/Stage 文件服务测试用空 `.lnk`，只证明按扩展名保留快捷方式自身路径，不证明 Shell link 可解析。物理探针必须以 probe-local `IShellLinkW.SetPath` + `IPersistFile.Save` 创建指向 fixture 内文件的真实 `.lnk`，重新加载并核对 target；失败时不退化为空文件或指向用户对象；
+- `Directory.CreateDirectory` 在目标已存在时也返回成功，不能单独承担 create-only 证明。N2.1 将输出根限制为已存在 allowed root 的直接新子目录，校验完成后用 probe-local `CreateDirectoryW` 一次创建并把 `ERROR_ALREADY_EXISTS` 视为拒绝；后续每个文件仍用 `FileMode.CreateNew`。
+
+预计本切片文件：
+
+```text
+tools/Vok.StageDragProbe/
+├── Vok.StageDragProbe.csproj       # Exe + UseWPF；零 ProjectReference/PackageReference
+├── Program.cs                      # [STAThread]；parse → reserve root → prepare/receive
+├── GlobalUsings.cs
+├── StageDragProbeOptions.cs        # verb/profile/effect 与严格参数矩阵
+├── ProbePathPolicy.cs              # protected roots、reparse、原子新目录
+├── ProbeFixtureManifest.cs         # versioned manifest/occurrence/source records
+├── ProbeFixtureBuilder.cs          # 五种 profile 与 deterministic contents
+├── ProbeSourceTreeSnapshot.cs      # 唯一物理 source 摘要
+├── ProbeShellLink.cs               # probe-only IShellLinkW/IPersistFile adapter
+├── ProbeFileDropReceiver.cs        # 可独立测试的 receiver 状态/一次性终态
+├── ProbeFileDropReceiverWindow.xaml(.cs)
+├── StageDragProbeReport.cs         # event/report/failure records + create-only writer
+└── Properties/AssemblyInfo.cs      # 仅向 Vok.IntegrationTests 开放 internal
+
+src/Vok.IntegrationTests/Stage/
+├── StageDragProbePathTests.cs
+├── StageDragProbeFixtureTests.cs
+└── StageDragProbeReceiverTests.cs
+```
+
+本切片不创建计划树中的 source session、data object factory、正式 source window 或 PowerShell 双进程编排器；`Start-M3StageDragGate.ps1` 等到 N2.2/3 已有 source 与 receiver 可联合运行时再加入，避免先提交无法证明 OLE 的空编排。
+
+CLI 固定为：
+
+```text
+Vok.StageDragProbe.exe prepare
+  --allowed-root <existing-absolute-directory>
+  --output-root <new-direct-child>
+  --repository-root <absolute-vok-root>
+  --source-revision <commit>
+  --profile single|batch10|batch100|mixed|duplicate
+
+Vok.StageDragProbe.exe receive
+  --allowed-root <existing-absolute-directory>
+  --output-root <new-direct-child>
+  --repository-root <absolute-vok-root>
+  --source-revision <commit>
+  --effect Copy|None|Throw
+```
+
+参数规则：所有参数在创建输出根前完成解析；verb 专属参数不能泄漏到另一 verb；相对路径、drive-relative 路径、UNC、重复/未知参数均拒绝。`repository-root` 必须包含当前 `src/Vok.sln`；product root 从 `LocalApplicationData\Vok` 推导。allowed/output 不得等于或位于 repository/product root 内，也不得把 user profile 本身当 allowed/output；专用 `%TEMP%` 子目录允许。路径比较使用 Windows ordinal-ignore-case，逐段检查 existing ancestor；allowed root 或到 output parent 的任何 reparse point 首版直接拒绝，不尝试跟随后继续创建。
+
+fixture/report 协议：
+
+- `manifest.json` 使用 `ManifestVersion=1`，包含 run id、profile、source revision、唯一 source 表和有序 occurrence 表；occurrence 只引用 `sourceId`，ordinal 从 0 连续，路径只保存 fixture-root-relative 形式；
+- `source.json` 对唯一物理项记录 kind、相对路径、attributes、长度、last-write UTC 与 SHA-256；目录摘要递归包含排序后的相对路径和子项摘要，并拒绝 fixture 内 reparse point；
+- `orderedOccurrenceDigest` 与 `sourceTreeDigest` 分开计算。`duplicate` 的 `[A,B,A,C,A,B]` 必须保留全部六个 ordinal，而 source 表只有 A/B/C 三项；
+- file contents、名称和 `.lnk` 描述均带 run id；`.lnk` target 是同一 fixture 的普通文件。Shell link COM 只在 `[STAThread]` prepare 中使用，释放 RCW，不执行 target、不启动 Shell UI；
+- `events.jsonl` 以 `CreateNew` 打开并逐事件 flush，至少保留 `ProcessStarted`、`OutputReserved`、`FixtureCreated`/`ReceiverReady` 和终态；最终 `report.json` 或 `failure.json` 只创建一次。进程被外部 watchdog 终止时允许没有最终报告，但已写事件必须足以区分“未启动”和“启动后失去响应”；watchdog 不能写入成功；
+- N2.1 的 `prepare`/`receive` 是基础设施阶段，不冒充 §7 的 OLE run。N2.2/3 的真实 run root 再复制 manifest 身份并同时生成 `source-before.json`/`source-after.json`。
+
+receiver 合同：
+
+- WPF Window 是唯一 `AllowDrop` target；Enter 首次认领 receiver generation，捕获 native/all format 名称和 `AllowedEffects`，只用 `GetDataPresent(FileDrop)` 判断候选；Over 不读取 FileDrop；
+- `Copy` 只有在 source allowed effects 含 Copy 且 FileDrop 可用时返回 Copy，Drop 恰好读取一次 `string[]` 并按原序记录，不复制、移动、打开或删除任何路径；`None` 始终返回 None 且零 FileDrop 读取；
+- `Throw` 在 Drop 的受控读取点制造目标失败，但异常由 receiver 边界捕获，返回 None、发布一次 Failed 终态并保存报告，不能成为未处理 Dispatcher 异常；
+- Drop、DragLeave、窗口关闭、取消、受控异常只能有一个终态；迟到/重复事件只记诊断，不覆盖报告或重新读取数据。N2.1 用 fake `IDataObject` 直接验证该状态机和读取次数，不启动 source OLE；真实跨进程行为留给 N2.2/3。
+
+#### N2.1 实施顺序与 Gate
+
+1. **A：项目/参数/路径** — 加入零产品依赖 project、solution/test 引用、严格 verb 参数、protected-root/reparse/原子目录与 create-only writer。先通过无输出的参数失败、existing/escape/protected/reparse 拒绝和同目标竞争测试；
+2. **B：fixture/manifest** — 增加五种 profile、真实 Shell link、相对 manifest、source/occurrence 双摘要和重新加载校验。通过 1/10/100、mixed 类型、duplicate ordinal、Unicode、篡改/缺项/越界拒绝；
+3. **C：receiver/report** — 增加 receiver core 与薄 WPF Window，验证 Copy/None/Throw、Drop 前零读取、Drop 一次读取、单终态、窗口关闭与 failure/event 留证；只做本进程 WPF 测试，不调用 `DoDragDrop`；
+4. **D：收口** — 用实际 probe executable 分别跑一次 `prepare mixed` 与无 OLE 的 receiver 启停 smoke，核对 executable SHA、报告版本和无产品程序集依赖；再运行唯一 ArtifactsPath 的完整 Release build/test、`git diff --check` 及真实库前后只读摘要。
+
+N2.1-A 实施结果（2026-09-21）：
+
+- 新增 `Vok.StageDragProbe` `net10.0-windows`/WPF Exe；项目自身无 `ProjectReference`/`PackageReference`，只由 IntegrationTests 反向引用以验证 internal 合同，并已加入 solution 的 Debug/Release 配置；
+- `prepare`/`receive` 严格命名参数和 verb 专属 profile/effect 已落地。相对/UNC、重复/未知参数在创建输出前拒绝；当前 exe 在 A 阶段只做 parse + path validate 后以未启用状态退出，不冒充 prepare/receiver 已完成；
+- 输出策略已覆盖仓库/产品/用户根、direct-child、已存在目标与 existing ancestor reparse；`CreateDirectoryW` 原子竞争保证同一目标恰有一个创建者，JSON 与 append-only event 文件均以 `CreateNew` 创建，文件名拒绝目录穿越和 NTFS alternate stream；
+- 定向门禁 5/5；唯一 `%TEMP%` ArtifactsPath 的 Release build 为 0 warning / 0 error，Core 114/114、Integration 606/606，共 720/720。真实库有效前后只读审计保持 schema 8、Stage 50、Ready 资产 60、`quick_check=ok`、0 外键/缺失/长度/SHA/越界异常；八表与资产摘要、数据库 SHA-256 均不变，无残留 Vok；
+- 本检查点未创建 fixture、manifest、Shell link、receiver 或任何 OLE 调用，未修改产品三个 project。下一步严格进入 B，A 不因后续功能扩展而放宽路径/create-only 合同。
+
+N2.1 停止条件：任何路径失败能在 protected/已有目录下创建内容；manifest 可把 source 指到 fixture 外；有效 `.lnk` 只能靠用户现有文件或 Shell UI 创建；receiver 在 Enter/Over 提前读取 FileDrop；异常/关闭产生两个终态；probe 引入产品 ProjectReference/SQLite；或自动测试必须真实调用 OLE 才能通过。命中任一项先收窄机制，不能用空 `.lnk`、删除输出、吞异常、固定等待或把 N2.2 证据提前写成 N2.1 通过。
 
 ### N2.2：Copy-only data object 与自吞格式原型
 

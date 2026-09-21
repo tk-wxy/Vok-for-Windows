@@ -11,9 +11,9 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片、排序 S0–S3 和呼出 P0 已通过。N0 occurrence/schema 8 与 N1.1–N1.2 已部署；N1.3A/B、N1.4A/B 及检查器只读/采样修复已完成验证并提交至 `7a31c0a`，但尚未正式部署。当前硬件的 10k/100k 双向人工排练已通过；精确 4K/100% 最终 Gate 冷藏后续补测。N2.0 进入基线已在 `a90d66a` 通过；当前无运行中的 Vok，真实库 schema 8、50 条 Stage、60 个 Ready 资产、`quick_check=ok`、0 外键/资产异常。
-- **最近进展**：N2.0 以唯一 `%TEMP%` ArtifactsPath 完成 SDK 10.0.400 Release restore/build/test，构建 0 warning / 0 error，Core 114/114 + Integration 601/601 共 715/715；测试前后真实库 schema、八表、Stage、资产摘要与文件 SHA-256 均不变。源码搜索确认不存在出站 source、outbound claim/token、`DoDragDrop` 或 `IDropSource`；tracked 工作树进入时无修改，只有既存 `.codex/` 未跟踪。N2.1 已收窄为不引用任何产品项目/SQLite的独立 WPF probe，只交付安全路径、五种夹具、manifest/source 摘要、受控 receiver 和 create-only/失败报告，不调用 OLE。
-- **下一步**：按 `M3_STAGE_N2_PLAN.md` 实施 N2.1 首个提交 `test(stage): add outbound drag probe fixtures`；通过路径/夹具/receiver/报告门禁和完整 Release 回归后，才进入 N2.2 Copy-only data object 与自吞 token 原型。精确 4K/100% Gate 后续具备环境时补测，不阻塞 N2。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片、排序 S0–S3 和呼出 P0 已通过。N0 occurrence/schema 8 与 N1.1–N1.2 已部署；N1.3A/B、N1.4A/B 及检查器只读/采样修复已完成验证并提交至 `7a31c0a`，但尚未正式部署。当前硬件的 10k/100k 双向人工排练已通过；精确 4K/100% 最终 Gate 冷藏后续补测。N2.0 进入基线已在 `a90d66a` 通过；N2.1-A probe 项目/参数/路径骨架已实现、验证并提交到当前 HEAD，未调用 OLE。当前无运行中的 Vok，真实库 schema 8、50 条 Stage、60 个 Ready 资产、`quick_check=ok`、0 外键/资产异常。
+- **最近进展**：新增零产品/SQLite 依赖的 `Vok.StageDragProbe` WPF Exe，纳入 solution/test；完成 prepare/receive 严格参数矩阵、显式本地绝对路径、仓库/产品/用户根保护、existing ancestor reparse 拒绝、allowed root 直接新子目录的 `CreateDirectoryW` 原子抢占，以及 `CreateNew` JSON/event writer。定向 5/5；唯一临时 ArtifactsPath 的 Release build 0 warning / 0 error，Core 114/114 + Integration 606/606 共 720/720。有效前后只读审计证明真实库 SHA-256、八表、Stage 与 60 个资产摘要均不变，且 0 完整性异常、无残留 Vok。
+- **下一步**：按 `M3_STAGE_N2_PLAN.md` 进入 N2.1-B，仅实现五种 probe-owned fixture、真实 `IShellLinkW/IPersistFile` 快捷方式、相对 manifest、source/occurrence 双摘要与篡改/越界门禁；不提前实现 receiver、`DoDragDrop` 或产品宿主。B/C/D 全部通过后才以 `test(stage): add outbound drag probe fixtures` 提交 N2.1，并进入 N2.2 Copy-only data object 与自吞 token 原型；精确 4K/100% Gate 后续补测，不阻塞 N2。
 - **已知问题**：当前机器为 3200×2000、200% DPI，本机 10k/100k 排练不能冒充精确 4K/100% Gate，N1.4 仍不能整体记为通过且数值 SLA 尚未由用户确认。`7a31c0a` 尚未正式发布且当前没有 Vok 进程加载它。连续窗口间远距离排序、N2/N3 拖出闭环仍未完成；KI-001/002/003 继续有效，测试产生的 `.lnk` 副本未经授权不得删除。
 
 ## §0A 最近会话
@@ -49,6 +49,8 @@
 - 2026-09-21 用户决定将精确 4K/100% 物理 Gate 冷藏为后续补测项，不再阻塞当前路线；其状态保持未验证，当前下一步改为 N2 单项/批量 OLE Gate。
 - 2026-09-21 完成 N2 详细实施计划：严格分离 probe 物理 OLE 证据与产品宿主所有权证据，N2 不接正式 Stage UI/selection/消费；按 N2.0–N2.7 依次裁决 Copy-only payload、自吞 token、WPF source、隐藏 HWND、outbound claim、横向越界手势与 20 轮资源 Gate，唯一方向通过后再进入 N3。
 - N2.0 随后完成：进入提交 `a90d66a`，无运行 Vok，tracked 工作树干净且仅 `.codex/` 未跟踪；真实库只读审计为 schema 8、Stage 50、Ready 60、`quick_check=ok`、0 外键/资产异常。唯一临时 ArtifactsPath 的 Release 构建 0 warning / 0 error，114/114 + 601/601 共 715/715；测试前后 schema、八表、Stage、资产摘要和数据库 SHA-256 不变，且源码没有任何出站 OLE/claim/token 实现。N2.1 收窄为零产品依赖的 probe 安全骨架，不提前调用 OLE 或修改产品宿主。
+- N2.1 分析进一步确认两个不能沿用的弱证据：产品测试的空 `.lnk` 只验证扩展名分类，`Directory.CreateDirectory` 也会接受已存在目录。实施改为 probe-local `IShellLinkW/IPersistFile` 创建并回读真实 fixture link、allowed root 直接新子目录的原子 Windows 创建；receiver 保持 Enter/Over 零 FileDrop 读取、Drop 一次读取和单终态。计划已细化为 A 项目/路径、B fixture/manifest、C receiver/report、D 实际 exe 与完整回归四步，本轮未写产品或 probe 代码。
+- N2.1-A 随后完成并提交到当前 HEAD：新增零产品依赖的 WPF Exe probe、strict prepare/receive CLI、protected-root/reparse 路径策略、`CreateDirectoryW` 原子输出抢占和 create-only JSON/event writer；参数失败零创建、越界/已有/protected/reparse 拒绝、双线程同目标唯一成功及报告不覆盖共 5/5。完整隔离 Release 114/114 + 606/606 共 720/720、零警告；真实库/八表/Stage/资产前后摘要与 SHA-256 均不变，0 资产异常且无 Vok 进程。本步未创建 fixture/receiver 或调用 OLE，下一步 N2.1-B。
 
 ### 会话 2026-09-05 至 2026-09-12 - M3.1 中转站管理动作与卡片基础
 
