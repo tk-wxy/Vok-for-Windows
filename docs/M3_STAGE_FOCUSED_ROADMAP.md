@@ -189,9 +189,13 @@ P0.5 的最终候选经用户长静置确认“呼出无缓慢、中转站无白
 
 ### N2：单项/批量出站 OLE Gate
 
-- 隔离验证单卡与 1/10/100 项 FileDrop、重复路径、WPF 源窗隐藏、Explorer/桌面 Copy/None/Esc、自吞拒绝和重新显示；
-- 固定 PID/HWND 记录 Deactivated、Topmost、Workspace generation、线程、句柄和源目录摘要；
-- Gate 未通过前不接正式消费。
+状态：2026-09-21 已完成实施步骤细化，尚未开始代码。权威执行计划见 `M3_STAGE_N2_PLAN.md`。N2 分为隔离 probe 路线裁决与产品宿主所有权两层证据：先验证 Copy-only data object、WPF 源 HWND 隐藏、Explorer/桌面 Copy/None/Esc、自吞拒绝和资源收口；只有唯一 OLE 方向通过后，才加入未接 Stage UI 的 outbound workspace claim、`PreserveCurrentForeground` 隐藏策略和 product Router token 门禁。
+
+- 隔离验证单卡与 1/10/100 项 FileDrop、重复路径、源路径失效、Hide 失败、WPF 源窗隐藏、Explorer/桌面 Copy/None/Esc 和 20 轮资源闭环；
+- 固定 PID/HWND 记录 OLE-start、Deactivated、Visible、Topmost、probe/workspace generation、raw effect、线程、句柄和源目录摘要；
+- probe 只使用显式 create-only 夹具/报告根，不初始化产品存储；外部目标产生的测试副本不自动删除；
+- WPF 路线在同一点连续失败两次后才允许转入 WPF UI STA 上的原生 `DoDragDrop/IDropSource`；最终只保留一个通过方向；
+- Gate 未通过前不接正式 selection、`StageDragOutController` 或消费事务；通过也只宣布 OLE 技术路线成立，正式拖出仍属于 N3。
 
 ### N3：正式拖出与持久化收口
 

@@ -367,7 +367,7 @@ INDEX stage_items_canonical ON stage_items(canonical_key)
 
 ### M3.3：出站 Gate 与卡片拖出（N0/N1 之后）
 
-当前必须先按聚焦路线完成 N0 occurrence/schema 8 与 N1 连续数据虚拟化，再以隔离探针验证第 7 节的隐藏源 HWND、单项/批量 Copy/None、自吞拒绝和资源闭环；只保留一个通过的实现方向，再接入正式 `StageDragOutController`。出站探针不得改写已归档的 M3.MVP1–M3.MVP3 历史结论。
+当前必须先按聚焦路线完成 N0 occurrence/schema 8 与 N1 连续数据虚拟化，再按 `M3_STAGE_N2_PLAN.md` 以隔离探针验证第 7 节的隐藏源 HWND、单项/批量 Copy/None、自吞拒绝和资源闭环。N2 先裁决 WPF/原生唯一 source 方向，再只接入未连接 Stage UI/数据库消费的 workspace outbound claim、Preserve-current-foreground 隐藏和 product Router token 门禁；N3 才实现 selection、正式 `StageDragOutController` 与 Copy 后消费事务。出站探针不得改写已归档的 M3.MVP1–M3.MVP3 历史结论。
 
 ### M3.4：完整文件切片收口与归档
 
