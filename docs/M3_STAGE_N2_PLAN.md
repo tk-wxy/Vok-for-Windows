@@ -1,6 +1,6 @@
 # Stage N2：单项/批量出站 OLE Gate 实施计划
 
-> 日期：2026-09-21。状态：**计划已细化，尚未实施**。精确 4K/100% Gate 已按用户决定冷藏，不阻塞 N2。N2 只裁决出站 OLE 技术路线、隐藏源 HWND、宿主所有权、自吞拒绝和资源闭环；不接正式 Stage 选择、消费或真实产品库。权威产品合同仍为 `M3_STAGE_FOCUSED_ROADMAP.md` 与 `decisions.md §32`。
+> 日期：2026-09-21。状态：**N2.0 进入基线已通过，下一步实施 N2.1**。精确 4K/100% Gate 已按用户决定冷藏，不阻塞 N2。N2 只裁决出站 OLE 技术路线、隐藏源 HWND、宿主所有权、自吞拒绝和资源闭环；不接正式 Stage 选择、消费或真实产品库。权威产品合同仍为 `M3_STAGE_FOCUSED_ROADMAP.md` 与 `decisions.md §32`。
 
 ## 1. 阶段目标与完成边界
 
@@ -277,6 +277,14 @@ src/Vok.IntegrationTests/
 
 Gate：进入事实、工作树归属和真实数据摘要明确；测试失败先诊断，不为开始 N2 修改无关基线。
 
+进入结果（2026-09-21）：
+
+- 进入提交固定为 `a90d66a4ef00c3b63cc24d0e932f10226c0ef88a`；本地 `main` 比 `origin/main` 超前 59，tracked 工作树无修改，只有既存未跟踪 `.codex/`；检查时没有运行中的 Vok，因此没有进程需要保留或停止；
+- 真实 `%LOCALAPPDATA%\Vok\vok.db` 只读审计为 schema 8、WAL、Stage 50、Ready 资产 60、`quick_check=ok`、0 外键违规、0 缺失/长度/SHA/越界资产异常。审计和完整测试前后 schema、八表、Stage 与资产摘要均不变，数据库文件 SHA-256 均为 `AC343AE5CF4CBDDFA2746B8CA10A04D66114AC2A9D61D6AF5062C70EC05D2CA9`；旧状态中的 Ready 62 已被本次直接审计取代；
+- 使用 SDK 10.0.400 和唯一 `%TEMP%` ArtifactsPath 完成 Release restore/build/test：构建 0 warning / 0 error，Core 114/114、Integration 601/601，共 715/715；测试后没有残留 Vok 进程；
+- `src/` 与 `tools/` 搜索确认没有 `StageDragOut`、`WorkspaceOutboundDrag`、outbound claim/token、`DoDragDrop` 或 `IDropSource` 实现；现有 `Preferred DropEffect` 只属于 Clipboard 读写/探针，不构成出站 OLE；
+- 聚焦路线已经把本计划作为 N2 权威执行入口，M3.MVP1–3 的归档结论未改。N2.0 Gate 通过，不产生产品代码或部署变化。
+
 ### N2.1：probe 骨架、夹具和 create-only 报告
 
 实施：
@@ -291,6 +299,19 @@ Gate：进入事实、工作树归属和真实数据摘要明确；测试失败�
 自动门禁：路径逃逸、已有目录覆盖、产品目录/仓库根/用户主目录拒绝，非法 count/profile 零创建，夹具摘要可重复读取，receiver 异常不破坏 source。
 
 Checkpoint 完成条件：尚不调用 OLE；只证明安全夹具、接收端和报告骨架可靠。
+
+进入 N2.1 的实施收窄：
+
+1. 新建 `Vok.StageDragProbe` 为 `net10.0-windows`/WPF 可执行探针，但本切片不引用 `Vok.App`、`Vok.Core`、`Vok.Infrastructure.Windows` 或 SQLite；这从项目依赖图上阻断产品组合根和真实库初始化。`Vok.IntegrationTests` 只引用探针以测试其 internal 边界；
+2. 本切片只实现 `prepare` 与 `receive`。不提前创建 `OutboundDataObjectFactory`、`WpfOutboundFileDragSource`、`ProbeOutboundDragSession`、正式 source 窗口或任何产品 host 类型；这些分别留给 N2.2–N2.5；
+3. 所有路径参数必须由调用方提供绝对路径。已存在的 allowed root 之下只能创建一个此前不存在的严格子目录；输出根不得等于或落入产品 `%LOCALAPPDATA%\Vok`、仓库根，亦不得直接使用用户主目录。allowed-root 到输出父目录之间出现 reparse point 时拒绝，避免 lexical descendant 经 junction 逃逸；报告、manifest 和 source 文件均用 `CreateNew`；
+4. 五种 profile 固定为：`single` 一项普通文件、`batch10` 十项、`batch100` 一百项、`mixed` 覆盖 ASCII 文件、Unicode 文件、目录和指向 probe-owned 文件的有效 `.lnk`、`duplicate` 以固定非相邻顺序 `[A,B,A,C,A,B]` 表达 6 个 occurrence 但只创建 3 个物理 source。所有名称携带 run id；manifest 只保存根内相对路径、ordinal、kind 和 source id，加载时重新做根边界及摘要校验；
+5. source snapshot 对唯一物理项记录相对路径、类型、长度、时间和 SHA-256/目录递归摘要；有序 occurrence 另算摘要，因此重复位置和磁盘对象身份不会混淆。`.lnk` 只允许指向同一 fixture 内对象，创建或复核失败即令 prepare 失败，不生成伪快捷方式；
+6. `receive` 作为独立 WPF 进程支持 `Copy`、`None`、`Throw` 三种受控策略，记录进入/悬停/放下次数、公开格式、FileDrop 原序和 raw effect；N2.1 自动门禁直接验证 receiver recorder 与异常报告，不从任何 source 调用 OLE。watchdog 只能写明失败并终止探针，不能作为成功同步屏障；
+7. 报告采用启动记录、append-only `events.jsonl` 与一次性最终 `report.json`/`failure.json`，不得覆盖旧证据。参数/profile 在创建输出根之前完成验证；输出创建后的异常必须保留已完成阶段和错误，且 source-before 摘要仍可读取；
+8. N2.1 Gate 至少覆盖相对路径、逃逸、junction、已有目标、产品/仓库/用户根、未知/重复参数、非法 profile 零创建；五种 profile 的项目数、类型、Unicode、有效 `.lnk`、重复 ordinal、manifest 篡改拒绝和可重复摘要；receiver 的 Copy/None/Throw 记录、关闭/watchdog 失败留证、source 摘要不变；solution Debug/Release 配置和完整 Release 回归。
+
+首个提交边界保持 `test(stage): add outbound drag probe fixtures`：只增加 probe、solution/test 引用和 N2.1 门禁，不修改 `src/Vok.App`、`src/Vok.Core`、`src/Vok.Infrastructure.Windows`、真实库、运行实例、Stage UI、Router 或 KI-001。
 
 ### N2.2：Copy-only data object 与自吞格式原型
 

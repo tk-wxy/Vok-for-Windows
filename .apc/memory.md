@@ -11,14 +11,14 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片、排序 S0–S3 和呼出 P0 已通过。N0 occurrence/schema 8 与 N1.1–N1.2 已部署；N1.3A/B、N1.4A/B 及检查器只读/采样修复已完成验证并提交至 `7a31c0a`，但尚未正式部署。当前硬件的 10k/100k 双向人工排练已通过；精确 4K/100% 最终 Gate 尚未执行并由用户决定冷藏后续补测。Release 工作树产品 PID 13424 正在运行，但启动早于 `7a31c0a`；真实库 schema 8、50 条 Stage、62 个 Ready 资产、`quick_check=ok`、0 外键违规。
-- **最近进展**：首次 10k 人工排练复现卡片拖动经生产重排路径改写隔离库，遂在检查专用 ViewModel 禁用全部 mutation 并以只读仓储拒绝五类写入；第二轮又证明 Background 采样会把排队中的连续用户滚动误算成 48/96 DIP 锚点漂移，改为布局完成后以 Render 优先级、在下一批 Input 前采样。最终 10k/100k 本机排练与 Release 715/715、探针 7/7、高风险 60/60 均通过。随后已新增 `docs/M3_STAGE_N2_PLAN.md`，把 N2 细化为隔离 probe 路线裁决、隐藏源 HWND、宿主 outbound claim、自吞 token、手势仲裁及 20 轮物理/资源 Gate；本轮尚未实施代码。
-- **下一步**：按 `M3_STAGE_N2_PLAN.md` 从 N2.0 进入基线冻结，再实施 N2.1 create-only probe/夹具；精确 4K/100% Gate 后续具备环境时补测，不阻塞 N2。
-- **已知问题**：当前机器为 3200×2000、200% DPI，本机 10k/100k 排练不能冒充精确 4K/100% Gate，N1.4 仍不能整体记为通过且数值 SLA 尚未由用户确认。`7a31c0a` 尚未正式发布，运行中的 PID 13424 未加载该最终修复。连续窗口间远距离排序、N2/N3 拖出闭环仍未完成；KI-001/002/003 继续有效，测试产生的 `.lnk` 副本未经授权不得删除。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片、排序 S0–S3 和呼出 P0 已通过。N0 occurrence/schema 8 与 N1.1–N1.2 已部署；N1.3A/B、N1.4A/B 及检查器只读/采样修复已完成验证并提交至 `7a31c0a`，但尚未正式部署。当前硬件的 10k/100k 双向人工排练已通过；精确 4K/100% 最终 Gate 冷藏后续补测。N2.0 进入基线已在 `a90d66a` 通过；当前无运行中的 Vok，真实库 schema 8、50 条 Stage、60 个 Ready 资产、`quick_check=ok`、0 外键/资产异常。
+- **最近进展**：N2.0 以唯一 `%TEMP%` ArtifactsPath 完成 SDK 10.0.400 Release restore/build/test，构建 0 warning / 0 error，Core 114/114 + Integration 601/601 共 715/715；测试前后真实库 schema、八表、Stage、资产摘要与文件 SHA-256 均不变。源码搜索确认不存在出站 source、outbound claim/token、`DoDragDrop` 或 `IDropSource`；tracked 工作树进入时无修改，只有既存 `.codex/` 未跟踪。N2.1 已收窄为不引用任何产品项目/SQLite的独立 WPF probe，只交付安全路径、五种夹具、manifest/source 摘要、受控 receiver 和 create-only/失败报告，不调用 OLE。
+- **下一步**：按 `M3_STAGE_N2_PLAN.md` 实施 N2.1 首个提交 `test(stage): add outbound drag probe fixtures`；通过路径/夹具/receiver/报告门禁和完整 Release 回归后，才进入 N2.2 Copy-only data object 与自吞 token 原型。精确 4K/100% Gate 后续具备环境时补测，不阻塞 N2。
+- **已知问题**：当前机器为 3200×2000、200% DPI，本机 10k/100k 排练不能冒充精确 4K/100% Gate，N1.4 仍不能整体记为通过且数值 SLA 尚未由用户确认。`7a31c0a` 尚未正式发布且当前没有 Vok 进程加载它。连续窗口间远距离排序、N2/N3 拖出闭环仍未完成；KI-001/002/003 继续有效，测试产生的 `.lnk` 副本未经授权不得删除。
 
 ## §0A 最近会话
 
-### 会话 2026-09-13 至 2026-09-21 - Stage P0、N0 与 N1 连续数据虚拟化
+### 会话 2026-09-13 至 2026-09-21 - Stage P0、N0/N1 与 N2 进入
 
 - P0.1 增加默认关闭的有界 reveal/Shell/资源/恢复轨迹、报告工具和固定候选截图探针；真实 46 条基线证明普通 Hide 不重建行，但旧路径每次揭示前重查 46 项，且通用 Rendering 可早于行发布和滚动完成。
 - P0.2–4 将隐藏期静态投影准备、generation/content/layout/state readiness token、render-return + attempt DWM fence、Availability 状态保留及物理在途上限 4 接入生产路径；Availability 只在完成呈现后复查，内部/外部拖动期间暂停。
@@ -48,6 +48,7 @@
 - 当前硬件人工排练首次暴露检查器仍复用生产 mutation 所有权：拖动卡片真实重排了隔离库并导致后续 reset/锚点缺测。修复以检查专用 ViewModel gate 禁用重排、移除、固定和重新关联，并以只读仓储拒绝所有写入；连续滚动又暴露 Background 采样会让已排队 Input 污染锚点读数，改为 Render 优先级后先完成布局采样。10k 手工 Older/Newer 8/8、100k 9/7 均为 19/19 锚点、最大误差 0 DIP，DB/source 与关闭收口稳定，用户确认无法拖动且其余正常；最终 Release 715/715、探针 7/7、高风险 60/60、10k/100k 自动各 64/64。当前环境仍不是精确 4K/100%，故只记本机排练通过。
 - 2026-09-21 用户决定将精确 4K/100% 物理 Gate 冷藏为后续补测项，不再阻塞当前路线；其状态保持未验证，当前下一步改为 N2 单项/批量 OLE Gate。
 - 2026-09-21 完成 N2 详细实施计划：严格分离 probe 物理 OLE 证据与产品宿主所有权证据，N2 不接正式 Stage UI/selection/消费；按 N2.0–N2.7 依次裁决 Copy-only payload、自吞 token、WPF source、隐藏 HWND、outbound claim、横向越界手势与 20 轮资源 Gate，唯一方向通过后再进入 N3。
+- N2.0 随后完成：进入提交 `a90d66a`，无运行 Vok，tracked 工作树干净且仅 `.codex/` 未跟踪；真实库只读审计为 schema 8、Stage 50、Ready 60、`quick_check=ok`、0 外键/资产异常。唯一临时 ArtifactsPath 的 Release 构建 0 warning / 0 error，114/114 + 601/601 共 715/715；测试前后 schema、八表、Stage、资产摘要和数据库 SHA-256 不变，且源码没有任何出站 OLE/claim/token 实现。N2.1 收窄为零产品依赖的 probe 安全骨架，不提前调用 OLE 或修改产品宿主。
 
 ### 会话 2026-09-05 至 2026-09-12 - M3.1 中转站管理动作与卡片基础
 
