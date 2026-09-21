@@ -11,6 +11,7 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
 
     private readonly IStageRepository _repository;
     private readonly IStageFileService _fileService;
+    private readonly bool _mutationsAllowed;
     private readonly SemaphoreSlim _operationGate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
     private readonly StageRollingWindow _window = new();
@@ -36,9 +37,18 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
     public StageViewModel(
         IStageRepository repository,
         IStageFileService fileService)
+        : this(repository, fileService, mutationsAllowed: true)
+    {
+    }
+
+    internal StageViewModel(
+        IStageRepository repository,
+        IStageFileService fileService,
+        bool mutationsAllowed)
     {
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         _fileService = fileService ?? throw new ArgumentNullException(nameof(fileService));
+        _mutationsAllowed = mutationsAllowed;
         LoadNewerCommand = new AsyncRelayCommand(
             (Func<Task>)LoadNewerPageAsync,
             () => CanLoadNewer);
@@ -108,6 +118,8 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
     public string PageSummaryText => $"已加载 {Items.Count} / {TotalCount}";
 
     internal int WindowMaximumItemCount => _window.MaximumItemCount;
+
+    internal bool MutationsAllowed => _mutationsAllowed;
 
     internal void EnsureViewportCapacity(int visibleItemCapacity)
     {
@@ -323,7 +335,8 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
 
     internal long BeginReorder(StageItemViewModel? source)
     {
-        if (source is null || source.IsBusy || _disposed || !_initialized ||
+        if (!_mutationsAllowed || source is null || source.IsBusy ||
+            _disposed || !_initialized ||
             IsLoading || IsInteractionLocked || Items.Count < 2)
         {
             return 0;
@@ -374,7 +387,7 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
 
     internal async Task<bool> CommitReorderAsync(long generation)
     {
-        if (_reorderSession is not { } session ||
+        if (!_mutationsAllowed || _reorderSession is not { } session ||
             session.Generation != generation ||
             !session.TryBeginCommit())
         {
@@ -489,7 +502,8 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private async Task RemoveAsync(StageItemViewModel? item)
     {
-        if (item is null || item.IsBusy || _disposed || IsInteractionLocked)
+        if (!_mutationsAllowed || item is null || item.IsBusy ||
+            _disposed || IsInteractionLocked)
         {
             return;
         }
@@ -560,7 +574,8 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private async Task TogglePinnedAsync(StageItemViewModel? item)
     {
-        if (item is null || item.IsBusy || _disposed || IsInteractionLocked)
+        if (!_mutationsAllowed || item is null || item.IsBusy ||
+            _disposed || IsInteractionLocked)
         {
             return;
         }
@@ -695,7 +710,7 @@ public sealed partial class StageViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private async Task RelinkAsync(StageItemViewModel? item)
     {
-        if (item is null || item.IsBusy ||
+        if (!_mutationsAllowed || item is null || item.IsBusy ||
             RelinkTargetPickerAsync is null || _disposed || IsInteractionLocked)
         {
             return;

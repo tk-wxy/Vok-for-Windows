@@ -38,8 +38,12 @@ internal sealed class StageScaleInspectionRunner(
         using var repository = new SqliteStageRepository(
             options.DatabasePath,
             new StageOptions(checked((long)options.ItemCount + 1)));
+        var readOnlyRepository = new InspectionReadOnlyStageRepository(repository);
         using var fileService = new WindowsStageFileService();
-        using var viewModel = new StageViewModel(repository, fileService);
+        using var viewModel = new StageViewModel(
+            readOnlyRepository,
+            fileService,
+            mutationsAllowed: false);
 
         var initializeStopwatch = Stopwatch.StartNew();
         await viewModel.InitializeAsync(cancellationToken).ConfigureAwait(true);
@@ -177,8 +181,9 @@ internal sealed class StageScaleInspectionRunner(
                 _ = window.Activate();
                 view.Focus();
                 Console.WriteLine(
-                    "Interactive inspection is ready. Scroll in both directions, " +
-                    "then close the window to finalize the report.");
+                    "Interactive inspection is ready. Use the mouse wheel, touchpad, " +
+                    "or scrollbar to scroll in both directions; item mutation gestures " +
+                    "are disabled. Then close the window to finalize the report.");
             }
 
             _ = await closedCompletion.Task
@@ -212,15 +217,24 @@ internal sealed class StageScaleInspectionRunner(
         var resourceSamples = resourceSampler.Samples;
         var databaseAfter = StageScaleData.AuditDatabase(options.DatabasePath);
         var sourceHashAfter = StageScaleData.ComputeFileSha256(options.SourcePath);
-        if (!string.Equals(
+        var databaseStable = string.Equals(
                 databaseAfter.StageDigest,
                 marker.StageDigest,
-                StringComparison.Ordinal) ||
-            databaseAfter.StageCount != databaseBefore.StageCount ||
-            !string.Equals(sourceHashBefore, sourceHashAfter, StringComparison.Ordinal))
+                StringComparison.Ordinal) &&
+            databaseAfter.StageCount == databaseBefore.StageCount;
+        var sourceStable = string.Equals(
+            sourceHashBefore,
+            sourceHashAfter,
+            StringComparison.Ordinal);
+        if (!databaseStable || !sourceStable)
         {
             throw new InvalidDataException(
-                "The isolated database or probe-owned source changed during inspection.");
+                "The physical inspection violated its read-only fixture contract: " +
+                $"databaseStable={databaseStable}; sourceStable={sourceStable}; " +
+                $"countBefore={databaseBefore.StageCount}; " +
+                $"countAfter={databaseAfter.StageCount}; " +
+                $"digestBefore={marker.StageDigest}; " +
+                $"digestAfter={databaseAfter.StageDigest}.");
         }
 
         var completedObserver = observer ??
@@ -550,7 +564,7 @@ internal sealed class StageScaleInspectionRunner(
             active.ViewportSettledMilliseconds ??= ElapsedMilliseconds(active);
             var generation = active.Generation;
             _pendingFinalization = _view.Dispatcher.BeginInvoke(
-                DispatcherPriority.Background,
+                DispatcherPriority.Render,
                 () => FinalizeViewportMutation(generation));
         }
 
