@@ -12,6 +12,16 @@ internal static class ProbeReportWriter
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
+    internal static string PublishNew<T>(ProbeOutputDirectory output, string fileName, T value)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
+        var final = ResolveOutputFile(output, fileName);
+        var pending = WriteNew(output, $"{fileName}.{Guid.NewGuid():N}.pending", value);
+        File.Move(pending, final, overwrite: false);
+        return final;
+    }
+
     internal static string WriteNew<T>(
         ProbeOutputDirectory output,
         string fileName,
@@ -61,6 +71,39 @@ internal static class ProbeReportWriter
         }
 
         return Path.Combine(output.Path, fileName);
+    }
+}
+
+// Shared by the command boundary and receiver: even failure recovery gets only
+// one publication attempt. Failed staging remains as evidence, never overwritten.
+internal sealed class ProbeTerminalReportWriter
+{
+    private readonly ProbeOutputDirectory _output;
+
+    internal ProbeTerminalReportWriter(ProbeOutputDirectory output)
+    {
+        _output = output;
+        EnsureNoTerminalFile();
+    }
+
+    internal bool Attempted { get; private set; }
+
+    internal void Complete<T>(bool failed, T report)
+    {
+        if (Attempted) throw new InvalidOperationException("A terminal report has already been attempted.");
+        Attempted = true;
+        EnsureNoTerminalFile();
+        ProbeReportWriter.PublishNew(_output, failed ? "failure.json" : "report.json", report);
+    }
+
+    private void EnsureNoTerminalFile()
+    {
+        foreach (var name in new[] { "report.json", "failure.json" })
+        {
+            var path = ProbeReportWriter.ResolveOutputFile(_output, name);
+            if (File.Exists(path) || Directory.Exists(path))
+                throw new IOException($"Probe evidence already exists: {path}");
+        }
     }
 }
 

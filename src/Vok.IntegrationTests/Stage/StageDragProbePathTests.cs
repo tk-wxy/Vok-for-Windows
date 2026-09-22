@@ -188,6 +188,13 @@ public sealed class StageDragProbePathTests
         var output = ProbeOutputDirectory.Reserve(
             layout.CreatePrepareOptions(),
             layout.Environment);
+        foreach (var invalidName in new[] { ".", "..", " ", "..\\escape.json", "report.json:alternate" })
+        {
+            Assert.Throws<ArgumentException>(() => ProbeReportWriter.PublishNew(
+                output, invalidName, new TestReport(1, "Invalid")));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(output.Path));
+        }
+
         var reportPath = ProbeReportWriter.WriteNew(
             output,
             "report.json",

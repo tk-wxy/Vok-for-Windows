@@ -8,10 +8,11 @@ internal static class Program
         try
         {
             var options = StageDragProbeOptions.Parse(arguments);
-            ProbePathPolicy.Validate(options, ProbePathEnvironment.Capture());
-            Console.Error.WriteLine(
-                $"{options.Verb} execution is not enabled until its N2.1 checkpoint is implemented.");
-            return 2;
+            var environment = ProbePathEnvironment.Capture();
+            ProbePathPolicy.Validate(options, environment);
+            var identity = ProbeProcessIdentity.Capture(options);
+            var output = ProbeOutputDirectory.Reserve(options, environment);
+            return ProbeCommandRunner.Run(options, output, identity);
         }
         catch (Exception exception)
         {

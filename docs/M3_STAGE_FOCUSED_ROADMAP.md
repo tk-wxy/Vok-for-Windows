@@ -189,7 +189,7 @@ P0.5 的最终候选经用户长静置确认“呼出无缓慢、中转站无白
 
 ### N2：单项/批量出站 OLE Gate
 
-状态：2026-09-22 已通过 N2.0 基线与 N2.1-A/B。零产品依赖 probe 的严格路径/create-only 骨架、五种 fixture、真实 Shell link、相对 manifest、source/occurrence 双摘要和篡改拒绝均已完成隔离回归；尚未实现 receiver 或调用 OLE，下一步只实施 N2.1-C 的 receiver core、薄 WPF Window 和单终态报告。权威执行计划见 `M3_STAGE_N2_PLAN.md`。N2 分为隔离 probe 路线裁决与产品宿主所有权两层证据：先验证 Copy-only data object、WPF 源 HWND 隐藏、Explorer/桌面 Copy/None/Esc、自吞拒绝和资源收口；只有唯一 OLE 方向通过后，才加入未接 Stage UI 的 outbound workspace claim、`PreserveCurrentForeground` 隐藏策略和 product Router token 门禁。
+状态：2026-09-22 已通过 N2.0、N2.1-A/B/C/D 与 N2.2。零产品依赖 probe 已具备安全路径/五种 fixture、STA receiver、实际 prepare/receive 入口，以及 manifest 原序/重复保留的 Copy-only data object 和自吞 Router 原型；本机真实 COM HGLOBAL 回读确认 FileDrop 顺序及 Copy 原始四字节，token 拒绝、清理重入和迟到终态已覆盖（定向 139/139，完整 Release 854/854）。C/D 与 N2.2 已按用户要求提交，仍未调用源端 OLE；下一步 N2.3 可见源窗真实 WPF OLE 与一次性终态。权威执行计划及证据边界见 `M3_STAGE_N2_PLAN.md`。N2 分为隔离 probe 路线裁决与产品宿主所有权两层证据：继续验证 WPF 源 HWND 隐藏、Explorer/桌面 Copy/None/Esc 和资源收口；只有唯一 OLE 方向通过后，才加入未接 Stage UI 的 outbound workspace claim、`PreserveCurrentForeground` 隐藏策略和 product Router token 门禁。
 
 - 隔离验证单卡与 1/10/100 项 FileDrop、重复路径、源路径失效、Hide 失败、WPF 源窗隐藏、Explorer/桌面 Copy/None/Esc 和 20 轮资源闭环；
 - 固定 PID/HWND 记录 OLE-start、Deactivated、Visible、Topmost、probe/workspace generation、raw effect、线程、句柄和源目录摘要；
