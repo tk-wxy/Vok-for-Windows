@@ -1,6 +1,6 @@
 # Stage N2：单项/批量出站 OLE Gate 实施计划
 
-> 日期：2026-09-22。状态：**N2.0、N2.1-A/B/C/D 与 N2.2 数据合同/自吞原型已通过；下一步 N2.3**。C/D 与 N2.2 已按用户要求提交，仍未调用源端 OLE。精确 4K/100% Gate 已按用户决定冷藏，不阻塞 N2。N2 只裁决出站 OLE 技术路线、隐藏源 HWND、宿主所有权、自吞拒绝和资源闭环；不接正式 Stage 选择、消费或真实产品库。权威产品合同仍为 `M3_STAGE_FOCUSED_ROADMAP.md` 与 `decisions.md §32`。
+> 日期：2026-09-22。状态：**N2.0、N2.1-A/B/C/D 与 N2.2 已通过；N2.3 已细化为 A–D，下一步 N2.3-A**。C/D 与 N2.2 已提交至 `ffea5f8`；本轮仅分析规划，仍未实现或调用源端 OLE。精确 4K/100% Gate 已按用户决定冷藏，不阻塞 N2。N2 只裁决出站 OLE 技术路线、隐藏源 HWND、宿主所有权、自吞拒绝和资源闭环；不接正式 Stage 选择、消费或真实产品库。权威产品合同仍为 `M3_STAGE_FOCUSED_ROADMAP.md` 与 `decisions.md §32`。
 
 ## 1. 阶段目标与完成边界
 
@@ -98,7 +98,7 @@ N2 使用两层互补证据，不把其中一层冒充另一层：
 
 ### 4.1 指针与手势状态
 
-N2 probe 必须模拟最终手势，但不修改正式 `StageView`：
+N2 probe 最终须在 N2.6 模拟以下完整手势，但不修改正式 `StageView`；N2.3 只用普通卡面按压与系统阈值验证可见 source，不提前接排序/横向升级：
 
 ```text
 Idle
@@ -112,7 +112,7 @@ Idle
 
 OutboundUpgradeClaimed
   → 清除 reorder transform / ghost / capture / render 订阅
-  → 构造同代 data object
+  → 接管在热路径外预先准备的同代 data object
   → OleCallEntered
 ```
 
@@ -125,6 +125,8 @@ OutboundUpgradeClaimed
 - 批量 probe 载荷不等于产品 selection，N3 才实现 Ctrl/Shift 和轻量 occurrence 快照。
 
 ### 4.2 OLE source 状态
+
+下图包含 N2.4 起的隐藏分支；N2.3 保持窗口可见，使用其检查点内的简化 source 生命周期。
 
 ```text
 Created
@@ -188,9 +190,13 @@ tools/
 │   ├── Vok.StageDragProbe.csproj
 │   ├── Program.cs
 │   ├── StageDragProbeOptions.cs
-│   ├── StageDragProbeWindow.xaml(.cs)
+│   ├── ProbeFileDragSourceWindow.xaml(.cs)
 │   ├── ProbeOutboundDragSession.cs
-│   ├── OutboundDataObjectFactory.cs
+│   ├── ProbeOutboundDataObject.cs
+│   ├── ProbeOutboundDragToken.cs
+│   ├── ProbeSourceReport.cs
+│   ├── ProbeSourceEventRecorder.cs
+│   ├── ProbeSourceProcessHost.cs
 │   ├── WpfOutboundFileDragSource.cs
 │   ├── ProbeFileDropReceiver.cs
 │   ├── ProbeFixtureBuilder.cs
@@ -476,6 +482,85 @@ Checkpoint 完成条件：数据合同和自吞判断成立；仍不隐藏窗口
 
 Checkpoint 完成条件：只有 OLE source/终态成立，不声称隐藏源窗可行。
 
+#### N2.3 源码诊断与本轮边界（2026-09-22）
+
+以下为实施计划，不是完成记录。进入提交为 `ffea5f8`，tracked 工作树干净，只有既存未跟踪 `.codex/`；没有运行中的 Vok/probe。本机安装的最高 WindowsDesktop runtime 为 10.0.11。沿用 N2.2 的 139/139 定向、854/854 完整 Release 证据，本次规划不重跑测试或打开拖放窗口。
+
+- 已有 `ProbeOutboundDataObject` 可在 owner STA 预先准备和重验夹具；`ProbeOutboundDragToken.Current` 按进程实例复用；`ProbeFileDropRouter` 可验证自吞。但尚无 source 窗口、OLE invoker、source generation、`source` CLI 或双进程物理编排器。
+- `ProbeFileDropReceiver` 与 `ProbeTerminalReportWriter` 都是一次会话/一次发布；`ProbeReceiverProcessHost` 使用 `OnMainWindowClose`，默认 terminal 后排入关闭。它们不能直接充当同一源进程连续 20 轮的 source host。现有 Background 关闭表达的是事件驱动的稍后关窗，不能当作另一进程的 OLE 调用已返回。
+- `None` 策略在 Enter/Over 就给 None。真实 OLE 下不应预设一定收到 Drop，更不能拿单元测试直接调用 `Drop()` 得到的 `PolicyNone` 当物理流程。`Throw` 策略则在 Drop 内捕获故障并返回 None；目标报告的异常不等于源端 `DoDragDrop` 一定抛异常，二者要分开验收。
+- `ProbeEventLog.Write` 目前每次同步 `Flush(true)`，只有 UTC/sequence，没有单调时钟。不能从每次 MouseMove/GiveFeedback/QueryContinueDrag 直接照搬该写法；否则源端热路径会做同步磁盘 I/O，观测器也会改变交互。
+- `ProbeOutboundDataObject.Create` 会读取磁盘、摘要和 Shell link，因此必须在允许按压之前准备，不能从阈值越界的 MouseMove 才调用。物理 source-before/after、同 run 多轮归档和对端身份关联也尚未接通。
+
+官方语义核对：`DoDragDrop` 返回的是最终 effect；`QueryContinueDrag` 默认处理 Esc 和鼠标释放，处理器若覆盖默认行为却不给结束路径会阻止返回；`GiveFeedback` 是高频反馈，不代表目标已接受。因此“进入回调”“取消意图”“实际返回”必须是不同事件。[WPF DoDragDrop](https://learn.microsoft.com/en-us/dotnet/api/system.windows.dragdrop.dodragdrop?view=windowsdesktop-10.0)、[QueryContinueDrag](https://learn.microsoft.com/en-us/dotnet/api/system.windows.dragdrop.querycontinuedrag?view=windowsdesktop-10.0)、[GiveFeedback](https://learn.microsoft.com/en-us/dotnet/api/system.windows.dragdrop.givefeedback?view=windowsdesktop-10.0)。已同时核对 [WPF v10.0.11 源码](https://github.com/dotnet/wpf/blob/v10.0.11/src/Microsoft.DotNet.Wpf/src/PresentationCore/System/Windows/DragDrop.cs) 与 [原生 OLE 循环说明](https://learn.microsoft.com/en-us/windows/win32/api/ole2/nf-ole2-dodragdrop)；文档/源码不能替代本机物理 Gate。
+
+本步只使用普通、不透明、可见、非 Topmost 的独立源窗和受控目标；先以普通卡面左键按压 + 系统拖动阈值开始。1:2:1 区域、内部排序、横向升级、ghost/render pump 留给 N2.6；隐藏 HWND 留给 N2.4，产品 claim/Router 留给 N2.5。N2.3 不启动 Explorer/桌面接收、不引入原生 fallback，不修改三个产品项目或访问真实库。完整测试前后仍使用既有外部只读审计。
+
+#### N2.3 会话、关闭与证据合同
+
+1. **一个 source manager、多代单次 session**：固定 source PID/HWND 和实例 token；每轮新 generation、payload owner 与 immutable snapshot。准备、在途、清理和归档期间都不允许第二次 source 调用；只有上一轮清理及报告完成后才准备下一轮。
+2. **准备与启动分离**：`source` 在自己的 create-only 输出内调用现有 builder/loader 创建五种 profile，不新增任意用户 source 路径入口。启动和每轮重新准备在鼠标热路径之外完成，source-ready 之后的阈值处理只认领已有快照。阈值认领先于释放手势 capture，以免本次主动释放触发 LostMouseCapture 反过来取消升级；真正的意外失捕仍取消未进入 OLE 的候选。
+3. **调用栈拥有资源**：实际 `DoDragDrop` 只在当前 Window 所属 UI STA 的真实 MouseMove 中同步调用；不跨线程、不延后到鼠标已松开的 Dispatcher 回调发起。所有 per-round 回调捕获自己的 generation。首次 GiveFeedback/QueryContinueDrag 合并为一个 `OleStartedObserved`，默认光标和正常松手语义保留；取消时明确设置 `Action=Cancel` 与 `Handled=true`，不以 PreviewKeyDown 单独承担活动 OLE 的 Esc。
+4. **请求取消不等于完成**：Close/Dispose/宿主故障在 OLE 在途时只关闭新准入、记录取消/退出请求，保持 HWND、payload、marker 和 source 回调，等待 QueryContinueDrag 表达取消以及调用栈真正返回/抛异常。此期间不能直接 `Application.Shutdown`、释放 DataObject 或宣布 CleanupCompleted；外部调用不返回时由独立 supervisor 失败收口，不让 UI STA 上的 timer 冒充可抢占取消。
+5. **终态先认领，释放后证明**：返回/抛异常后先认领一次 terminal，再在 owner STA 的 finally 中解除本代事件、释放本代 capture/payload/marker，分别记录每个清理步骤。错误不跳过余下步骤，也不先把诊断计数清零再假装已释放；清理或写报告失败禁止重新启动。关闭意图只在归档完成后执行，旧代延迟关闭不能结束下一轮。
+6. **外部结果与内部健康分离**：原始 effect、source exception、CancelRequested/reason、receiver observation、cleanup/evidence error 独立保存。只有精确 Copy 视为接受；None 不猜测具体原因，没有观察到 Esc 就不填写 Esc。晚到的关闭/取消不能把已返回 Copy 改写成“未交付”；Copy 后清理失败也保留接受事实，同时令过程/Gate 失败。其他 effect 不归一猜测、不自动重试外部动作。
+7. **回调不直接刷盘**：新增 source 专用有界记录器，UI 只记录不可变的关键边沿和累计计数，由一个显式拥有的 writer 串行写 append-only 事件。记录 producer 的单调 ticks/frequency、UTC、generation 与序号；连续反馈合并计数，不无界保存逐帧事件。队列溢出、writer 失败或证据缺口必须可见并令 Gate 失败，不能静默丢失关键边沿。返回后的归档阶段等待 writer 排空，不能阻塞活动 OLE 等待磁盘。
+8. **逻辑零点与常驻基线分开**：在 CleanupCompleted、尚未准备下一轮时，检查本代 data object、marker stream、capture、callback 订阅和活动 session 全部为零；Ready 阶段预载的一份下一轮 payload 单独计数。进程级 nonce format 和窗口级静态路由是常驻基线，不要求每轮“注销 format”或重新生成 token。无产品 claim/render pump 的本阶段应标记 NotApplicable，不伪造实现或把累计 callback 次数写成 0。
+
+最小状态顺序：
+
+```text
+Preparing → Ready → Pressed → OleCallEntered [OleInFlight=1]
+                                  ├─ 首个 source 回调 → OleStartedObserved
+                                  └─ Close/Esc/Dispose/fault → CancelRequested（仍在途）
+             实际返回 / 抛异常 → TerminalClaimed → 逐项释放 → CleanupCompleted
+                                                        → 报告发布 → 下一轮准备 / 退出
+```
+
+进入调用前取消可直接释放并记录 `OleInvoked=false`；未发生的 raw effect、回调和资源观察保持 null/未执行，不能填 0 冒充物理通过。
+
+#### N2.3 实施切片与 Gate
+
+| 切片 | 本步交付 | 通过条件与停止位置 |
+|---|---|---|
+| **A：source 会话/报告契约** | `ProbeOutboundDragSession`、窄 invoker seam、source report 与有界 recorder；只有测试 fake invoker | 自动覆盖 Copy/None/抛异常、双启动、首回调双触发、预取消/在途取消、旧代、关闭/释放重入、日志/清理失败；证明返回前数据未释放。尚无真实 OLE |
+| **B：可见源窗与 WPF adapter** | `WpfOutboundFileDragSource`、`ProbeFileDragSourceWindow`、独立 source host、严格 `source` CLI；复用现有 payload/Router | WPF 自动测试覆盖真实路由、阈值、capture 转交、仅一次 invoker、同 HWND 多代、关闭推迟；apphost 无按压 smoke 为零 OLE。真实 OLE 不进默认 test suite，首次受控实测在 C |
+| **C：双进程编排与首轮物理 Gate** | `Start-M3StageDragGate.ps1`、`Read-M3StageDragReport.ps1`，固定 source/receiver 身份、case 绑定、受控 receiver 保活和外部 watchdog | 同一次构建的独立进程完成 single 的 Copy/None/Esc；对比源返回、目标报告和前后 source 摘要。首轮不通先定位这一变量，不扩到批量或隐藏 |
+| **D：故障、批量与连续 20 轮** | 故障门禁、1/10/100/mixed/duplicate 物理记录，同源进程/同 HWND 的 Copy/None 交替 | 每轮独立报告，20 轮不重启 source；None/Esc/关闭/目标退出均能如实收口，资源零点可测。完整 Release 回归和真实库前后只读审计后，才能宣布 N2.3 通过 |
+
+A 是下一次实施的最小边界，不因为 B/C 已有设计就同时加入真实 `DoDragDrop`。A–D 可分步提交；所有通过结果必须区分 simulation、实际 HWND 启停和物理 OLE。
+
+#### 双进程编排与报告布局
+
+- 一个 gate root 原子创建，source 与各轮 receiver 使用互不覆盖的子输出目录。source 进程拥有自己的固定 fixture；每个 case 描述绑定 gate/case id、source run id/generation、fixture run id/digests、双方 PID/HWND 和 exe/DLL SHA。case 文件 create-only 原子发布，只在非在途准备期读取并验证；旧 case、错实例、不同构建或缺失字段拒绝 arm。
+- 握手顺序固定为：source 准备 fixture 并发布未 arm 的 `SourcePrepared` → receiver 发布 `ReceiverShown` → supervisor 核验双方身份并原子发布 case → source 读取/验证后发布 `SourceReady` → 才允许真实按压。准备和 arm 的事件分开，避免 source 等 case、supervisor 又等 source-ready 的循环等待。复核 HWND 归属，不靠启动后的固定等待；每轮可以重建一次性 receiver，但 source PID/HWND 必须贯穿 20 轮，不能用重启 20 次 source 冒充长期资源 Gate。
+- 受控 paired receiver 复用现有 `closeOnTerminal:false` 能力，终态 observation 发布后仍保留窗口；supervisor 观察源调用返回/本轮归档后，才向固定 receiver HWND 请求关闭并等待原 Process handle 退出。独立 `receive` 既有默认行为继续保留；“排入 Background 关闭”不作为跨进程完成信号。
+- 只允许对已绑定受控窗口执行物理 Drop。使用 probe-only 对端存活/目标 HWND 检查，在 QueryContinueDrag 的真实松手分支中对未知、已退出或本实例目标请求 Cancel；不拿坐标轮询推断拖动已结束，不激活或移动外部窗口。这是 N2.3 防误投的测试限制，不是最终产品目标白名单；N2.4 外部目标 Gate 再单独扩展。
+- source 结果、receiver observation 和 case gate verdict 是三份不同事实。None 可以没有目标 Drop；None 目标门禁须观察到绑定目标的 Enter/Over 拒绝、源返回 None、零载荷读取和双方收口，不能把从未进入目标的自吞/区域外取消混作拒绝通过。不强造 `PolicyNone` 或“缺 Drop 挂死”；Throw 的目标 Failed + 源 None 也不强改成 source exception。若源已返回而 paired target 尚无终态，用同 case 的显式 source-return 握手收口，单独记录“来源已结束但未观察到 Drop/Leave”，不伪造原生事件、不改独立 receive 的 `WindowClosedBeforeDrop` 语义；Copy 却没有匹配的目标接受报告必须失败。
+- 沿用一次性 publisher，但每轮拥有自己的新 report 目录，进程 startup/exit 与最终 run summary 在 run 层；不复用已 `Attempted` 的 writer，也不覆盖上一轮。各轮 source-before/after 都独立保存；缺 after 或摘要不符不通过。无实际文件复制的 receiver 只证明协议接受，不是 Explorer 的物理文件产物证据。
+- watchdog 保留原 Process handle，分开记录准备等待与 OLE/归档期限；人工尚未开始按压不算 OLE 卡死。deadline 为可记录的工程侧参数，不是产品 SLA，N2.1-D 的 30 秒自动测试上限也不直接当人工总操作时限。缺回调/阻塞/写日志停滞只判明确的阶段超时失败，不伪造返回或 cleanup；强制终止时保留已有证据，绝不按进程名查杀或覆盖终态报告。
+- 只解析完整发布的 JSON/完整换行事件；源与目标分别用本进程序号/单调时间建立顺序，通过 case 与真实握手关联，不把两个独立相对计时器相减当跨进程因果证明。`UserVerdict` 未收集始终为 NotCaptured。
+
+#### N2.3 验收矩阵与停止条件
+
+自动层至少覆盖：真实 OLE invoker 零调用的启动/关闭；低于阈值和非左键；释放 capture 时重入 LostMouseCapture；首次两个 source 回调的任意顺序与重复；正常松手默认行为不被 Handled 吞掉；按压中 Esc/Close/Dispose；invoker 抛异常/无回调返回；取消后迟到 Copy 的原始事实保留；清理和 writer 故障；旧代回调不改新代；同 manager 连续 20 轮；paired receiver 的发布/保活/真实退出；case 串线、输出覆盖和坏参数零创建。
+
+物理层单独执行：
+
+| 案例 | 必须保存的观察 |
+|---|---|
+| Copy：1/10/100、mixed、duplicate | 源 raw Copy；目标只读一次 FileDrop/Preferred，原序、重复位置和四字节 Copy 一致；源摘要不变 |
+| None：1/10/100 | 源 raw None；目标零载荷读取，允许没有 Drop；源仍可见且 UI 可继续使用 |
+| Esc：1/10/100 | source QueryContinueDrag 观察到 Esc、请求取消、最终 None；不得只依据 receiver 的 PreviewKeyDown |
+| Throw：1/10；source invoker exception 另作故障注入 | 目标失败和源原始返回分别记录；源异常有独立测试，不混同两条机制 |
+| 同源 HWND 的自吞回路 | token 拒绝，无新 inbound target/租约/载荷读取；松手不重新进入 source |
+| 活动 OLE 内关闭/Dispose、受控目标退出/崩溃 | 正常返回/异常与是否取消分别记录；返回前 payload 未释放；源未抢前台、未误投到目标消失后的外部窗口 |
+| 同一 source PID/HWND 连续 20 轮（建议固定 batch100，奇数 Copy、偶数 None） | 每轮逻辑资源零点和进程资源样本；最后不再预载下一轮，全部 per-round 所有权归零；20 个新 source 进程不能算通过 |
+
+本阶段全部保持源 HWND 可见、不调用 Hide；§9 的隐藏源窗/Explorer/桌面/跨目标 20 轮是后续 N2.4/N2.7 门禁，不要求在 N2.3 提前执行。Handle/Thread/USER/GDI 和内存先记录基线及趋势，不靠强制 GC 或虚构硬阈值通过。
+
+任何双启动、返回前释放 payload/销毁源窗、raw Copy 被取消意图抹去、自吞副作用、伪造清理零点、无界日志/同步热路径磁盘写入、跨 case 或同点重复失败，均停止当前切片并分析，不继续叠加延时或扩展到隐藏 HWND。计划分析已完成，以上自动/物理门禁仍待实现和执行。
+
 ### N2.4：隐藏源 HWND 可行性裁决
 
 实施顺序严格保持单变量：
@@ -631,12 +716,12 @@ dotnet run --project tools/Vok.StageDragProbe/Vok.StageDragProbe.csproj -- prepa
 dotnet run --project tools/Vok.StageDragProbe/Vok.StageDragProbe.csproj -- receive --allowed-root <existing-root> --output-root <new-direct-child> --repository-root <vok-root> --source-revision <revision> --effect Copy
 ```
 
-以下 source/双进程编排命令仍属后续计划，N2.1 尚未实现：
+以下 source/双进程编排命令仍属 N2.3 计划，尚未实现；case 绑定由编排器创建，具体参数在 B/C 中校验：
 
 ```powershell
-dotnet run --project tools/Vok.StageDragProbe/Vok.StageDragProbe.csproj -- run --fixture <manifest.json> --output-root <new-path> --source Wpf
+dotnet run --project tools/Vok.StageDragProbe/Vok.StageDragProbe.csproj -- source --allowed-root <gate-root> --output-root <new-source-child> --repository-root <vok-root> --source-revision <revision> --profile batch100 --case-root <gate-case-root>
 
-pwsh -File tools/Start-M3StageDragGate.ps1 -FixtureManifest <manifest.json> -OutputRoot <new-path>
+pwsh -File tools/Start-M3StageDragGate.ps1 -AllowedRoot <existing-root> -OutputRoot <new-gate-child> -Profile batch100 -Rounds 20
 pwsh -File tools/Read-M3StageDragReport.ps1 -ReportRoot <path>
 ```
 

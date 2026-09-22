@@ -11,9 +11,9 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片、排序 S0–S3 和呼出 P0 已通过。N0 occurrence/schema 8 与 N1.1–N1.2 已部署；N1.3A/B、N1.4A/B 及检查器只读/采样修复已完成验证并提交至 `7a31c0a`，但尚未正式部署。当前硬件的 10k/100k 双向人工排练已通过；精确 4K/100% 最终 Gate 冷藏后续补测。N2.0 与 N2.1-A/B 已提交（B 为 `64fd98b`），N2.1-C/D 和 N2.2 数据合同/自吞原型已实现、验证并按用户要求提交，仍未调用源端 OLE。当前无运行中的 Vok/probe，真实库 schema 8、50 条 Stage、60 个 Ready 资产、`quick_check=ok`、0 外键/资产异常。
-- **最近进展**：N2.2 增加仅接受重验 manifest 的 Copy-only data object、实例 nonce token 和 probe-local Router；五种 fixture 的原序/重复路径、精确 Copy 四字节经本机原生 COM HGLOBAL 验证。self token 检测先于新会话/target，旧会话独立释放；普通 Leave/Cancel 清理期可提前准入的反例已复现并以全程准入保护修正。新增 54 例，探针定向 139/139；Debug/Release 零警告，完整 Release Core 114/114 + Integration 740/740 共 854/854；真实库 schema、八表、索引、资产摘要与数据库 SHA-256 前后不变。
-- **下一步**：按 `M3_STAGE_N2_PLAN.md` 进入 N2.3 可见源窗真实 WPF OLE 与一次性终态；在真实鼠标按压和 UI STA 发起 Copy-only source，保持 data object 到 OLE 返回，验证受控 Copy/None/Esc、重入/旧代/异常与资源归零。N2.4–7 再验证隐藏 HWND、宿主所有权与物理 Gate；不提前接正式 Stage UI/消费。精确 4K/100% Gate 后续补测，不阻塞 N2。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片、排序 S0–S3 和呼出 P0 已通过。N0 occurrence/schema 8 与 N1.1–N1.2 已部署；N1.3A/B、N1.4A/B 及检查器只读/采样修复已完成验证并提交至 `7a31c0a`，但尚未正式部署。当前硬件的 10k/100k 双向人工排练已通过；精确 4K/100% 最终 Gate 冷藏后续补测。N2.0、N2.1 与 N2.2 已验证并提交（C/D 与 N2.2 为 `ffea5f8`）；N2.3 已完成 A–D 分析规划并按用户要求提交，尚未实现或调用源端 OLE。当前无运行中的 Vok/probe；最近只读审计为真实库 schema 8、50 条 Stage、60 个 Ready 资产、`quick_check=ok`、0 外键/资产异常。
+- **最近进展**：N2.3 源码核对确认现有工具缺 source 会话/窗口/CLI 和双进程编排，receiver/publisher 是单会话，None 物理路径不能预设 Drop，现有同步逐事件刷盘不能照搬到 source 高频回调。计划细化为 A 会话与报告、B 可见源窗、C 受控双进程首轮、D 故障/批量/同源 20 轮；取消意图、OLE 返回和真实清理分离，paired target 等源端归档后再关闭。本轮只改计划与状态文档，未运行测试；上一验证基线仍为定向 139/139、完整 Release 854/854、Debug/Release 零警告，真实库/资产前后不变。
+- **下一步**：按 `M3_STAGE_N2_PLAN.md` 仅实施 N2.3-A：probe-local source generation、invoker seam、有界 recorder 和 source report，用 fake invoker 验证双启动/首回调、在途取消/关闭、旧代、释放/写入失败及返回前数据仍存活；不创建真实 source OLE 调用。A 通过后依次进入 B/C/D；N2.4–7 再做隐藏 HWND、产品宿主和后续物理 Gate，不提前接 Stage UI/消费。精确 4K/100% Gate 后续补测，不阻塞 N2。
 - **已知问题**：当前机器为 3200×2000、200% DPI，本机 10k/100k 排练不能冒充精确 4K/100% Gate，N1.4 仍不能整体记为通过且数值 SLA 尚未由用户确认。`7a31c0a` 尚未正式发布且当前没有 Vok 进程加载它。本机 COM 数据回读和 receiver 启停不代表跨进程 OLE/隐藏 HWND/Explorer/桌面物理接收通过；连续窗口间远距离排序、N2/N3 拖出闭环仍未完成。KI-001/002/003 继续有效；外部 watchdog 失败证据保留于专用临时目录，现有 `.lnk` 副本未经授权不得删除。
 
 ## §0A 最近会话
@@ -56,6 +56,7 @@
 - N2.1-D 完成并收口 N2.1：实际 prepare/receive apphost 已接通，startup/exit 记录同 run id、PID/STA、source revision 与 exe/DLL 双 SHA；command/receiver 共用单次 terminal publisher，先返回 Drop effect 再事件驱动关闭，释放错误通过 exit 1 独立报告。20 个 D 用例覆盖四文件独立 binary、mixed 回读、三种 receiver 无 OLE 启停、阶段故障、交付后异常/释放失败和外部 test watchdog 强制退出；超时分支保留完整证据，避免误把进程退出当作可立即删除所有 image 的证明。非法最终文件名的 pending 提前创建已用失败断言复现并前置校验。定向 85/85、最终 Release 114/114 + 686/686 共 800/800、Debug/Release 零警告；真实库/资产前后摘要与 SHA-256 不变，无 Vok/probe 残留。构建、审计/TRX 与最后一份 watchdog 证据路径归 `M3_STAGE_N2_PLAN.md` 的 D 记录；C/D 尚未提交，下一步 N2.2，未调用源端 OLE 或修改产品项目。
 - N2.2 完成：零产品依赖的 Copy-only data object 重验 fixture 后保留原序/重复 occurrence，STA owner 持有并幂等释放 effect/marker 流；真实 COM HGLOBAL 与 Shell 路径回读验证五种 profile、四字节 Copy 和重复读取。probe-local Router 先 token 后新 generation/target，拒绝自吞时独立收口旧 session，并覆盖外国异常、在途取消和旧代迟到。审查复现普通 Leave/Cancel 的清理回调可提前建新会话，现以覆盖全清理期的准入保护修正；修复前后反例、54 个新增用例、定向 139/139、完整 Release 854/854 和 Debug/Release 零警告已归档。真实库完整审计/资产与 SHA-256 前后不变，无 Vok/probe 残留；证据路径与 exe/DLL SHA 归 N2 计划的 N2.2 记录。C/D 与 N2.2 尚未提交，下一步 N2.3，跨进程 OLE/隐藏 HWND/产品 Router 仍未验证。
 - 用户随后要求提交：将已验证的 N2.1-C/D 与 N2.2 探针、测试及阶段文档集中归档，保留无关的未跟踪 `.codex/`；本次仅更新提交状态，未修改功能代码，沿用前一轮 854/854 验证记录，不推送远端或部署产品。
+- N2.3 分析规划完成：核对 `ffea5f8` 源码、WPF 10.0.11 对应源码与官方事件语义，明确取消不等于调用返回、源数据必须由调用栈持有、None 未必到 Drop、目标 Throw 不等于 source 抛异常。新增 A–D 切片、SourcePrepared/case/SourceReady 握手、同源进程逐轮报告、paired receiver 保活、有界非阻塞 source 记录器和物理/模拟证据分层；只更新文档，未调用 OLE、修改功能或重跑测试。详细方案归 N2 计划；下一步 N2.3-A。规划随后按用户要求提交，仅归档三份计划/状态文档，保留无关的未跟踪 `.codex/`，不推送或部署。
 
 ### 会话 2026-09-05 至 2026-09-12 - M3.1 中转站管理动作与卡片基础
 
