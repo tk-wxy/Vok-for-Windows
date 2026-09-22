@@ -1,6 +1,6 @@
 # Stage N2：单项/批量出站 OLE Gate 实施计划
 
-> 日期：2026-09-21。状态：**N2.0 基线与 N2.1-A 已通过，下一步实施 N2.1-B**。精确 4K/100% Gate 已按用户决定冷藏，不阻塞 N2。N2 只裁决出站 OLE 技术路线、隐藏源 HWND、宿主所有权、自吞拒绝和资源闭环；不接正式 Stage 选择、消费或真实产品库。权威产品合同仍为 `M3_STAGE_FOCUSED_ROADMAP.md` 与 `decisions.md §32`。
+> 日期：2026-09-22。状态：**N2.0 基线与 N2.1-A/B 已通过，下一步实施 N2.1-C**。精确 4K/100% Gate 已按用户决定冷藏，不阻塞 N2。N2 只裁决出站 OLE 技术路线、隐藏源 HWND、宿主所有权、自吞拒绝和资源闭环；不接正式 Stage 选择、消费或真实产品库。权威产品合同仍为 `M3_STAGE_FOCUSED_ROADMAP.md` 与 `decisions.md §32`。
 
 ## 1. 阶段目标与完成边界
 
@@ -398,6 +398,14 @@ N2.1-A 实施结果（2026-09-21）：
 - 输出策略已覆盖仓库/产品/用户根、direct-child、已存在目标与 existing ancestor reparse；`CreateDirectoryW` 原子竞争保证同一目标恰有一个创建者，JSON 与 append-only event 文件均以 `CreateNew` 创建，文件名拒绝目录穿越和 NTFS alternate stream；
 - 定向门禁 5/5；唯一 `%TEMP%` ArtifactsPath 的 Release build 为 0 warning / 0 error，Core 114/114、Integration 606/606，共 720/720。真实库有效前后只读审计保持 schema 8、Stage 50、Ready 资产 60、`quick_check=ok`、0 外键/缺失/长度/SHA/越界异常；八表与资产摘要、数据库 SHA-256 均不变，无残留 Vok；
 - 本检查点未创建 fixture、manifest、Shell link、receiver 或任何 OLE 调用，未修改产品三个 project。下一步严格进入 B，A 不因后续功能扩展而放宽路径/create-only 合同。
+
+N2.1-B 实施结果（2026-09-22）：
+
+- `single`、`batch10`、`batch100`、`mixed`、`duplicate` 五种 profile 均由 probe 在 reserved output 内创建；项目数分别为 1/10/100/4/6，duplicate 只创建 A/B/C 三个 source 并保留 `[A,B,A,C,A,B]` 六个 ordinal；
+- mixed 固定包含 ASCII 文件、Unicode 文件名、含嵌套内容的目录，以及指向同一 fixture 内已声明文件的真实 `.lnk`。Shell link 只在 STA 上经 `IShellLinkW`/`IPersistFile` 创建并回读；为保持最终路径 create-only，先保存到带 run id 的 probe-owned 临时 link，验证 target 后用 non-overwrite `File.Move` 原子发布；
+- `manifest.json` 只保存规范化 direct-child 相对路径、source id/kind/target id 和有序 occurrence；`source.json` 保存实物 attributes、UTC 时间、长度/递归项数与 SHA-256/目录摘要。loader 重新枚举实物、拒绝 root/source reparse、越界、路径/ID/profile 结构错误、missing/untracked/篡改项，并分别重算 source tree 与 ordered occurrence digest；
+- 新增 10 个 fixture 测试用例，A+B 定向 15/15。唯一 `%TEMP%` ArtifactsPath 的完整 Release build 0 warning / 0 error，Core 114/114、Integration 616/616，共 730/730；真实库前后保持 schema 8、Stage 50、Ready 60、`quick_check=ok`、0 外键/资产异常，八表、资产摘要与数据库 SHA-256 不变，无 Vok 进程；
+- 本检查点没有启用 probe executable 的 prepare/receive 执行，没有 receiver、`DoDragDrop`、source session 或产品项目改动。下一步严格进入 C。
 
 N2.1 停止条件：任何路径失败能在 protected/已有目录下创建内容；manifest 可把 source 指到 fixture 外；有效 `.lnk` 只能靠用户现有文件或 Shell UI 创建；receiver 在 Enter/Over 提前读取 FileDrop；异常/关闭产生两个终态；probe 引入产品 ProjectReference/SQLite；或自动测试必须真实调用 OLE 才能通过。命中任一项先收窄机制，不能用空 `.lnk`、删除输出、吞异常、固定等待或把 N2.2 证据提前写成 N2.1 通过。
 
