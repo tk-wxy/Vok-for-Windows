@@ -11,10 +11,10 @@
 
 ## §0 快照
 
-- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片、排序 S0–S3 和呼出 P0 已通过。N0 occurrence/schema 8 与 N1.1–N1.2 已部署；N1.3A/B、N1.4A/B 及检查器只读/采样修复已完成验证并提交至 `7a31c0a`，但尚未正式部署。当前硬件的 10k/100k 双向人工排练已通过；精确 4K/100% 最终 Gate 冷藏后续补测。N2.0、N2.1 与 N2.2 已验证并提交（C/D 与 N2.2 为 `ffea5f8`）；N2.3 已完成 A–D 分析规划并按用户要求提交，尚未实现或调用源端 OLE。当前无运行中的 Vok/probe；最近只读审计为真实库 schema 8、50 条 Stage、60 个 Ready 资产、`quick_check=ok`、0 外键/资产异常。
-- **最近进展**：N2.3 源码核对确认现有工具缺 source 会话/窗口/CLI 和双进程编排，receiver/publisher 是单会话，None 物理路径不能预设 Drop，现有同步逐事件刷盘不能照搬到 source 高频回调。计划细化为 A 会话与报告、B 可见源窗、C 受控双进程首轮、D 故障/批量/同源 20 轮；取消意图、OLE 返回和真实清理分离，paired target 等源端归档后再关闭。本轮只改计划与状态文档，未运行测试；上一验证基线仍为定向 139/139、完整 Release 854/854、Debug/Release 零警告，真实库/资产前后不变。
-- **下一步**：按 `M3_STAGE_N2_PLAN.md` 仅实施 N2.3-A：probe-local source generation、invoker seam、有界 recorder 和 source report，用 fake invoker 验证双启动/首回调、在途取消/关闭、旧代、释放/写入失败及返回前数据仍存活；不创建真实 source OLE 调用。A 通过后依次进入 B/C/D；N2.4–7 再做隐藏 HWND、产品宿主和后续物理 Gate，不提前接 Stage UI/消费。精确 4K/100% Gate 后续补测，不阻塞 N2。
-- **已知问题**：当前机器为 3200×2000、200% DPI，本机 10k/100k 排练不能冒充精确 4K/100% Gate，N1.4 仍不能整体记为通过且数值 SLA 尚未由用户确认。`7a31c0a` 尚未正式发布且当前没有 Vok 进程加载它。本机 COM 数据回读和 receiver 启停不代表跨进程 OLE/隐藏 HWND/Explorer/桌面物理接收通过；连续窗口间远距离排序、N2/N3 拖出闭环仍未完成。KI-001/002/003 继续有效；外部 watchdog 失败证据保留于专用临时目录，现有 `.lnk` 副本未经授权不得删除。
+- **状态**：M0、M1 与单屏 M2 已冻结；M3 入站 MVP、管理动作、V2 卡片、排序 S0–S3 和呼出 P0 已通过。N0 occurrence/schema 8 与 N1.1–N1.2 已部署；N1.3A/B、N1.4A/B 及检查器修复已验证并提交至 `7a31c0a`，尚未部署。当前硬件的 10k/100k 双向人工排练已通过，精确 4K/100% 最终 Gate 冷藏补测。N2.0、N2.1、N2.2 已提交（C/D 与 N2.2 为 `ffea5f8`），N2.3 总体规划为 `3e009b8`；N2.3-A 已实现并通过自动契约，随本次提交归档，无 source 窗口或真实 OLE 调用。实施收口时无运行 Vok/probe；真实库 schema 8、Stage 50、Ready 60、`quick_check=ok`、0 外键/资产异常，完整前后审计及数据库 SHA-256 不变。
+- **最近进展**：A 新增 source session/report/bounded recorder，实例/代次 ticket 排除重入与旧回调，取消保留 payload 到 fake 返回，逐项清理后等待 writer 退出及发布 receipt 才交还准入。反例验证并修正了缺少 SynchronizationContext 时的准备续体归属，以及 HostFailure 被正常 Copy/归档结果掩盖的问题；raw Copy 不被失败抹去。新增 67/67，探针定向 206/206，source 五轮 335/335，完整 Release 114/114 + 807/807 共 921/921，Debug/Release 零警告；细节、TRX、审计与候选 SHA 归 N2 计划的 A 实施记录。
+- **下一步**：N2.3-A 停在 B 之前，等待用户要求推进。B 再做可见 source Window、WPF adapter、host 与严格 CLI，并显式扩展 A 固定的 Simulation 报告模式；默认自动套件继续 fake invoker，首次真实 OLE 留给 C 受控双进程 Gate，D 再做故障/批量/同 HWND 20 轮。N2.4–7 才做隐藏 HWND、产品宿主和后续物理 Gate，不提前接 Stage UI/消费；精确 4K/100% Gate 后续补测、不阻塞 N2。
+- **已知问题**：当前机器为 3200×2000、200% DPI，本机排练不能冒充精确 4K/100%，N1.4 尚不能整体记为通过且数值 SLA 未获用户确认。`7a31c0a` 尚未正式发布。本机 COM 回读、receiver 启停和 A 的同 manager 模拟 20 轮均不是跨进程 OLE/同 HWND/隐藏 HWND/Explorer/桌面物理证据；永不返回的外部调用仍需 C/D supervisor，连续窗口远距离排序及 N2/N3 拖出闭环未完成。KI-001/002/003 有效；外部 watchdog 证据继续保留，现有 `.lnk` 副本未经授权不得删除。
 
 ## §0A 最近会话
 
@@ -57,6 +57,9 @@
 - N2.2 完成：零产品依赖的 Copy-only data object 重验 fixture 后保留原序/重复 occurrence，STA owner 持有并幂等释放 effect/marker 流；真实 COM HGLOBAL 与 Shell 路径回读验证五种 profile、四字节 Copy 和重复读取。probe-local Router 先 token 后新 generation/target，拒绝自吞时独立收口旧 session，并覆盖外国异常、在途取消和旧代迟到。审查复现普通 Leave/Cancel 的清理回调可提前建新会话，现以覆盖全清理期的准入保护修正；修复前后反例、54 个新增用例、定向 139/139、完整 Release 854/854 和 Debug/Release 零警告已归档。真实库完整审计/资产与 SHA-256 前后不变，无 Vok/probe 残留；证据路径与 exe/DLL SHA 归 N2 计划的 N2.2 记录。C/D 与 N2.2 尚未提交，下一步 N2.3，跨进程 OLE/隐藏 HWND/产品 Router 仍未验证。
 - 用户随后要求提交：将已验证的 N2.1-C/D 与 N2.2 探针、测试及阶段文档集中归档，保留无关的未跟踪 `.codex/`；本次仅更新提交状态，未修改功能代码，沿用前一轮 854/854 验证记录，不推送远端或部署产品。
 - N2.3 分析规划完成：核对 `ffea5f8` 源码、WPF 10.0.11 对应源码与官方事件语义，明确取消不等于调用返回、源数据必须由调用栈持有、None 未必到 Drop、目标 Throw 不等于 source 抛异常。新增 A–D 切片、SourcePrepared/case/SourceReady 握手、同源进程逐轮报告、paired receiver 保活、有界非阻塞 source 记录器和物理/模拟证据分层；只更新文档，未调用 OLE、修改功能或重跑测试。详细方案归 N2 计划；下一步 N2.3-A。规划随后按用户要求提交，仅归档三份计划/状态文档，保留无关的未跟踪 `.codex/`，不推送或部署。
+- N2.3-A 具体分析规划完成：进入 `3e009b8`，核对 payload/receiver/router、create-only writer 和 WPF 测试支架，进一步分离 invoker 返回、逐项 cleanup、writer 排空和 publication receipt；固定 owner STA、跨实例 ticket、归档准入、模拟报告与 bounded Channel 非阻塞生产者合同。定义文件落点、16 组场景和 A1–A4 实施顺序；只更新三份计划/状态文档，未实现、构建、测试、调用 OLE 或访问真实库，未提交。详细方案只保存在 N2 计划的 N2.3-A 小节，不把设计风险记作已复现 bug。
+- N2.3-A 随后完成实施：source manager/session、报告与唯一有界 writer 落地，原有 payload 仅接窄所有权/资源观察接口；fake 内取消/关闭保留数据，终态、逐项释放、排空及 publication receipt 分开，旧代/清理/归档重入不能新开轮。三项红反例验证了准备续体和 HostFailure 的机制后修正；最终新增 67/67、全部探针 206/206、五轮 source 335/335、完整 Release 921/921、Debug/Release 零警告。五种 fixture 和同 manager 20 轮均为 Simulation；有效真实库/资产前后完整摘要及 SHA-256 不变，无 Vok/probe 残留。证据归 N2 计划 A 实施记录；未修改产品项目/CLI/Router，未调用真实 OLE、提交、推送或部署，下一步 B。
+- 用户随后要求提交：将 N2.3-A 实现、测试及三份阶段/状态文档随本次提交归档；提交轮只更新提交状态，沿用上一轮 921/921 验证，未重跑测试，不推送或部署，保留无关的未跟踪 `.codex/`，不提前进入 B。
 
 ### 会话 2026-09-05 至 2026-09-12 - M3.1 中转站管理动作与卡片基础
 

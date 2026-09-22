@@ -5,7 +5,7 @@ namespace Vok.StageDragProbe;
 
 // Prepare before gesture handling: fixture validation performs disk/Shell reads.
 // The eventual OLE source must retain this owner until DoDragDrop returns.
-internal sealed class ProbeOutboundDataObject : IDisposable
+internal sealed class ProbeOutboundDataObject : IProbeSourcePayload
 {
     internal const string PreferredDropEffectFormat = "Preferred DropEffect";
     private readonly int _ownerThreadId = Environment.CurrentManagedThreadId;
@@ -13,6 +13,7 @@ internal sealed class ProbeOutboundDataObject : IDisposable
     private readonly MemoryStream _marker;
     private DataObject? _data;
     private IReadOnlyList<string> _paths;
+    private readonly ProbeSourcePayloadIdentity _identity;
 
     private ProbeOutboundDataObject(ProbeFixtureBundle bundle, ProbeOutboundDragToken token)
     {
@@ -22,6 +23,7 @@ internal sealed class ProbeOutboundDataObject : IDisposable
         SourceTreeDigest = bundle.Manifest.SourceTreeDigest;
         OrderedOccurrenceDigest = bundle.Manifest.OrderedOccurrenceDigest;
         TokenFormat = token.FormatName;
+        _identity = new(FixtureRunId, bundle.Manifest.Profile, paths.Length, SourceTreeDigest, OrderedOccurrenceDigest);
         var effect = new byte[sizeof(uint)];
         BinaryPrimitives.WriteUInt32LittleEndian(effect, (uint)DragDropEffects.Copy);
         _preferredEffect = new MemoryStream(effect, writable: false);
@@ -37,8 +39,8 @@ internal sealed class ProbeOutboundDataObject : IDisposable
         catch
         {
             _data = null;
-            _preferredEffect.Dispose();
-            _marker.Dispose();
+            try { _preferredEffect.Dispose(); }
+            finally { _marker.Dispose(); }
             throw;
         }
     }
@@ -64,6 +66,18 @@ internal sealed class ProbeOutboundDataObject : IDisposable
     internal DragDropEffects AllowedEffects => DragDropEffects.Copy;
     internal bool IsDisposed => _data is null;
 
+    DataObject IProbeSourcePayload.Data => Data;
+    ProbeSourcePayloadIdentity IProbeSourcePayload.Identity { get { VerifyAccess(); return _identity; } }
+    ProbeSourcePayloadResources IProbeSourcePayload.Resources
+    {
+        get
+        {
+            VerifyAccess();
+            // Access revocation and the two actual stream releases are separate observations.
+            return new(_data is null ? 0 : 1, _preferredEffect.CanRead ? 1 : 0, _marker.CanRead ? 1 : 0);
+        }
+    }
+
     internal DataObject Data
     {
         get
@@ -86,7 +100,7 @@ internal sealed class ProbeOutboundDataObject : IDisposable
         if (_data is null) return;
         _data = null; // Reentrant/late callers cannot obtain an owner-released data object.
         _paths = Array.Empty<string>();
-        _preferredEffect.Dispose();
-        _marker.Dispose();
+        try { _preferredEffect.Dispose(); }
+        finally { _marker.Dispose(); }
     }
 }

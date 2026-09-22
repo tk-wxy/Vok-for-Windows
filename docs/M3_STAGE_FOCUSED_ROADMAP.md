@@ -189,7 +189,7 @@ P0.5 的最终候选经用户长静置确认“呼出无缓慢、中转站无白
 
 ### N2：单项/批量出站 OLE Gate
 
-状态：2026-09-22 已通过 N2.0、N2.1-A/B/C/D 与 N2.2。零产品依赖 probe 已具备安全路径/五种 fixture、STA receiver、实际 prepare/receive 入口，以及 manifest 原序/重复保留的 Copy-only data object 和自吞 Router 原型；本机真实 COM HGLOBAL 回读确认 FileDrop 顺序及 Copy 原始四字节，token 拒绝、清理重入和迟到终态已覆盖（定向 139/139，完整 Release 854/854）。C/D 与 N2.2 已提交至 `ffea5f8`，仍未调用源端 OLE。N2.3 分析规划已细化为 A 会话/报告、B 可见源窗与 WPF adapter、C 双进程首轮实测、D 故障/批量/同源 20 轮；下一步仅实施 N2.3-A，不提前调用真实 OLE。权威执行计划及证据边界见 `M3_STAGE_N2_PLAN.md`。N2 分为隔离 probe 路线裁决与产品宿主所有权两层证据：可见源窗通过后继续验证源 HWND 隐藏、Explorer/桌面 Copy/None/Esc 和资源收口；只有唯一 OLE 方向通过后，才加入未接 Stage UI 的 outbound workspace claim、`PreserveCurrentForeground` 隐藏策略和 product Router token 门禁。
+状态：2026-09-22 已通过 N2.0、N2.1-A/B/C/D、N2.2 与 N2.3-A 自动契约。零产品依赖 probe 已具备安全路径/五种 fixture、STA receiver、实际 prepare/receive 入口、Copy-only data object 和自吞 Router；A 又加入 owner STA source 会话、实例/代次 ticket、同步 invoker seam、逐项清理和有界异步归档，只有测试 fake invoker。新增 source 67/67、全部探针定向 206/206、完整 Release 921/921，Debug/Release 零警告，真实库/资产前后不变；同 manager 20 轮仅为模拟，不是同 HWND 物理 Gate。C/D 与 N2.2 已提交至 `ffea5f8`，N2.3 总体规划为 `3e009b8`，A 随本次提交归档。下一步 B 才实现可见源窗与 WPF adapter/host/CLI；C 做双进程首轮实测，D 做故障/批量/同源 20 轮，当前仍未调用源端 OLE。权威执行计划及证据见 `M3_STAGE_N2_PLAN.md` 的 A 实施记录。N2 分为隔离 probe 路线裁决与产品宿主所有权两层证据：可见源窗通过后继续验证源 HWND 隐藏、Explorer/桌面 Copy/None/Esc 和资源收口；只有唯一 OLE 方向通过后，才加入未接 Stage UI 的 outbound workspace claim、`PreserveCurrentForeground` 隐藏策略和 product Router token 门禁。
 
 - 隔离验证单卡与 1/10/100 项 FileDrop、重复路径、源路径失效、Hide 失败、WPF 源窗隐藏、Explorer/桌面 Copy/None/Esc 和 20 轮资源闭环；
 - 固定 PID/HWND 记录 OLE-start、Deactivated、Visible、Topmost、probe/workspace generation、raw effect、线程、句柄和源目录摘要；

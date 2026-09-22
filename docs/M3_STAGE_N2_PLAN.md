@@ -1,6 +1,6 @@
 # Stage N2：单项/批量出站 OLE Gate 实施计划
 
-> 日期：2026-09-22。状态：**N2.0、N2.1-A/B/C/D 与 N2.2 已通过；N2.3 已细化为 A–D，下一步 N2.3-A**。C/D 与 N2.2 已提交至 `ffea5f8`；本轮仅分析规划，仍未实现或调用源端 OLE。精确 4K/100% Gate 已按用户决定冷藏，不阻塞 N2。N2 只裁决出站 OLE 技术路线、隐藏源 HWND、宿主所有权、自吞拒绝和资源闭环；不接正式 Stage 选择、消费或真实产品库。权威产品合同仍为 `M3_STAGE_FOCUSED_ROADMAP.md` 与 `decisions.md §32`。
+> 日期：2026-09-22。状态：**N2.0、N2.1-A/B/C/D、N2.2 与 N2.3-A 自动契约已通过；下一步 N2.3-B**。C/D 与 N2.2 已提交至 `ffea5f8`，N2.3 A–D 总体规划已提交至 `3e009b8`；本次 A 已实现并完成模拟门禁，随本次提交归档，仍无 source 窗口或真实 OLE 调用。精确 4K/100% Gate 已按用户决定冷藏，不阻塞 N2。N2 只裁决出站 OLE 技术路线、隐藏源 HWND、宿主所有权、自吞拒绝和资源闭环；不接正式 Stage 选择、消费或真实产品库。权威产品合同仍为 `M3_STAGE_FOCUSED_ROADMAP.md` 与 `decisions.md §32`。
 
 ## 1. 阶段目标与完成边界
 
@@ -482,9 +482,9 @@ Checkpoint 完成条件：数据合同和自吞判断成立；仍不隐藏窗口
 
 Checkpoint 完成条件：只有 OLE source/终态成立，不声称隐藏源窗可行。
 
-#### N2.3 源码诊断与本轮边界（2026-09-22）
+#### N2.3 进入时源码诊断与边界（2026-09-22）
 
-以下为实施计划，不是完成记录。进入提交为 `ffea5f8`，tracked 工作树干净，只有既存未跟踪 `.codex/`；没有运行中的 Vok/probe。本机安装的最高 WindowsDesktop runtime 为 10.0.11。沿用 N2.2 的 139/139 定向、854/854 完整 Release 证据，本次规划不重跑测试或打开拖放窗口。
+以下记录总体规划时的进入状态，不是当前完成记录；随后完成的 A 另见下方实施记录。当时提交为 `ffea5f8`，tracked 工作树干净，只有既存未跟踪 `.codex/`；没有运行中的 Vok/probe。本机安装的最高 WindowsDesktop runtime 为 10.0.11。规划时沿用 N2.2 的 139/139 定向、854/854 完整 Release 证据，未重跑测试或打开拖放窗口。
 
 - 已有 `ProbeOutboundDataObject` 可在 owner STA 预先准备和重验夹具；`ProbeOutboundDragToken.Current` 按进程实例复用；`ProbeFileDropRouter` 可验证自吞。但尚无 source 窗口、OLE invoker、source generation、`source` CLI 或双进程物理编排器。
 - `ProbeFileDropReceiver` 与 `ProbeTerminalReportWriter` 都是一次会话/一次发布；`ProbeReceiverProcessHost` 使用 `OnMainWindowClose`，默认 terminal 后排入关闭。它们不能直接充当同一源进程连续 20 轮的 source host。现有 Background 关闭表达的是事件驱动的稍后关窗，不能当作另一进程的 OLE 调用已返回。
@@ -523,12 +523,140 @@ Preparing → Ready → Pressed → OleCallEntered [OleInFlight=1]
 
 | 切片 | 本步交付 | 通过条件与停止位置 |
 |---|---|---|
-| **A：source 会话/报告契约** | `ProbeOutboundDragSession`、窄 invoker seam、source report 与有界 recorder；只有测试 fake invoker | 自动覆盖 Copy/None/抛异常、双启动、首回调双触发、预取消/在途取消、旧代、关闭/释放重入、日志/清理失败；证明返回前数据未释放。尚无真实 OLE |
+| **A：source 会话/报告契约（自动已通过）** | `ProbeOutboundDragSession`、窄 invoker seam、source report 与有界 recorder；只有测试 fake invoker | 67 个 source 用例覆盖 Copy/None/抛异常、双启动、首回调双触发、预取消/在途取消、旧代、关闭/释放重入、日志/清理失败；证明 fake 返回前数据未释放。尚无真实 OLE，详见 A 实施记录 |
 | **B：可见源窗与 WPF adapter** | `WpfOutboundFileDragSource`、`ProbeFileDragSourceWindow`、独立 source host、严格 `source` CLI；复用现有 payload/Router | WPF 自动测试覆盖真实路由、阈值、capture 转交、仅一次 invoker、同 HWND 多代、关闭推迟；apphost 无按压 smoke 为零 OLE。真实 OLE 不进默认 test suite，首次受控实测在 C |
 | **C：双进程编排与首轮物理 Gate** | `Start-M3StageDragGate.ps1`、`Read-M3StageDragReport.ps1`，固定 source/receiver 身份、case 绑定、受控 receiver 保活和外部 watchdog | 同一次构建的独立进程完成 single 的 Copy/None/Esc；对比源返回、目标报告和前后 source 摘要。首轮不通先定位这一变量，不扩到批量或隐藏 |
 | **D：故障、批量与连续 20 轮** | 故障门禁、1/10/100/mixed/duplicate 物理记录，同源进程/同 HWND 的 Copy/None 交替 | 每轮独立报告，20 轮不重启 source；None/Esc/关闭/目标退出均能如实收口，资源零点可测。完整 Release 回归和真实库前后只读审计后，才能宣布 N2.3 通过 |
 
-A 是下一次实施的最小边界，不因为 B/C 已有设计就同时加入真实 `DoDragDrop`。A–D 可分步提交；所有通过结果必须区分 simulation、实际 HWND 启停和物理 OLE。
+A 已按最小边界独立实现，没有同时加入 B/C 或真实 `DoDragDrop`。A–D 可分步提交；所有通过结果必须区分 simulation、实际 HWND 启停和物理 OLE。
+
+#### N2.3-A 具体实施合同（规划于 2026-09-22；结果见下方实施记录）
+
+规划进入提交为 `3e009b8`，当时 tracked 工作树干净，既存 `.codex/` 不在本任务内。以下为进入实施前的合同；规划轮未构建、运行测试、启动窗口或访问真实产品库。随后按用户要求实施 A，结果另列，不把原计划当作验证证据。
+
+##### A.1 源码诊断与改动边界
+
+- `ProbeOutboundDataObject.Create` 已强制 owner STA，并经 loader 重验 fixture；继续作为唯一真实 payload 创建路径，不增加任意路径数组入口。它的 `IsDisposed` 只判断 `_data is null`，而 `Dispose()` 先清掉 `_data`、再释放两个流；因此不能单凭此布尔值证明所有资源都释放了。现有测试已检查两个流的 `CanRead`，A 应把这种逐项观察接入会话诊断，而不是推翻已通过的 Copy-only 格式实现。
+- `ProbeFileDropReceiver.Finish` 会在报告失败时把自己的 effect 改成 None；这是接收方尚在决定返回值时的策略，不能照搬来覆盖 source 已观察到的 raw Copy。`ProbeFileDropRouter.Cancel/Dispose` 的立即清理也不能照搬到持有同步 invoker 调用栈的 source。
+- `ProbeTerminalReportWriter` 在写入前置 `Attempted=true`，失败也只有一次尝试；可复用这一发布底座，但每代必须新建。`ProbeReceiverReportRecorder` 同步写入和释放后另报错误的时序不适合 source 的“清理、事件排空后再冻结报告”。
+- `ProbeEventLog.Write` 会在调用线程做 JSON 序列化、文件写入及 `Flush(true)`；A 新增独立 source recorder，不全局改造已验证的 receiver 日志。
+- `WpfApplicationFixture.InvokeAsync` 已提供真实 owner STA 与异步测试入口；用它在 invoker 返回后等待归档，不在该 STA 上 `.Wait()` / `.Result`。现有 outbound fixture、COM 回读和路径保护测试可复用；当前 `Program` / options / runner 仍只有 prepare、receive，不为 A 增加不可用的 source 命令。
+
+预期文件落点（名称可随最小实现调整，职责与边界不变）：
+
+| 文件 / 类型 | A 内职责 |
+|---|---|
+| `ProbeOutboundDragSession.cs` | 长寿命 manager、单次 session、实例绑定 ticket、取消/停止意图、终态与归档准入；可同文件定义窄 invoker / payload / cleanup lease 接口，不另建通用框架 |
+| `ProbeSourceReport.cs` | 不可变 invocation / cleanup / evidence 观察、错误分类、完成 receipt；与 receiver schema 独立 |
+| `ProbeSourceEventRecorder.cs` | 有界事件队列、一个被显式等待的 writer、排空/关闭/单次发布；可注入测试 sink |
+| `ProbeOutboundDataObject.cs`（仅必要窄改动） | 接入 payload 所有权 seam，提供 owner STA 上的逐项资源快照；若需调整释放，保证两条流均被尝试且分别保留结果，不改格式、顺序、重复项、token 或校验策略 |
+| `StageDragProbeSourceSessionTests.cs`、`StageDragProbeSourceRecorderTests.cs`、`StageDragProbeSourceReportTests.cs` 及少量 test support | fake invoker/lease/sink 故障与重入矩阵，以及真实 fixture payload + fake invoker 的存活断言 |
+
+A 不改 `Program`、CLI、receiver host/Router 或三个产品项目，不创建 source Window、真实 WPF invoker、paired supervisor、physical case 协议、隐藏逻辑或消费逻辑。测试依赖继续只有 IntegrationTests → probe，probe 不反向依赖 App/Core/Infrastructure。
+
+##### A.2 所有权、接口与状态合同
+
+1. **manager 持有准入权，session 持有本轮资源**。manager 固定 owner STA、实例身份和递增 generation；ticket 同时绑定实例与代次，两个 manager 的 generation=1 不能互认。所有状态入口先验证 owner 线程，再验证 ticket/phase。只读报告是不可变快照，不向 writer 暴露 session、DataObject、Dispatcher 或 Window。
+2. **先占准备槽，再调用外部 seam**。`TryPrepare` 在创建 recorder、重验 fixture 或取得 payload 前进入 Preparing；拒绝路径不调用工厂、不创建新报告、不接管调用者资源。准备可以异步等待 recorder 的 ready 信号，但期间不允许按压启动，续体必须回到 owner STA 检查本轮资格，不能同步阻塞 UI。取得的 payload 只能由该 session 释放；准备回调中发生取消/停止时，新取得的对象进入收尾，不能又发布 Ready。部分构造失败由工厂释放尚未移交的资源（包括已启动的 writer）；移交后的失败由 session 负责。
+3. **invoker 是同步且不拥有资源的窄接口**。概念签名为 `Invoke(DataObject, Copy, callbacks) -> DragDropEffects`；只借用数据，不释放、不发布报告、不自行结束 session。A 只有测试项目中的 fake 实现，没有默认真实实现或按异常切换 OLE 的分支。`TryInvokePrepared(ticket, invoker)` 在当前 STA/当前调用栈中执行；若返回 completion task，其首次异步等待必须在 invoker 返回/抛异常和 STA 资源清理之后，不能把真正调用排到后台或另一 Dispatcher 轮次。
+4. **先认领启动，再转交 capture**。启动的唯一资格是当前 Ready（B 的 Pressed 资格由窗口验证后交付）；进入 Starting 即排除第二次启动和清理重入。在 B 需要的 capture 释放/回调 lease 挂接处，每个可重入 seam 返回后重新检查取消与 phase；尚未进入 invoker 的取消走未调用终态。A 只用 fake lease 测此合同，默认真实 capture/订阅为 NotApplicable，实际获取和路由留给 B。
+5. **回调只有观察和取消建议**。callbacks 捕获本轮 ticket；只在本轮 Invoking 有效。GiveFeedback 与 QueryContinueDrag 任一首次到达共同认领一次 start-observed，再调用 recorder；分别保留两种 first 时间及累计次数。QueryContinueDrag 输入不可变的 Esc/key-state 快照，输出 `KeepDefault` 或 `Cancel`；无取消时不自行编造 Drop/Continue，实际 WPF `Handled/Action/UseDefaultCursors` 映射留给 B。陈旧回调返回不干预的结果，只记 manager 级有界计数，不能给新代请求取消或修改已封存报告。
+6. **取消、关闭、释放是三种不同意图**。`RequestCancel(ticket, reason)` 只取消该轮；`RequestStop(Close/Dispose/HostFailure)` 永久关闭 manager 新准入，同时请求当前轮取消。延迟的每轮关闭动作必须带 ticket，不能变成无代次的全局 stop。Dispose 在 invoker 在途时只请求停止、不等待、不销毁资源；`DisposeRequested`、`Completion` 和 `IsFullyDisposed` 分开表达，调用者必须等待 Completion，不能仅凭 using 退出就删除夹具或销毁宿主。外部线程不能直接修改状态，后续 B 必须经 owner Dispatcher 投递；A 不注册会在任意线程同步清理的 CancellationToken 回调。
+7. **真实返回才取得 terminal 权**。返回后立即保存原始 effect；异常则保存 source exception、raw effect=null；随后先置 TerminalClaimed，再调用任何 recorder、release 或通知 seam。进入调用前取消/准备失败也可以取得 terminal，但 `InvocationEntered=false`。不存在对外开放、可被 Cancel/Close 任意调用的“强制标成已返回”入口。晚取消、日志错误、cleanup 错误均不得改写已经观察到的 Copy。
+8. **终态不等于释放，也不等于重新准入**。owner STA 独立尝试每项 cleanup，一项失败仍尝试其余项；同一 lease 的 attempt 在调用前认领，重复/重入不再次释放，不靠自动重试掩盖失败。按实际释放结果记录 success/error/unknown；只要一项残留或未知，就不发成功的 CleanupCompleted。payload 数据访问被撤销不等于 COM 对象已 GC，报告只声明自身引用和显式流所有权，不强制 GC/FinalReleaseComObject。
+9. **资源归零与归档占位分开**。per-round 拖动资源清理后 active-drag 可以归零，但 manager 仍持有 Archiving 槽；只有事件 writer 排空且关闭、terminal 发布 receipt 回到 owner STA 后，才把槽交还 Idle。健康的 None/预取消不妨碍下一轮；准备/调用/cleanup/evidence 故障或未预期 effect 默认锁止该 manager，保留证据，不自动重试外部动作。Close/Dispose 则转入停止完成状态；A 只产生完成 receipt，不实际关闭窗口。
+
+| 阶段 | 是否允许下一轮 | 取消 / 关闭的行为 | 权威完成信号 |
+|---|---|---|---|
+| Idle | 是（未请求 stop） | stop 后不再接纳 | 无活动轮次 |
+| Preparing / Ready | 否 | 取消准备/候选，已取得资源走未调用收尾 | 准备 seam 已返回，且不再移交资源 |
+| Starting | 否 | 在每个可重入 seam 后复核；未调用则直接收尾 | 不能把主动 release capture 当作意外失捕 |
+| Invoking | 否 | 只记录意图，QCD 建议 Cancel；payload 保持存活 | invoker 实际返回或抛异常 |
+| TerminalClaimed / Cleaning | 否 | 不再重写结果，不重复释放 | 每项 release 的结果与资源快照 |
+| Archiving | 否，即使 active-drag=0 | 仅记 stop，不重新开启 writer 或 report | writer 停止 + 单次发布 receipt |
+| Idle / Stopped / Faulted | 仅健康 Idle | 迟到 ticket 不影响新轮 | owner STA 消费完成 receipt |
+
+预期事件顺序是 `PreparationStarted → PayloadReady → InvocationEntered → [first callbacks / CancelRequested] → InvocationReturned 或 InvocationThrew → TerminalClaimed → CleanupAttempted → CleanupCompleted 或 CleanupFailed → seal/drain → publication receipt`。未调用路径跳过 invoker/回调，不补造事件；没有任何回调但 fake 返回也必须能收尾，start-observed 保持未观察。关闭/取消的 first reason 与发生阶段固定保存，重复原因只作有界计数，不无界追加。
+
+##### A.3 source report 与归零口径
+
+source 自用 schema 从 version 1 开始，不能沿用 receiver 的 status 含义。至少包含以下独立字段组：
+
+| 字段组 | 必须表达的事实 |
+|---|---|
+| 身份 / 证据等级 | source run id、round id、manager instance、generation、fixture run id、revision、PID/owner thread、fixture/profile/双摘要；A 固定 `EvidenceScope=SourceSessionSimulation`、`InvocationKind=Fake`、`PhysicalOleInvoked=false`，没有窗口时 HWND=null，`UserVerdict=NotCaptured` |
+| 调用观察 | `InvocationEntered`、返回/抛异常/未调用、nullable raw effect、source exception；精确 Copy / None / UnexpectedEffect 分开，不把含 Copy 的其他位掩码当成 Copy |
+| 取消 / 停止观察 | 是否请求、首个原因/阶段/单调时刻、Esc 是否由 QCD 观察；None 不自动改名为 Escape，晚 Close 不抹去 Copy |
+| 回调观察 | 两种回调各自的 first stamp、共享 start-observed 边沿和累计计数；标明 Simulation，不能当作物理 OLE 启动证据 |
+| 清理观察 | 每项是否取得、是否尝试/成功、残留或 Unknown、错误集合；清理前后快照与 `CleanupSucceeded`，不能只填统一的 disposed=true |
+| 证据健康 | 产生/入队/写入/丢失计数、首个 gap/错误、queue high-water、drain/stream close 状态；与 raw effect 独立 |
+| 未执行的后续 Gate | 实际 HWND、受控 target、物理 source-before/after、产品 claim、render pump 按字段标注 NotExecuted/NotApplicable；不复制 fake 值冒充 C/D 证据 |
+
+计数区分 `preparedPayloadOwner`、`activeDragSession`、payload 引用、PreferredDropEffect stream、marker stream、capture lease、callback lease，以及独立的 `roundAdmissionSlot` / `archivePending`。默认无 capture/订阅的 A 测试用 NotApplicable；注入 fake lease 的测试报告显式标明 Simulated。`CleanupCompleted` 的逻辑零点只检查本轮已取得的拖动资源；writer/归档尚未完成时不能把整个进程写成“全部释放”。下一轮 Ready 的 payload=1 与上一轮零点是两张快照。
+
+nullable raw effect / first callback / HWND 等未知字段不得被现有 `WhenWritingNull` 设置悄悄解释为 0：必须带显式 observation 状态，消费者把缺失视为未观察。计数 0 只表示该证据范围内真实初始化并观察到零次，未调用的物理回调使用 NotExecuted。集合、错误及元数据在 producer 端复制冻结；只保留有上限的错误摘要，不把异常对象或可变 details 跨线程排入队列。
+
+最终文件不自称“自身已成功发布”。`ProbeSourceCompletion` 是独立的内存 receipt，表示 report publication 是否实际成功、最终路径与 publication error；future host 根据 receipt 决定失败退出。若发布失败，保留 pending/已写事件，不重试第二个终态文件，不覆盖旧文件。健康 None/取消仍是完整 source observation，不照搬 receiver “Cancelled 必须写 failure.json”的约定；source 内部故障用 failure.json，但保留 raw Copy（若已返回）。seal 之后的 stop 只进入 manager 生命周期/完成 receipt，不再改已冻结的本轮取消观察；报告明确观察截止点，不能反向把归档期间的 Close 写成“调用中取消”。
+
+##### A.4 有界 recorder 的具体机制
+
+1. 每轮一个 recorder、一个显式拥有且最终被等待的 writer task，负责序列化、写 NDJSON、排空/flush/关闭以及单次 terminal 发布。允许在 recorder 内集中启动这一 worker，不允许每事件 Task.Run、fire-and-forget 或 writer 反向同步调用 UI。启动/文件创建在准备阶段完成；Ready 之前确认 recorder 已可用。
+2. 使用 bounded Channel，`SingleWriter=true`（owner STA）、`SingleReader=true`、`AllowSynchronousContinuations=false`、`FullMode=Wait`，producer **只用 TryWrite**。不使用 WriteAsync 等待容量，也不使用静默 DropOldest/DropWrite。满时立即返回失败并锁存 evidence fault；已入队记录仍尽力排空。这个选择基于 [Channels 的满队列语义](https://learn.microsoft.com/en-us/dotnet/core/extensions/channels) 和 [同步 continuation 的调用线程风险](https://learn.microsoft.com/en-us/dotnet/api/system.threading.channels.channeloptions.allowsynchronouscontinuations?view=net-10.0)，不表示已经实测热路径时延。
+3. 默认候选 `EventQueueCapacity=128`、`MaxErrorTextChars=1024`，均是可命名、可注入、记入报告的工程内存上界，不是产品 SLA。测试用容量 1 和受控暂停 sink 强制溢出；实施时用实际边沿清单复核默认容量。队列之外也不保留无界事件/错误列表；每种 callback 只发 first、其余累计，在 seal 时发一个汇总。
+4. 单调 ticks/frequency、UTC、sequence、run/round/generation、event name 和固定大小观察在 owner producer 取得；sequence 在 TryWrite 前分配，丢失的 first sequence/数量独立锁存。writer 使用原 stamp，不把写盘时间当事件发生时间。健康情况下 Written=Accepted=Produced；不健康情况下明确 gap/未写入数量，不能靠重新编号使证据看似连续。
+5. writer 出错只发布线程安全的不可变 health 结果，不从后台释放 payload。owner 在下一状态边界/QCD 发现 fault 时请求取消；即使没有下一回调，也只能等 invoker 返回，不能提前清理。owner 已返回 Copy 时发现 writer 错误，记录 Copy + EvidenceFailed。不尝试通过同一故障 recorder 再递归记录日志错误。
+6. `SealAndPublishAsync(immutableDraft)` 认领单次完成，关闭 producer 并提供独立完成信号；seal 不需要挤入已经满的队列。worker 尽力排空、flush、关闭事件流，合并真实 health 后才发布 terminal；任一失败仍尝试其余可执行的收尾。队列溢出但 sink 健康时继续写已接纳的事件；sink 首次写入失败后停止向该流追加，剩余项计为未写入，保留可能不完整的尾行，不把后续 JSON 拼在破损尾行上。Written 只计已写完换行的记录，flush/close 健康另计。重复 seal 共用同一 receipt，不启动第二个 worker/publisher。最终 receipt 必须等 writer 已退出，不能仅等待 Channel reader 已空。
+7. 关闭事件流后不再把 `ReportPublished` 强塞回已关闭的同一个事件文件；发布由 final 文件和 receipt 证明。seal 后旧回调不能回填冻结报告。若 writer/外部 invoker 永久不返回，manager 保持不可准入，A 不增加 UI timer 或伪清理；测试使用有上限的外部等待保护且在 finally 放行 fake，真实进程 watchdog 留给 C/D。
+
+##### A.5 自动测试矩阵与实施顺序
+
+下面每行是场景族，实际测试数量以执行结果为准；不预报通过数。所有 invoker 都是 fake，不能通过默认测试触发真实 `DragDrop.DoDragDrop`。
+
+| 场景族 | 必须断言 |
+|---|---|
+| Copy / None / throw / 未知 effect | 一次调用/terminal/发布；raw Copy 不变、throw 无虚构 effect；Move/Link/Copy 组合/Scroll 等原值保留且不重试 |
+| 双 prepare / 双 start / 嵌套 start | 工厂和 invoker 各最多一次；Preparing、Starting、Invoking、Cleaning、Archiving 全程禁止新轮 |
+| 首回调任意顺序、重复、只有一种、完全没有 | 共用 start-observed 最多一次；两个 first 和累计值正确；无回调返回照常清理，不补造 start |
+| 准备中取消/停止、Ready 预取消、Starting seam 重入取消 | 不调用 invoker；所有已移交资源释放；准备后返回的 payload 不重新变成 Ready |
+| fake 内 Cancel / Close / Dispose / fault | fake 继续执行期间 data、两个流和 callbacks 仍有效，Completion 未完成；只有 fake 返回后开始清理 |
+| Esc 与普通 QCD | Esc 被单独记录并建议 Cancel；普通输入保持 KeepDefault；不把 GiveFeedback=Copy 视为最终接受 |
+| 取消后迟到 Copy；Copy 后 cleanup/log/report 失败 | raw Copy 和取消/失败同时存在，不返回“未交付”的假结论，不自动重放 |
+| 旧 ticket / 旧回调 / 两实例同 generation / 旧归档 continuation | 不改新轮资源、effect、取消或关闭意图；不能解除新轮准入槽 |
+| 每个 release 分别失败、重入 Cancel/Dispose/prepare/start | terminal/attempt 先认领；其余项仍尝试；资源失败保留 >0/Unknown，不发假 CleanupCompleted，不开新轮 |
+| owner 线程 / immutable snapshot | 跨线程入口在产生副作用前拒绝；writer 不接触 WPF；producer 后续变化不改变已排队记录；注入 UTC 回退不影响单调时间/序号顺序 |
+| 容量 1 / 热回调洪泛 / writer 慢 | TryWrite 不等 sink，溢出/gap 可见；十万次 fake feedback 只增长计数，不增长逐次事件列表 |
+| sink open/write/flush/close 与 terminal 发布分别失败 | 有独立分类、单次发布、残留证据；部分行写入失败后不再追加，未写入数可见；报告健康值以真实 worker 结果为准；没有日志错误递归 |
+| writer drain 被受控暂停、重复 seal、receipt 回调重入 | owner STA 可继续处理消息，下一轮仍被拒绝；必须等 worker 退出才交回准入；只完成一次 |
+| 真实 fixture + fake invoker | 五种 profile 的路径/重复和四字节 Copy 不变；fake 内直接读 DataObject/两条流证明存活，返回后两个流实际不可读，fixture 重新校验摘要不变 |
+| 同 manager 连续 20 轮 Copy/None 交替 | 同 token、不重建 manager，generation 单调；每轮使用不同新输出/recorder/publisher，上一轮零点先于下一轮准备；最后不预载，累计 callback 不假清零 |
+| report schema / create-only | Simulation/未执行/未知状态往返可辨；预取消 raw=null；已有 terminal 不覆盖，第二次发布拒绝；三类结果不互相覆盖 |
+
+测试同步使用显式信号/受控 completion 与 `WpfApplicationFixture.InvokeAsync`；禁止用 Thread.Sleep/固定延时让竞态消失。fake invoker 的回调在同一 STA 同步重入，用断言检查返回前资源，不让它真实挂住测试 UI；后台 sink 的暂停必须由非 UI 测试驱动在 finally 解除。
+
+实施顺序：
+
+1. **A1：契约与同步会话**。先建 ticket/结果/资源观察和最小 manager/session，用 in-memory recorder + fake invoker 验证准入、返回边界、取消与逐项清理；先测故障再扩展。
+2. **A2：有界证据与归档**。落地 source recorder、不可变 draft/receipt、create-only 文件发布及排空；追加满队列、writer/发布失败、归档重入门禁。已有 receiver writer 不改。
+3. **A3：真实 payload 接合**。仅做必要的 payload ownership/逐项快照窄改动，五种 fixture 在 fake 调用前/中/后验证；补跨实例/旧代及同 manager 20 轮。这里的 20 轮只是 simulation，不是 D 的同 HWND 物理 Gate。
+4. **A4：回归与收口**。唯一临时 ArtifactsPath 下执行 `StageDragProbe` 全部定向测试、Debug/Release 零警告构建及完整 Release suite；使用既有外部只读审计证明真实库/资产前后不变。保存 TRX、源代码 revision/候选 SHA 和明确的 simulation scope，检查 diff 仅 probe/tests/文档且无真实 OLE 入口。
+
+A 完成条件：上述自动场景实测、所有正常轮的 payload/流/已取得 lease 真正释放且 writer 退出、故障轮不能伪归零或重新准入、已有 N2.1/N2.2 行为不回退。之后**停止在 B 之前**，报告为“N2.3-A 自动契约通过，真实窗口/物理 OLE 未验证”；不自动提交、推送、部署或启动拖放。
+
+规划阶段按生命周期自审识别的主要风险是：把取消当调用完成、清理前撤销引用冒充资源归零、异步 writer 将工作回推 UI、报告先发布后发现释放失败、归档空档重新准入、旧代 completion 关闭新轮。规划本身不证明已复现或修复；实施验证记录如下，通用约束继续使用 R2/R19/R29，不新增重复规则或产品决策。
+
+##### A 实施记录（2026-09-22）
+
+- 在进入源码 `3e009b8` 及未提交的 A 规划之上完成 A1–A4：新增 source manager/session、source report 与有界 recorder，以及四份 source 测试/支架文件；只对既有 `ProbeOutboundDataObject` 做所有权接口、逐项快照和两流释放的窄改动。`Program`、options、command runner、receiver/Router 和三个产品项目均未修改，仍无可执行的真实 source invoker。
+- manager 以实例 + generation + round ticket 隔离轮次，从准备开始到归档 receipt 回到 owner STA 才交还准入。fake 同步调用期间的 Cancel/Close/Dispose/QCD Esc 只记录意图；terminal 在清理前认领，payload/两流/已取得 lease 分别观察，失败或未知不能假归零。主动 capture 转交只屏蔽该 release 栈内的 CaptureLost，不屏蔽其他取消。
+- 准备和归档续体显式通过 owner Dispatcher 提交。自审用“owner STA 上暂时没有 SynchronizationContext”的反例复现首版准备续体落到线程池、未能准备 payload；修正后该反例通过。另用调用中/归档中的 HostFailure 复现首版只保存 stop 原因却仍返回成功；现以独立 `HostFailureObserved` 锁存过程失败，即使稍后 Close/Dispose 或 raw Copy 也不能抹去。修复前反例分别为 1 项、2 项失败，最终全部通过。
+- recorder 默认容量 128，只入队不可变、带 producer 单调时钟/UTC/序号的边沿；两个高频回调各保留 first 和累计值。唯一 owned writer 执行磁盘 I/O；满队列、open/write/flush/close、partial line 和 publication 故障都有独立门禁。partial write 后不再向破损尾行追加；seal 不占队列容量，返回的 task 直到 worker 退出才完成，不能以队列已空冒充释放。错误摘要上限 1024 字符，参数是工程上界，不是性能 SLA。
+- source 报告固定为 `SourceSessionSimulation` / `Fake` / `PhysicalOleInvoked=false`；缺失的 effect、HWND、callback 以 nullable + observation 状态区分。NDJSON 的 `InvocationDispatchPrepared` 只证明已准备派发；实际是否调用及进入/返回时刻由 `InvocationEntered` / `EnteredAt` / `ReturnedAt` 保存，避免日志 seam 重入取消后仍把派发预备事件冒充调用。文件只陈述 seal 截止的观察，发布结果及 seal 后的关闭/宿主故障由独立 completion receipt 表达，不回写已经冻结的报告。
+- 五种真实 fixture 均在 fake 内验证数据/两流存活、返回后释放并重验摘要。另用同一 manager、同一 token、不同新输出/recorder/publisher 完成 batch100 的 20 轮 Copy/None 交替；每轮先证明上一轮零点，再准备下一轮，最后不预载。这个结果没有 source HWND，不能作为 D 的物理 20 轮证据。
+- 新增 source 67/67；全部 `StageDragProbe` 定向 **206/206**；source 连续五轮 **335/335**；完整 Release 为 Core **114/114** + Integration **807/807**，共 **921/921**、0 skip。独立 Debug/Release solution build 均为 **0 warning / 0 error**，差异检查通过。
+- 完整有效只读前后审计比较整个 `.Database`（含 `.Assets`）：schema 8、Stage 50、Ready 60、`quick_check=ok`、0 外键/缺失/长度/SHA/越界异常，schema、八表与全部资产摘要不变。数据库 SHA-256 仍为 `AC343AE5CF4CBDDFA2746B8CA10A04D66114AC2A9D61D6AF5062C70EC05D2CA9`，最终无 Vok/probe 残留。首次审计传错 AssetRoot 层级，仅形成两份无效观察，未写库；已按产品源码确认应为 `%LOCALAPPDATA%\Vok\assets\clipboard`，有效基线只使用下面的 `db-before-verified.json`。
+- 构建/审计/测试证据位于 `%TEMP%\vok-n2-3a-artifacts-1790081637754`：`gates/db-before-verified.json`、`gates/db-after.json`、`gates/build-release.binlog`、`gates/build-debug.binlog`、`tests-targeted-final/`、`tests-final/`、`tests-source-repeat-1/` 至 `-5/`；红/绿反例保留于 `tests-host-failure-before/`、`tests-prepare-owner-before/` 及后续 source TRX。早期 `db-before.json` / `db-before-valid.json` 的 AssetRoot 参数错误，不得作为通过证据。
+- 最终 Release probe DLL SHA-256 为 `1A5BB36A2E4251BCF2CAF454B4DC0B610048796437FD01E52B0175FF05EB6205`，exe 为 `7EF16DD7CBD8F14B525766046B687FF045E089642EF767DCBA38A1D5A0A5C64D`。完整回归的外部 watchdog 受控超时证据保留于 `%TEMP%\vok-drag-process-tests-e8682008d3f541b6bce19378e33b69e5`，未删除既有失败证据或用户文件。
+- N2.3-A 自动契约通过，随后按用户要求随本次提交归档；提交轮只更新状态，沿用上述验证记录，未重跑测试、推送或部署。下一步 B 才增加可见 source 窗口、WPF adapter、host 与严格 CLI，同时明确扩展 A 目前固定的 Simulation 报告模式；B 默认自动套件仍只用 fake invoker，真实调用留给 C 的受控物理 Gate。没有窗口/真实 OLE、永不返回的外部调用、隐藏 HWND 或产品消费的完成声明。
 
 #### 双进程编排与报告布局
 
@@ -559,7 +687,7 @@ A 是下一次实施的最小边界，不因为 B/C 已有设计就同时加入�
 
 本阶段全部保持源 HWND 可见、不调用 Hide；§9 的隐藏源窗/Explorer/桌面/跨目标 20 轮是后续 N2.4/N2.7 门禁，不要求在 N2.3 提前执行。Handle/Thread/USER/GDI 和内存先记录基线及趋势，不靠强制 GC 或虚构硬阈值通过。
 
-任何双启动、返回前释放 payload/销毁源窗、raw Copy 被取消意图抹去、自吞副作用、伪造清理零点、无界日志/同步热路径磁盘写入、跨 case 或同点重复失败，均停止当前切片并分析，不继续叠加延时或扩展到隐藏 HWND。计划分析已完成，以上自动/物理门禁仍待实现和执行。
+任何双启动、返回前释放 payload/销毁源窗、raw Copy 被取消意图抹去、自吞副作用、伪造清理零点、无界日志/同步热路径磁盘写入、跨 case 或同点重复失败，均停止当前切片并分析，不继续叠加延时或扩展到隐藏 HWND。A 自动契约已按上文记录验证，B–D 剩余自动/物理门禁仍待实现和执行。
 
 ### N2.4：隐藏源 HWND 可行性裁决
 
